@@ -1,5 +1,4 @@
-// Command tea-dash is a terminal dashboard for Gitea, built on top of the
-// official `tea` CLI.
+// Command tea-dash is a terminal dashboard for Gitea.
 package main
 
 import (
@@ -88,9 +87,9 @@ func expandHome(path string) string {
 const usage = `tea-dash — a terminal dashboard for Gitea
 
 Usage:
-  tea-dash            start the dashboard
+  tea-dash            start the dashboard (your open pull requests)
   tea-dash --version  print version information
   tea-dash --help     show this help
 
-tea-dash shells out to Gitea's official ` + "`tea`" + ` CLI, so make sure tea is
-installed and you have run ` + "`tea login add`" + ` at least once.`
+tea-dash reuses your ` + "`tea`" + ` login (run ` + "`tea login add`" + ` once), or set
+instance.url + instance.token in ~/.config/tea-dash/config.yml.`
