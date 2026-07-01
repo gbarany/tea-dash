@@ -45,7 +45,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 	})
 }
 
-// issueBuildRow maps an issue into the table's 6-cell row (unchanged formatting).
+// issueBuildRow maps an issue into the table's 6-cell row.
 func issueBuildRow(issue data.Issue) table.Row {
 	author := ""
 	if issue.Author != "" {

@@ -1,6 +1,8 @@
 // Package section defines the Section contract every dashboard section
 // satisfies, plus an embeddable BaseModel that owns the table/spinner and
-// renders the loading/error/empty/table body.
+// renders the loading/error/empty/table body. It also provides a generic
+// Model[T RowData] that implements Section for any row type, which the
+// pullsection/issuesection packages specialize.
 package section
 
 import (
@@ -196,9 +198,8 @@ func (m *BaseModel) View() string {
 	return body
 }
 
-// DefaultColumns reproduces the shared column widths and title-grow formula used
-// by the pull-request and issue sections (# / Title / Repo / Author / State /
-// Updated).
+// DefaultColumns defines the shared column widths and title-grow formula for
+// every section (# / Title / Repo / Author / State / Updated).
 func DefaultColumns(mainWidth int) []table.Column {
 	const (
 		numW     = 6

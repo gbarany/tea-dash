@@ -25,12 +25,15 @@ type RowsFetchedMsg[T data.RowData] struct {
 	Err        error
 }
 
-// Options parameterizes New, carrying the three per-type seams (fetch, row
-// build, limit) plus the section metadata forwarded to NewBaseModel.
+// Options parameterizes New, carrying the four per-type seams (fetch, row
+// build, limit, filter kind) plus the section metadata forwarded to
+// NewBaseModel.
 type Options[T data.RowData] struct {
-	Id         int
-	Ctx        *appctx.ProgramContext
-	Config     config.SectionConfig
+	Id     int
+	Ctx    *appctx.ProgramContext
+	Config config.SectionConfig
+	// Type MUST correspond to the type parameter T: it drives app-level fetch
+	// routing, so a Type/T mismatch would silently misroute fetch results.
 	Type       string
 	FilterKind string
 
@@ -64,6 +67,15 @@ var (
 
 // New builds a generic section from Options.
 func New[T data.RowData](o Options[T]) *Model[T] {
+	if o.Fetch == nil {
+		panic("section.New: Options.Fetch is required")
+	}
+	if o.BuildRow == nil {
+		panic("section.New: Options.BuildRow is required")
+	}
+	if o.Limit == nil {
+		panic("section.New: Options.Limit is required")
+	}
 	m := &Model[T]{}
 	m.BaseModel = NewBaseModel(NewOptions{
 		Id:           o.Id,
@@ -144,7 +156,8 @@ func (m *Model[T]) Update(msg tea.Msg) (Section, tea.Cmd) {
 		m.SetTotalCount(msg.TotalCount)
 		m.SetError(nil)
 		// SetRows clamps but does not reset the cursor, so a refresh keeps the
-		// selected row (intentional; better UX than the pre-refactor reset-to-top).
+		// selected row (intentional: preserves the user's position rather than
+		// jumping to the top).
 		m.SetRows(m.BuildRows())
 		return m, nil
 	case spinner.TickMsg:
@@ -155,8 +168,8 @@ func (m *Model[T]) Update(msg tea.Msg) (Section, tea.Cmd) {
 		}
 		return m, nil
 	}
-	// Only forward navigation/other messages to the table when ready — matches the
-	// pre-refactor gating, which ignored keys while loading or in the error state.
+	// Only forward navigation/other messages to the table when ready: keys are
+	// ignored while loading or in the error state.
 	if m.GetIsLoading() || m.GetError() != nil {
 		return m, nil
 	}

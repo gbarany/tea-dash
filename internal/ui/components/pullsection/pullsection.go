@@ -53,7 +53,7 @@ func prState(pr data.PullRequest) string {
 	return pr.State
 }
 
-// prBuildRow maps a PR into the table's 6-cell row (unchanged formatting).
+// prBuildRow maps a PR into the table's 6-cell row.
 func prBuildRow(pr data.PullRequest) table.Row {
 	author := ""
 	if pr.Author != "" {
