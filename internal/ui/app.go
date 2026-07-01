@@ -82,11 +82,12 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 		view = context.IssuesView
 	}
 	ctx := &context.ProgramContext{
-		Config: cfg,
-		Client: client,
-		User:   user,
-		View:   view,
-		Styles: context.DefaultStyles(),
+		Config:      cfg,
+		Client:      client,
+		User:        user,
+		View:        view,
+		PreviewOpen: true,
+		Styles:      context.DefaultStyles(),
 	}
 	ctx.StartTask = func(t context.Task) tea.Cmd {
 		tasks[t.Id] = t
