@@ -3,6 +3,7 @@ package prview
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gbarany/tea-dash/internal/data"
 )
@@ -110,5 +111,89 @@ func TestRenderIssue(t *testing.T) {
 	}
 	if !strings.Contains(loaded, "token-abc") {
 		t.Fatalf("loaded issue preview missing body token:\n%s", loaded)
+	}
+}
+
+// TestRenderPullCommentsCIReviews verifies the appended CI, reviews, and
+// comments sections all render with their contexts, badges, headers, authors,
+// and bodies.
+func TestRenderPullCommentsCIReviews(t *testing.T) {
+	now := time.Now()
+	detail := &data.PullDetail{
+		Body: "pr body",
+		CI: data.CIStatus{
+			State: data.CIStateFailure,
+			Checks: []data.Check{
+				{Context: "build-linux", State: data.CheckStateSuccess, Description: "passed"},
+				{Context: "test-race", State: data.CheckStateFailure, Description: "1 test failed"},
+			},
+		},
+		Reviews: []data.Review{
+			{Author: "octocat", State: data.ReviewStateApproved, SubmittedAt: now},
+		},
+		Comments: []data.Comment{
+			{Author: "alice", Body: "first comment body zeta", CreatedAt: now.Add(-2 * time.Hour)},
+			{Author: "bob", Body: "second comment body omega", CreatedAt: now.Add(-30 * time.Minute)},
+		},
+	}
+	out := RenderPull(samplePull(), detail, 60, false)
+
+	wants := []string{
+		// CI block
+		"Checks:", "build-linux", "test-race",
+		// Reviews block
+		"Reviews:", "APPROVED", "octocat",
+		// Comments block
+		"2 comments", "alice", "first comment body zeta", "bob", "second comment body omega",
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Fatalf("PR preview missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderIssueSingleComment verifies the issue comments block uses the
+// singular "1 comment" header and shows the comment body.
+func TestRenderIssueSingleComment(t *testing.T) {
+	row := data.Issue{
+		Number:            7,
+		Title:             "Something broke",
+		RepoNameWithOwner: "gbarany/tea-dash",
+		State:             "open",
+	}
+	detail := &data.IssueDetail{
+		Body: "issue body",
+		Comments: []data.Comment{
+			{Author: "carol", Body: "only comment here delta", CreatedAt: time.Now()},
+		},
+	}
+	out := RenderIssue(row, detail, 60, false)
+
+	if !strings.Contains(out, "1 comment") {
+		t.Fatalf("issue preview missing singular \"1 comment\":\n%s", out)
+	}
+	if strings.Contains(out, "1 comments") {
+		t.Fatalf("issue preview should use singular header, got plural:\n%s", out)
+	}
+	if !strings.Contains(out, "only comment here delta") {
+		t.Fatalf("issue preview missing comment body:\n%s", out)
+	}
+	if !strings.Contains(out, "carol") {
+		t.Fatalf("issue preview missing comment author:\n%s", out)
+	}
+}
+
+// TestRenderNilDetailNoComments verifies a nil detail keeps the Loading
+// placeholder and renders no comments/CI sections.
+func TestRenderNilDetailNoComments(t *testing.T) {
+	out := RenderPull(samplePull(), nil, 60, false)
+	if !strings.Contains(out, "Loading") {
+		t.Fatalf("nil-detail preview should show Loading:\n%s", out)
+	}
+	for _, absent := range []string{"comment", "Checks:", "Reviews:"} {
+		if strings.Contains(out, absent) {
+			t.Fatalf("nil-detail preview should not contain %q:\n%s", absent, out)
+		}
 	}
 }
