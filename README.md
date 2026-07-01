@@ -108,10 +108,11 @@ internal/build/         version metadata (set via -ldflags)
 
 ## Tech stack
 
-Go, [Bubble Tea](https://github.com/charmbracelet/bubbletea) +
-[Lipgloss](https://github.com/charmbracelet/lipgloss) +
-[Bubbles](https://github.com/charmbracelet/bubbles) for the TUI — the same
-Charm stack `gh-dash` and `tea` itself are built on.
+Go with the **Bubble Tea v2** Charm stack — `charm.land/bubbletea/v2` +
+`charm.land/lipgloss/v2` + `charm.land/bubbles/v2` — the exact TUI stack
+[`gh-dash`](https://github.com/dlvhdr/gh-dash) and Gitea's own `tea` CLI are
+built on. Planned, to stay aligned with gh-dash: `glamour/v2` (Markdown bodies),
+`cobra`+`fang` (CLI), and `koanf`+`validator` (config).
 
 ## License
 

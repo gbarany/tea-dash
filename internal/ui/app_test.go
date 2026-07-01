@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/teacli"
@@ -31,7 +31,7 @@ func TestModelRendersLoadedPulls(t *testing.T) {
 		}},
 	}})
 
-	view := m.View()
+	view := m.View().Content
 	for _, want := range []string{"#128", "Add wiki CLI", "gitea/tea", "@lunny", "1 pull requests"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view is missing %q\n---\n%s", want, view)
@@ -44,7 +44,7 @@ func TestModelRendersError(t *testing.T) {
 	m = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = update(t, m, errMsg{err: errors.New("boom")})
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Error") || !strings.Contains(view, "boom") {
 		t.Fatalf("expected an error view, got:\n%s", view)
 	}
@@ -52,7 +52,7 @@ func TestModelRendersError(t *testing.T) {
 
 func TestQuitKeyStopsProgram(t *testing.T) {
 	m := New(&config.Config{})
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	if cmd == nil {
 		t.Fatal("expected a quit command, got nil")
 	}

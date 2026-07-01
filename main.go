@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/gbarany/tea-dash/internal/build"
 	"github.com/gbarany/tea-dash/internal/config"
@@ -36,7 +36,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	p := tea.NewProgram(ui.New(cfg), tea.WithAltScreen())
+	p := tea.NewProgram(ui.New(cfg))
 	_, err = p.Run()
 	return err
 }

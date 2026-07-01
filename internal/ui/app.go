@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/table"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/teacli"
@@ -62,15 +62,11 @@ type Model struct {
 
 // New builds the root model from configuration.
 func New(cfg *config.Config) Model {
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = spinnerStyle
-
 	return Model{
 		cfg:     cfg,
 		client:  &teacli.Client{Binary: teacli.DefaultBinary, Login: cfg.Login},
 		keys:    defaultKeyMap(),
-		spinner: sp,
+		spinner: spinner.New(spinner.WithStyle(spinnerStyle)),
 		status:  statusLoading,
 	}
 }
@@ -170,7 +166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadErr = msg.err
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -273,7 +269,7 @@ func (m Model) columns() []table.Column {
 }
 
 // View implements tea.Model.
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	title := titleStyle.Render("tea-dash") + dimStyle.Render("  pull requests")
 
 	var body string
@@ -293,7 +289,8 @@ func (m Model) View() string {
 
 	help := helpStyle.Render("↑/↓ move · r refresh · o/enter open in browser · q quit")
 
-	return appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, m.statusLine(), help))
+	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, body, m.statusLine(), help))
+	return tea.View{Content: content, AltScreen: true}
 }
 
 func (m Model) statusLine() string {

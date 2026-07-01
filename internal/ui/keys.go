@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/charmbracelet/bubbles/key"
+import "charm.land/bubbles/v2/key"
 
 // keyMap defines the app-level key bindings. Row navigation (↑/↓, j/k, page
 // keys) is handled by the underlying table widget.
