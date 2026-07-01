@@ -26,6 +26,9 @@ type Section interface {
 	GetCurrRow() data.RowData
 	FetchRows() tea.Cmd
 
+	GetItemSingular() string
+	GetItemPlural() string
+
 	Update(msg tea.Msg) (Section, tea.Cmd)
 	View() string
 	UpdateProgramContext(ctx *context.ProgramContext)
@@ -44,20 +47,26 @@ type NewOptions struct {
 	LoadingText string
 	EmptyText   string
 	EmptyHint   string
+
+	// Item wording used by the root's status line ("3 pull requests" / "3 issues").
+	SingularForm string
+	PluralForm   string
 }
 
 // BaseModel provides the shared machinery concrete sections embed.
 type BaseModel struct {
-	id          int
-	sectionType string
-	totalCount  int
-	numRows     int
-	isLoading   bool
-	lastFetchID string
-	err         error
-	loadingText string
-	emptyText   string
-	emptyHint   string
+	id           int
+	sectionType  string
+	totalCount   int
+	numRows      int
+	isLoading    bool
+	lastFetchID  string
+	err          error
+	loadingText  string
+	emptyText    string
+	emptyHint    string
+	singularForm string
+	pluralForm   string
 
 	Ctx     *context.ProgramContext
 	Config  config.SectionConfig
@@ -76,23 +85,27 @@ func NewBaseModel(o NewOptions) BaseModel {
 	t.SetStyles(o.Ctx.Styles.Table)
 	sp := spinner.New(spinner.WithStyle(o.Ctx.Styles.Spinner))
 	return BaseModel{
-		id:          o.Id,
-		sectionType: o.Type,
-		Ctx:         o.Ctx,
-		Config:      o.Config,
-		Table:       t,
-		Spinner:     sp,
-		Columns:     o.Columns,
-		isLoading:   true,
-		loadingText: o.LoadingText,
-		emptyText:   o.EmptyText,
-		emptyHint:   o.EmptyHint,
+		id:           o.Id,
+		sectionType:  o.Type,
+		Ctx:          o.Ctx,
+		Config:       o.Config,
+		Table:        t,
+		Spinner:      sp,
+		Columns:      o.Columns,
+		isLoading:    true,
+		loadingText:  o.LoadingText,
+		emptyText:    o.EmptyText,
+		emptyHint:    o.EmptyHint,
+		singularForm: o.SingularForm,
+		pluralForm:   o.PluralForm,
 	}
 }
 
 func (m *BaseModel) GetId() int               { return m.id }
 func (m *BaseModel) GetType() string          { return m.sectionType }
 func (m *BaseModel) GetTitle() string         { return m.Config.Title }
+func (m *BaseModel) GetItemSingular() string  { return m.singularForm }
+func (m *BaseModel) GetItemPlural() string    { return m.pluralForm }
 func (m *BaseModel) GetTotalCount() int       { return m.totalCount }
 func (m *BaseModel) SetTotalCount(n int)      { m.totalCount = n }
 func (m *BaseModel) GetIsLoading() bool       { return m.isLoading }

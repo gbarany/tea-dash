@@ -42,14 +42,16 @@ type SectionPullRequestsFetchedMsg struct {
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	m := &Model{}
 	m.BaseModel = section.NewBaseModel(section.NewOptions{
-		Id:          id,
-		Type:        SectionType,
-		Ctx:         ctx,
-		Config:      cfg,
-		Columns:     columns(ctx.MainContentWidth),
-		LoadingText: "Loading pull requests…",
-		EmptyText:   "No open pull requests authored by you.",
-		EmptyHint:   "This board shows PRs you created across all repos on your Gitea instance.",
+		Id:           id,
+		Type:         SectionType,
+		Ctx:          ctx,
+		Config:       cfg,
+		Columns:      columns(ctx.MainContentWidth),
+		LoadingText:  "Loading pull requests…",
+		EmptyText:    "No open pull requests authored by you.",
+		EmptyHint:    "This board shows PRs you created across all repos on your Gitea instance.",
+		SingularForm: "pull request",
+		PluralForm:   "pull requests",
 	})
 	return m
 }

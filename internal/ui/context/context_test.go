@@ -23,3 +23,14 @@ func TestGetViewSectionsConfig(t *testing.T) {
 		t.Fatalf("default section filter = %+v, want CreatedBy=@me State=open", secs[0].Filter)
 	}
 }
+
+func TestGetViewSectionsConfigIssues(t *testing.T) {
+	ctx := &ProgramContext{View: IssuesView}
+	secs := ctx.GetViewSectionsConfig()
+	if len(secs) != 1 || secs[0].Title != "My Issues" {
+		t.Fatalf("GetViewSectionsConfig(IssuesView) = %+v", secs)
+	}
+	if secs[0].Filter.CreatedBy != "@me" || secs[0].Filter.State != "open" {
+		t.Fatalf("default issues filter = %+v, want CreatedBy=@me State=open", secs[0].Filter)
+	}
+}

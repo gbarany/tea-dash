@@ -42,14 +42,16 @@ type SectionIssuesFetchedMsg struct {
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	m := &Model{}
 	m.BaseModel = section.NewBaseModel(section.NewOptions{
-		Id:          id,
-		Type:        SectionType,
-		Ctx:         ctx,
-		Config:      cfg,
-		Columns:     columns(ctx.MainContentWidth),
-		LoadingText: "Loading issues…",
-		EmptyText:   "No open issues authored by you.",
-		EmptyHint:   "This board shows issues you created across all repos on your Gitea instance.",
+		Id:           id,
+		Type:         SectionType,
+		Ctx:          ctx,
+		Config:       cfg,
+		Columns:      columns(ctx.MainContentWidth),
+		LoadingText:  "Loading issues…",
+		EmptyText:    "No open issues authored by you.",
+		EmptyHint:    "This board shows issues you created across all repos on your Gitea instance.",
+		SingularForm: "issue",
+		PluralForm:   "issues",
 	})
 	return m
 }

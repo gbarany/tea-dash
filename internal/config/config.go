@@ -20,6 +20,19 @@ type Config struct {
 	// Repos lists repositories to watch. Unused in M0; per-repo sections
 	// return in M1.
 	Repos []string `yaml:"repos"`
+	// PRSections and IssuesSections configure the tabs for the pulls and issues
+	// views respectively. Empty falls back to a single me-scoped default section.
+	PRSections     []SectionConfig `yaml:"prSections"`
+	IssuesSections []SectionConfig `yaml:"issuesSections"`
+	// Defaults sets the startup view and per-view row limits.
+	Defaults Defaults `yaml:"defaults"`
+}
+
+// Defaults holds startup and limit defaults.
+type Defaults struct {
+	View        string `yaml:"view"` // "prs" | "issues"
+	PRsLimit    int    `yaml:"prsLimit"`
+	IssuesLimit int    `yaml:"issuesLimit"`
 }
 
 // Instance selects and overrides the Gitea connection.

@@ -129,6 +129,42 @@ func TestFetchRowsRegistersTask(t *testing.T) {
 	}
 }
 
+func TestSwitchViewBuildsIssues(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = next.(Model)
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("View = %v, want IssuesView", m.ctx.View)
+	}
+	if len(m.issues) == 0 {
+		t.Fatal("expected issues sections to be built lazily on switch")
+	}
+	if cmd == nil {
+		t.Fatal("expected a fetch command after switching to the issues view")
+	}
+}
+
+func TestSectionSwitchWithTwoSections(t *testing.T) {
+	cfg := &config.Config{
+		PRSections: []config.SectionConfig{
+			{Title: "A", Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"}},
+			{Title: "B", Filter: config.PrIssueFilter{State: "open"}},
+		},
+	}
+	m := New(cfg, nil)
+	if len(m.prs) != 2 {
+		t.Fatalf("len(prs) = %d, want 2 (config-driven sections)", len(m.prs))
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.currSectionId != 1 {
+		t.Fatalf("after 'l' currSectionId = %d, want 1", m.currSectionId)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'h', Text: "h"})
+	if m.currSectionId != 0 {
+		t.Fatalf("after 'h' currSectionId = %d, want 0", m.currSectionId)
+	}
+}
+
 var errBoom = errBoomType("boom")
 
 type errBoomType string
