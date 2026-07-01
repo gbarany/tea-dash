@@ -11,6 +11,7 @@ type keyMap struct {
 	NextSection key.Binding
 	PrevSection key.Binding
 	SwitchView  key.Binding
+	Search      key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -38,6 +39,10 @@ func defaultKeyMap() keyMap {
 		SwitchView: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "switch view"),
+		),
+		Search: key.NewBinding(
+			key.WithKeys("/"),
+			key.WithHelp("/", "search"),
 		),
 	}
 }

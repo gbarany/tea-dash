@@ -80,6 +80,24 @@ func (m *Model) FetchRows() tea.Cmd {
 // Update applies fetched rows (behind a stale-fetch guard), advances the
 // spinner while loading, and otherwise delegates to the table (row nav).
 func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
+	// Only divert key presses to the search bar while it is focused. Other
+	// messages (fetch payloads, spinner ticks, etc.) must fall through to the
+	// normal switch so they are applied even during an active search.
+	if key, ok := msg.(tea.KeyPressMsg); ok && m.IsSearchFocused() {
+		switch key.String() {
+		case "enter":
+			m.Config.Filter.Q = m.SearchBar.Value()
+			m.SetIsSearching(false)
+			return m, m.FetchRows()
+		case "esc", "ctrl+c":
+			m.SearchBar.SetValue(m.Config.Filter.Q) // revert to the applied keyword
+			m.SetIsSearching(false)
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.SearchBar, cmd = m.SearchBar.Update(msg)
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case SectionIssuesFetchedMsg:
 		if m.LastFetchID() != "" && m.LastFetchID() != msg.TaskId {

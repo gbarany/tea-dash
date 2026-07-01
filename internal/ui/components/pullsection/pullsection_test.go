@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
@@ -16,6 +18,93 @@ func newModel(t *testing.T) *Model {
 	ctx := &context.ProgramContext{Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20}
 	m := NewModel(0, ctx, config.SectionConfig{Title: "My Pull Requests"})
 	return m
+}
+
+// newSearchableModel builds a model whose ctx has a StartTask so enter's
+// refetch does not panic on a nil StartTask closure.
+func newSearchableModel(t *testing.T) *Model {
+	t.Helper()
+	ctx := &context.ProgramContext{
+		Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20,
+		StartTask: func(context.Task) tea.Cmd { return nil },
+	}
+	return NewModel(0, ctx, config.SectionConfig{Title: "My Pull Requests"})
+}
+
+func TestSetIsSearchingFocusesAndShowsBar(t *testing.T) {
+	m := newModel(t)
+	if m.IsSearchFocused() {
+		t.Fatal("a fresh section should not be searching")
+	}
+	notSearchingView := m.View()
+	m.SetIsSearching(true)
+	if !m.IsSearchFocused() {
+		t.Fatal("SetIsSearching(true) should focus the search bar")
+	}
+	// While searching the view is the search bar prepended above the body.
+	searchingView := m.View()
+	if !strings.HasPrefix(searchingView, m.SearchBar.View()) {
+		t.Fatalf("searching View() should start with the search bar, got:\n%s", searchingView)
+	}
+	if !strings.Contains(searchingView, notSearchingView) {
+		t.Fatalf("searching View() should still contain the section body, got:\n%s", searchingView)
+	}
+}
+
+func TestTypingWhileFocusedRoutesToSearchBar(t *testing.T) {
+	m := newModel(t)
+	m.SetIsSearching(true)
+	for _, r := range "bug" {
+		next, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = next.(*Model)
+	}
+	if got := m.SearchBar.Value(); got != "bug" {
+		t.Fatalf("after typing while focused, SearchBar.Value() = %q, want %q", got, "bug")
+	}
+}
+
+func TestSearchEnterAppliesKeywordAndRefetches(t *testing.T) {
+	m := newSearchableModel(t)
+	m.SetIsSearching(true)
+	for _, r := range "bug" {
+		next, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = next.(*Model)
+	}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(*Model)
+	if m.Config.Filter.Q != "bug" {
+		t.Fatalf("enter should apply the keyword: Config.Filter.Q = %q, want %q", m.Config.Filter.Q, "bug")
+	}
+	if m.IsSearchFocused() {
+		t.Fatal("enter should unfocus the search bar")
+	}
+	if cmd == nil {
+		t.Fatal("enter should return a non-nil refetch command")
+	}
+}
+
+func TestSearchEscRevertsAndUnfocuses(t *testing.T) {
+	m := newModel(t)
+	m.Config.Filter.Q = "applied"
+	m.SetIsSearching(true)
+	for _, r := range "typed" {
+		next, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = next.(*Model)
+	}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = next.(*Model)
+	if m.IsSearchFocused() {
+		t.Fatal("esc should unfocus the search bar")
+	}
+	if m.Config.Filter.Q != "applied" {
+		t.Fatalf("esc should not change the applied keyword: Q = %q, want %q", m.Config.Filter.Q, "applied")
+	}
+	if got := m.SearchBar.Value(); got != "applied" {
+		t.Fatalf("esc should revert the bar to the applied keyword: Value() = %q, want %q", got, "applied")
+	}
+	if cmd != nil {
+		t.Fatalf("esc should return a nil command, got %v", cmd)
+	}
 }
 
 func TestImplementsSection(t *testing.T) {

@@ -99,6 +99,14 @@ func (m Model) Init() tea.Cmd {
 
 // Update routes messages: layout, async results, keys, then generic fallthrough.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// While the current section's search bar is focused, route key presses
+	// straight to it so typing isn't eaten by nav/quit keys. Resize and async
+	// messages still flow through the normal switch below.
+	if _, ok := msg.(tea.KeyPressMsg); ok {
+		if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
+			return m, m.updateCurrentSection(msg)
+		}
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.ctx.ScreenWidth = msg.Width
@@ -142,6 +150,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.SwitchView):
 			cmd := m.switchView()
 			return m, cmd
+		case key.Matches(msg, m.keys.Search):
+			if s := m.getCurrSection(); s != nil {
+				return m, s.SetIsSearching(true)
+			}
+			return m, nil
 		}
 	}
 
@@ -170,7 +183,7 @@ func (m Model) View() tea.View {
 		body = s.View()
 	}
 	parts = append(parts, body, status,
-		helpStyle.Render("↑/↓ move · h/l section · s view · r refresh · o/enter open · q quit"))
+		helpStyle.Render("↑/↓ move · h/l section · s view · / search · r refresh · o/enter open · q quit"))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true}

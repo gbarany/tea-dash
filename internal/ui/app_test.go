@@ -165,6 +165,25 @@ func TestSectionSwitchWithTwoSections(t *testing.T) {
 	}
 }
 
+func TestSlashFocusesSearch(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
+		t.Fatal("search should not be focused before '/' is pressed")
+	}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	m = next.(Model)
+	s := m.getCurrSection()
+	if s == nil {
+		t.Fatal("expected a current section")
+	}
+	if !s.IsSearchFocused() {
+		t.Fatal("'/' should focus the current section's search bar")
+	}
+	if cmd == nil {
+		t.Fatal("'/' should return the search bar's focus command")
+	}
+}
+
 var errBoom = errBoomType("boom")
 
 type errBoomType string
