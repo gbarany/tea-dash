@@ -9,6 +9,7 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/ui/actions"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/context"
@@ -27,6 +28,17 @@ func fetchedMsg(prs []data.PullRequest) context.TaskFinishedMsg {
 		TaskId:      "t1",
 		Msg: pullsection.SectionPullRequestsFetchedMsg{
 			Rows: prs, TotalCount: len(prs), TaskId: "t1",
+		},
+	}
+}
+
+func fetchedIssuesMsg(issues []data.Issue) context.TaskFinishedMsg {
+	return context.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: issuesection.SectionType,
+		TaskId:      "i1",
+		Msg: issuesection.SectionIssuesFetchedMsg{
+			Rows: issues, TotalCount: len(issues), TaskId: "i1",
 		},
 	}
 }
@@ -604,6 +616,151 @@ func TestPreviewToggleGatedWhileSearching(t *testing.T) {
 	}
 	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "p") {
 		t.Fatalf("search value = %q, want it to contain the typed \"p\"", got)
+	}
+}
+
+func TestActiveActionPromptCapturesGlobalKeys(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Prompt row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("'c' should open an action prompt")
+	}
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	m = next.(Model)
+	if isQuitCmd(cmd) {
+		t.Fatal("'q' while an action prompt is active must not quit")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("'s' while an action prompt is active must not switch views: %v", m.ctx.View)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if m.ctx.PreviewOpen {
+		t.Fatal("'p' while an action prompt is active must not toggle preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' while an action prompt is active must not focus search")
+	}
+}
+
+func TestActionKeysDispatchExpectedIntents(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		kind actions.Kind
+	}{
+		{name: "comment", key: tea.KeyPressMsg{Code: 'c', Text: "c"}, kind: actions.KindComment},
+		{name: "merge", key: tea.KeyPressMsg{Code: 'm', Text: "m"}, kind: actions.KindMerge},
+		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
+		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
+		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
+		{name: "external diff", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindExternalDiff},
+		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedMsg([]data.PullRequest{{
+				Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+			}}))
+
+			m = update(t, m, tt.key)
+			if !m.actionPrompt.Active() {
+				t.Fatalf("%s key should open an action prompt", tt.name)
+			}
+			if tt.kind == actions.KindComment {
+				m = update(t, m, tea.KeyPressMsg{Code: 'o', Text: "o"})
+				m = update(t, m, tea.KeyPressMsg{Code: 'k', Text: "k"})
+			}
+			m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:   0,
+				SectionType: pullsection.SectionType,
+				RowKind:     actions.RowKindPullRequest,
+				Repo:        "gbarany/tea-dash",
+				Number:      42,
+				Title:       "Action row",
+				URL:         "https://example.test/gbarany/tea-dash/pulls/42",
+			}
+			if got[0].Kind != tt.kind || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want kind %q target %+v", got[0], tt.kind, wantTarget)
+			}
+			if tt.kind == actions.KindComment && got[0].Prompt.Value != "ok" {
+				t.Fatalf("comment prompt value = %q, want ok", got[0].Prompt.Value)
+			}
+		})
+	}
+}
+
+func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
+	var dispatched bool
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m.actionDispatcher = func(actions.Intent) tea.Cmd {
+		dispatched = true
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 7, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if dispatched {
+		t.Fatal("merge on an issue must not dispatch")
+	}
+	if m.actionPrompt.Active() {
+		t.Fatal("merge on an issue must not open a prompt")
+	}
+	if !strings.Contains(m.notice, "pull requests") {
+		t.Fatalf("invalid action notice = %q, want pull requests message", m.notice)
+	}
+	if view := m.View().Content; !strings.Contains(view, "pull requests") {
+		t.Fatalf("invalid action notice should render in the view:\n%s", view)
+	}
+}
+
+func TestNilActionDispatcherShowsNoticeOnSubmit(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("'m' should open an action prompt")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.actionPrompt.Active() {
+		t.Fatal("submitted prompt should close")
+	}
+	if !strings.Contains(m.notice, "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice = %q, want action-not-wired message", m.notice)
+	}
+	if view := m.View().Content; !strings.Contains(view, "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice should render in the view:\n%s", view)
 	}
 }
 
