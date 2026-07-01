@@ -91,6 +91,16 @@ func TestDispatchMergeAndReview(t *testing.T) {
 		t.Fatalf("merge style = %q, want merge", client.merge.Style)
 	}
 
+	squash := pullIntent(uiactions.KindMerge)
+	squash.Prompt.Value = "squash"
+	got = runDispatch(t, r, squash)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("squash merge result = %+v", got)
+	}
+	if client.merge.Style != data.MergeStyleSquash {
+		t.Fatalf("merge style = %q, want squash", client.merge.Style)
+	}
+
 	review := pullIntent(uiactions.KindReview)
 	review.Prompt.Value = "request_changes"
 	got = runDispatch(t, r, review)

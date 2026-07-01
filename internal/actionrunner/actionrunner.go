@@ -128,7 +128,11 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		return fmt.Sprintf("Reopened %s#%d.", intent.Target.Repo, index), nil
 
 	case uiactions.KindMerge:
-		merged, err := r.client.MergePullRequest(owner, repo, index, data.MergeOptions{Style: data.MergeStyleMerge})
+		style, err := mergeStyle(intent.Prompt.Value)
+		if err != nil {
+			return "", err
+		}
+		merged, err := r.client.MergePullRequest(owner, repo, index, data.MergeOptions{Style: style})
 		if err != nil {
 			return "", err
 		}
@@ -213,6 +217,23 @@ func reviewEvent(value string) (data.PullReviewEvent, error) {
 		return data.PullReviewEventRequestChanges, nil
 	default:
 		return "", fmt.Errorf("unsupported review action %q", value)
+	}
+}
+
+func mergeStyle(value string) (data.MergeStyle, error) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "", string(data.MergeStyleMerge), "confirm":
+		return data.MergeStyleMerge, nil
+	case string(data.MergeStyleSquash):
+		return data.MergeStyleSquash, nil
+	case string(data.MergeStyleRebase):
+		return data.MergeStyleRebase, nil
+	case string(data.MergeStyleRebaseMerge):
+		return data.MergeStyleRebaseMerge, nil
+	case string(data.MergeStyleFastForwardOnly), "ff-only":
+		return data.MergeStyleFastForwardOnly, nil
+	default:
+		return "", fmt.Errorf("unsupported merge strategy %q", value)
 	}
 }
 
