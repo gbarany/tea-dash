@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -122,6 +123,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openFailedMsg:
 		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
 		return m, nil
+
+	case spinner.TickMsg:
+		// A tick belongs to whichever section started the spinner, but sibling
+		// sections in the current view share one animation; route it to every one
+		// so concurrent loaders stay animated (each ignores it once done loading).
+		var cmds []tea.Cmd
+		for _, s := range m.currentViewSections() {
+			if cmd := m.updateSection(s.GetId(), s.GetType(), msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyPressMsg:
 		m.notice = "" // any key dismisses a transient notice
@@ -257,7 +270,7 @@ func (m Model) openSelected() tea.Cmd {
 	if row == nil {
 		return nil
 	}
-	url := row.GetUrl()
+	url := row.GetURL()
 	if url == "" {
 		return nil
 	}
@@ -320,6 +333,9 @@ func (m Model) statusLine() string {
 	shown := s.NumRows()
 	if total > shown {
 		return m.ctx.Styles.DimText.Render(fmt.Sprintf("showing %d of %d %s", shown, total, s.GetItemPlural()))
+	}
+	if total == 1 {
+		return m.ctx.Styles.DimText.Render(fmt.Sprintf("1 %s", s.GetItemSingular()))
 	}
 	return m.ctx.Styles.DimText.Render(fmt.Sprintf("%d %s", total, s.GetItemPlural()))
 }

@@ -65,10 +65,14 @@ func (m *Model) FetchRows() tea.Cmd {
 	id, sType := m.GetId(), m.GetType()
 	start := m.Ctx.StartTask(appctx.Task{Id: taskId, StartText: "Loading pull requests…", State: appctx.TaskStart})
 	f := m.Config.Filter.WithDefaults("pulls")
+	limit := m.Config.Limit
+	if limit == 0 && m.Ctx.Config != nil {
+		limit = m.Ctx.Config.Defaults.PRsLimit
+	}
 	fetch := func() tea.Msg {
 		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), fetchTimeout)
 		defer cancel()
-		prs, total, err := client.SearchPulls(ctx, f)
+		prs, total, err := client.SearchPulls(ctx, f, limit)
 		return appctx.TaskFinishedMsg{
 			SectionId: id, SectionType: sType, TaskId: taskId,
 			Msg: SectionPullRequestsFetchedMsg{Prs: prs, TotalCount: total, TaskId: taskId, Err: err},

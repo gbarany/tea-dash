@@ -55,6 +55,35 @@ func TestBuildSearchParams(t *testing.T) {
 			filter:      config.PrIssueFilter{Q: "foo"},
 			wantContain: []string{"q=foo"},
 		},
+		{
+			name: "all me-scoped flags and scalar fields render",
+			filter: config.PrIssueFilter{
+				Milestone:       "v2",
+				AssignedBy:      "@me",
+				Mentioned:       "@me",
+				ReviewRequested: "@me",
+				Since:           "2026-01-01T00:00:00Z",
+				Sort:            "recentupdate",
+			},
+			wantContain: []string{
+				"milestones=v2",
+				"assigned=true",
+				"mentioned=true",
+				"review_requested=true",
+				"since=2026-01-01",
+				"sort=recentupdate",
+			},
+		},
+		{
+			// Endpoint contract: a non-@me author emits NEITHER the me-scope
+			// boolean NOR a per-repo created_by param (the search endpoint ignores
+			// it). Config.Validate rejects this upstream; buildSearchParams just
+			// must not smuggle it through.
+			name:        "non-@me createdBy emits no author filter",
+			filter:      config.PrIssueFilter{CreatedBy: "lunny"},
+			wantAbsent:  []string{"created=true", "created_by"},
+			wantContain: []string{"type="},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -87,7 +116,7 @@ func TestSearchPulls(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	prs, total, err := c.SearchPulls(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"})
+	prs, total, err := c.SearchPulls(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"}, 0)
 	if err != nil {
 		t.Fatalf("SearchPulls: %v", err)
 	}
@@ -115,6 +144,28 @@ func TestSearchPulls(t *testing.T) {
 	}
 }
 
+func TestSearchPullsLimitReachesQuery(t *testing.T) {
+	var gotQuery string
+	srv := searchServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		fmt.Fprint(w, searchJSON)
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	// An explicit limit (as a section's Limit or per-view default supplies) must
+	// reach the search endpoint, not the hardcoded default.
+	if _, _, err := c.SearchPulls(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"}, 100); err != nil {
+		t.Fatalf("SearchPulls: %v", err)
+	}
+	if !strings.Contains(gotQuery, "limit=100") {
+		t.Fatalf("query %q missing limit=100", gotQuery)
+	}
+}
+
 func TestSearchIssues(t *testing.T) {
 	var gotQuery string
 	srv := searchServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +178,7 @@ func TestSearchIssues(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	issues, _, err := c.SearchIssues(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"})
+	issues, _, err := c.SearchIssues(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"}, 0)
 	if err != nil {
 		t.Fatalf("SearchIssues: %v", err)
 	}
@@ -175,7 +226,7 @@ func TestSearchPullsNon2xx(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	prs, total, err := c.SearchPulls(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"})
+	prs, total, err := c.SearchPulls(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"}, 0)
 	if err == nil {
 		t.Fatal("expected an error on HTTP 401, got nil")
 	}
@@ -206,7 +257,7 @@ func TestSearchPullsMapsMergedAndDraft(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	prs, _, err := c.SearchPulls(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"})
+	prs, _, err := c.SearchPulls(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"}, 0)
 	if err != nil {
 		t.Fatalf("SearchPulls: %v", err)
 	}

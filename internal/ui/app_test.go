@@ -39,10 +39,14 @@ func TestModelRendersLoadedPulls(t *testing.T) {
 	}}))
 
 	view := m.View().Content
-	for _, want := range []string{"#128", "Add wiki CLI", "gitea/tea", "@lunny", "1 pull requests"} {
+	// M1: total == 1 renders the singular ("1 pull request", not "1 pull requests").
+	for _, want := range []string{"#128", "Add wiki CLI", "gitea/tea", "@lunny", "1 pull request"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view is missing %q\n---\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "1 pull requests") {
+		t.Fatalf("status line should be singular for total==1, got:\n%s", view)
 	}
 }
 
@@ -155,9 +159,19 @@ func TestSectionSwitchWithTwoSections(t *testing.T) {
 	if len(m.prs) != 2 {
 		t.Fatalf("len(prs) = %d, want 2 (config-driven sections)", len(m.prs))
 	}
+	// 'h' at the first section clamps (stays 0).
+	m = update(t, m, tea.KeyPressMsg{Code: 'h', Text: "h"})
+	if m.currSectionId != 0 {
+		t.Fatalf("'h' at id 0 should clamp: currSectionId = %d, want 0", m.currSectionId)
+	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
 	if m.currSectionId != 1 {
 		t.Fatalf("after 'l' currSectionId = %d, want 1", m.currSectionId)
+	}
+	// 'l' at the last section clamps (stays 1).
+	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.currSectionId != 1 {
+		t.Fatalf("'l' at last id should clamp: currSectionId = %d, want 1", m.currSectionId)
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'h', Text: "h"})
 	if m.currSectionId != 0 {
@@ -182,6 +196,113 @@ func TestSlashFocusesSearch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("'/' should return the search bar's focus command")
 	}
+}
+
+func TestDefaultsViewStartsIssues(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("View = %v, want IssuesView", m.ctx.View)
+	}
+	if len(m.issues) == 0 {
+		t.Fatal("defaults.view=issues should build the issues sections at startup")
+	}
+	if len(m.prs) != 0 {
+		t.Fatalf("len(prs) = %d, want 0 (pulls stay lazy when issues is the start view)", len(m.prs))
+	}
+}
+
+// TestCrossViewFetchRoutesToOwnSlice verifies a late PR fetch that lands while
+// the Issues view is active is still routed to the pulls slice by (id, type),
+// not to whatever section is currently on screen.
+func TestCrossViewFetchRoutesToOwnSlice(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	// Switch to the Issues view (pulls section 0 stays in m.prs, now off-screen).
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("View = %v, want IssuesView", m.ctx.View)
+	}
+	// A pull-request fetch result arrives for section 0 of the pulls view.
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "t1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Prs: []data.PullRequest{{
+				Number: 5, Title: "Late PR", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "t1",
+		},
+	})
+	// Switch back to the pulls view; the fetch must have landed in m.prs.
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("View = %v, want PullsView", m.ctx.View)
+	}
+	if got := m.getCurrSection().NumRows(); got != 1 {
+		t.Fatalf("pulls section NumRows = %d, want 1 (cross-view fetch must route to m.prs)", got)
+	}
+}
+
+// TestSearchFocusDivertsCommandKeys verifies that while the search bar is
+// focused, command keys ('q', 's') are typed into the box instead of quitting
+// or switching views.
+func TestSearchFocusDivertsCommandKeys(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if !m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' should focus the search bar")
+	}
+	// 'q' must not quit; it is typed into the search box.
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	m = next.(Model)
+	if isQuitCmd(cmd) {
+		t.Fatal("'q' while searching must not quit the program")
+	}
+	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "q") {
+		t.Fatalf("search value = %q, want it to contain the typed \"q\"", got)
+	}
+	// 's' must not switch views; it is typed into the search box too.
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("'s' while searching must not switch views: View = %v", m.ctx.View)
+	}
+}
+
+// TestShowingCountAndSingular exercises the two non-plural status-line branches:
+// "showing X of Y" when the page is capped, and the singular for total==1.
+func TestShowingCountAndSingular(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	// One row shown, server total 5 -> "showing 1 of 5 pull requests".
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "t1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Prs: []data.PullRequest{{
+				Number: 1, Title: "One", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+			}},
+			TotalCount: 5, TaskId: "t1",
+		},
+	})
+	if view := m.View().Content; !strings.Contains(view, "showing 1 of 5 pull requests") {
+		t.Fatalf("status line missing \"showing 1 of 5 pull requests\":\n%s", view)
+	}
+	// total == shown == 1 -> singular "1 pull request".
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 2, Title: "Two", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+	view := m.View().Content
+	if !strings.Contains(view, "1 pull request") || strings.Contains(view, "1 pull requests") {
+		t.Fatalf("status line should read singular \"1 pull request\":\n%s", view)
+	}
+}
+
+// isQuitCmd reports whether running cmd yields a tea.QuitMsg.
+func isQuitCmd(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
 }
 
 var errBoom = errBoomType("boom")

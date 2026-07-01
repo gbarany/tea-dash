@@ -28,7 +28,9 @@ type Config struct {
 	Defaults Defaults `yaml:"defaults"`
 }
 
-// Defaults holds startup and limit defaults.
+// Defaults holds startup and limit defaults. PRsLimit and IssuesLimit set the
+// per-view row-fetch cap used when a section omits its own Limit. Precedence:
+// section Limit -> per-view default -> 50.
 type Defaults struct {
 	View        string `yaml:"view"` // "prs" | "issues"
 	PRsLimit    int    `yaml:"prsLimit"`
@@ -48,24 +50,71 @@ type Instance struct {
 type SectionConfig struct {
 	Title  string        `yaml:"title"`
 	Filter PrIssueFilter `yaml:"filter"`
-	Limit  int           `yaml:"limit"` // 0 -> defaults
+	// Limit caps this section's row fetch. 0 falls back to the per-view default
+	// (defaults.prsLimit / defaults.issuesLimit), which in turn falls back to 50.
+	// Precedence: section Limit -> per-view default -> 50.
+	Limit int `yaml:"limit"`
 }
 
 // PrIssueFilter is the structured, config-driven filter for one section. Every
 // field is optional; the zero value means "unconstrained" except State, which
-// defaults to "open". Me-scoped fields take a login or the sentinel "@me".
+// defaults to "open". Me-scoped fields take the sentinel "@me".
 type PrIssueFilter struct {
-	State           string   `yaml:"state"`           // open | closed | all (default open)
-	Type            string   `yaml:"type"`            // pulls | issues (set by the section)
-	Labels          []string `yaml:"labels"`          // label names (AND-ed via the search endpoint)
-	Milestone       string   `yaml:"milestone"`       // milestone name
-	CreatedBy       string   `yaml:"createdBy"`       // login or "@me"
-	AssignedBy      string   `yaml:"assignedBy"`      // login or "@me"
-	Mentioned       string   `yaml:"mentioned"`       // login or "@me"
-	ReviewRequested string   `yaml:"reviewRequested"` // login or "@me" (PRs only)
-	Since           string   `yaml:"since"`           // RFC3339 lower bound on updatedAt
-	Sort            string   `yaml:"sort"`            // e.g. recentupdate
-	Q               string   `yaml:"-"`               // live keyword (set by "/", never persisted)
+	State     string   `yaml:"state"`     // open | closed | all (default open)
+	Type      string   `yaml:"-"`         // pulls | issues (set by the section)
+	Labels    []string `yaml:"labels"`    // label names (AND-ed via the search endpoint)
+	Milestone string   `yaml:"milestone"` // milestone name
+	// The me-scoped author fields accept "@me" only (a plain login is not
+	// supported by the cross-repo search endpoint, which has no per-login author
+	// filter). Validate rejects any other non-empty value.
+	CreatedBy       string `yaml:"createdBy"`       // "@me" only
+	AssignedBy      string `yaml:"assignedBy"`      // "@me" only
+	Mentioned       string `yaml:"mentioned"`       // "@me" only
+	ReviewRequested string `yaml:"reviewRequested"` // "@me" only (PRs only)
+	Since           string `yaml:"since"`           // RFC3339 lower bound on updatedAt
+	Sort            string `yaml:"sort"`            // e.g. recentupdate
+	Q               string `yaml:"-"`               // live keyword (set by "/", never persisted)
+}
+
+// Validate rejects unsupported me-scoped author values. The cross-repo search
+// endpoint has no per-login author filter, so CreatedBy/AssignedBy/Mentioned/
+// ReviewRequested may only be empty or the "@me" sentinel.
+func (f PrIssueFilter) Validate() error {
+	for _, field := range []struct {
+		name string
+		val  string
+	}{
+		{"createdBy", f.CreatedBy},
+		{"assignedBy", f.AssignedBy},
+		{"mentioned", f.Mentioned},
+		{"reviewRequested", f.ReviewRequested},
+	} {
+		if field.val != "" && field.val != "@me" {
+			return fmt.Errorf("filter.%s = %q: only \"@me\" is supported (the cross-repo search endpoint has no per-login author filter)", field.name, field.val)
+		}
+	}
+	return nil
+}
+
+// Validate checks the config for unsupported filter values and an invalid
+// default view, returning the first error found.
+func (c *Config) Validate() error {
+	for _, s := range c.PRSections {
+		if err := s.Filter.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, s := range c.IssuesSections {
+		if err := s.Filter.Validate(); err != nil {
+			return err
+		}
+	}
+	switch c.Defaults.View {
+	case "", "prs", "issues":
+	default:
+		return fmt.Errorf("defaults.view = %q: want \"prs\" or \"issues\"", c.Defaults.View)
+	}
+	return nil
 }
 
 // WithDefaults fills the section-driven Type and the "open" State default,

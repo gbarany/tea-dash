@@ -108,10 +108,11 @@ func (c *Client) search(ctx context.Context, f config.PrIssueFilter, limit int) 
 }
 
 // SearchPulls returns the pull requests matching f across all accessible repos,
-// plus the server's total count. f.Type is forced to "pulls".
-func (c *Client) SearchPulls(ctx context.Context, f config.PrIssueFilter) ([]data.PullRequest, int, error) {
-	f.Type = "pulls"
-	rows, total, err := c.search(ctx, f, 0)
+// plus the server's total count. f.Type is forced to "pulls" and the "open"
+// state default is applied. limit caps the page (0 -> buildSearchParams' 50).
+func (c *Client) SearchPulls(ctx context.Context, f config.PrIssueFilter, limit int) ([]data.PullRequest, int, error) {
+	f = f.WithDefaults("pulls")
+	rows, total, err := c.search(ctx, f, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -123,10 +124,11 @@ func (c *Client) SearchPulls(ctx context.Context, f config.PrIssueFilter) ([]dat
 }
 
 // SearchIssues returns the issues matching f across all accessible repos, plus
-// the server's total count. f.Type is forced to "issues".
-func (c *Client) SearchIssues(ctx context.Context, f config.PrIssueFilter) ([]data.Issue, int, error) {
-	f.Type = "issues"
-	rows, total, err := c.search(ctx, f, 0)
+// the server's total count. f.Type is forced to "issues" and the "open" state
+// default is applied. limit caps the page (0 -> buildSearchParams' 50).
+func (c *Client) SearchIssues(ctx context.Context, f config.PrIssueFilter, limit int) ([]data.Issue, int, error) {
+	f = f.WithDefaults("issues")
+	rows, total, err := c.search(ctx, f, limit)
 	if err != nil {
 		return nil, 0, err
 	}

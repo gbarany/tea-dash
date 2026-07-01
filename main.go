@@ -39,6 +39,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 
 	ov := auth.Overrides{
 		Login:      firstNonEmpty(cfg.Instance.Login, cfg.Login),

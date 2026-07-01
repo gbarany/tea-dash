@@ -7,10 +7,12 @@ for Gitea instead of GitHub.
 tea-dash is a keyboard-driven TUI for triaging pull requests, issues and
 notifications across one or more Gitea instances, without leaving the terminal.
 
-> **Status: early — v1.** A working single screen: a live table of
-> your open pull requests across all your repos (fetched via the Gitea API
-> (Go SDK + REST)). Issues, notifications and PR actions are next. See
-> [`docs/architecture.md`](docs/architecture.md) for the design.
+> **Status: early — v1.** A working multi-view dashboard: live tables of your
+> pull requests and issues across all your repos (fetched via the Gitea API
+> (Go SDK + REST)), with view switching (`s`), configurable sections you page
+> through with `h`/`l`, and live keyword search (`/`). Notifications and PR
+> actions are next. See [`docs/architecture.md`](docs/architecture.md) for the
+> design.
 
 ## Why
 
@@ -67,31 +69,65 @@ tea-dash --help
 
 ### Keys
 
-| Key             | Action            |
-| --------------- | ----------------- |
-| `↑`/`↓`, `j`/`k`| move selection    |
-| `o` / `enter`   | open PR in browser|
-| `r`             | refresh           |
-| `q` / `ctrl+c`  | quit              |
+| Key             | Action                  |
+| --------------- | ----------------------- |
+| `↑`/`↓`, `j`/`k`| move selection          |
+| `s`             | switch view (PRs/issues)|
+| `h` / `l`       | prev / next section     |
+| `/`             | search by keyword       |
+| `o` / `enter`   | open in browser         |
+| `r`             | refresh                 |
+| `q` / `ctrl+c`  | quit                    |
 
 ## Configuration
 
 Optional. Create `~/.config/tea-dash/config.yml`
-(`$XDG_CONFIG_HOME/tea-dash/config.yml`) to pick a specific tea login:
+(`$XDG_CONFIG_HOME/tea-dash/config.yml`) to pick a tea login, choose the startup
+view, and define your own sections:
 
 ```yaml
 # tea login profile to use (optional; empty = your default tea login)
 instance:
   login: ""
-# repos: reserved — not yet wired (planned for a later milestone).
-# tea-dash currently shows PRs across every repo you can access.
-# repos:
-#   - gitea/tea
-#   - gbarany/tea-dash
+
+defaults:
+  view: prs        # startup view: "prs" or "issues"
+  prsLimit: 50     # rows fetched per PR section (0 -> 50)
+  issuesLimit: 50  # rows fetched per issue section (0 -> 50)
+
+# Each section becomes a tab you page through with h/l. Omit prSections /
+# issuesSections entirely to get a single "@me"-authored default section.
+prSections:
+  - title: My PRs
+    filter:
+      state: open          # open | closed | all (default open)
+      createdBy: "@me"     # me-scoped author fields accept "@me" only
+  - title: Review Requested
+    filter:
+      reviewRequested: "@me"
+    limit: 25              # per-section cap; overrides defaults.prsLimit
+
+issuesSections:
+  - title: My Issues
+    filter:
+      state: open
+      assignedBy: "@me"
+      labels: [bug, urgent]  # AND-ed
+      milestone: v2
 ```
 
-With or without a config file, tea-dash shows the pull requests you authored
-across every repo you can access on your Gitea instance.
+`filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
+`assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),
+`sort`. The row cap follows section `limit` -> per-view default -> 50.
+
+> **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
+> `reviewRequested`) support the sentinel `"@me"` only — a plain login is
+> rejected at load, because Gitea's cross-repo search endpoint has no per-login
+> author filter.
+
+With or without a config file, tea-dash shows the pull requests and issues you
+authored across every repo you can access on your Gitea instance; sections and
+filters let you tailor what each tab shows.
 
 ## Development
 

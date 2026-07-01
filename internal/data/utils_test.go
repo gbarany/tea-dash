@@ -17,7 +17,7 @@ func TestPullRequestImplementsRowData(t *testing.T) {
 	}
 	var rd RowData = pr
 	if rd.GetNumber() != 7 || rd.GetTitle() != "Fix thing" ||
-		rd.GetRepoNameWithOwner() != "acme/widgets" || rd.GetUrl() != pr.HTMLURL ||
+		rd.GetRepoNameWithOwner() != "acme/widgets" || rd.GetURL() != pr.HTMLURL ||
 		!rd.GetUpdatedAt().Equal(pr.UpdatedAt) {
 		t.Fatalf("RowData accessors wrong: %+v", rd)
 	}

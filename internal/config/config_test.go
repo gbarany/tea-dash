@@ -99,6 +99,37 @@ issuesSections:
 	}
 }
 
+func TestFilterValidateRejectsNonMe(t *testing.T) {
+	if err := (PrIssueFilter{CreatedBy: "alice"}).Validate(); err == nil {
+		t.Fatal("Validate() should reject a plain login (only \"@me\" is supported)")
+	}
+	if err := (PrIssueFilter{CreatedBy: "@me"}).Validate(); err != nil {
+		t.Fatalf("Validate() rejected \"@me\": %v", err)
+	}
+}
+
+func TestConfigValidateBadView(t *testing.T) {
+	if err := (&Config{Defaults: Defaults{View: "nope"}}).Validate(); err == nil {
+		t.Fatal("Validate() should reject an unknown defaults.view")
+	}
+	for _, view := range []string{"", "prs", "issues"} {
+		if err := (&Config{Defaults: Defaults{View: view}}).Validate(); err != nil {
+			t.Fatalf("Validate() rejected valid view %q: %v", view, err)
+		}
+	}
+}
+
+func TestConfigValidateRejectsBadSectionFilter(t *testing.T) {
+	cfg := &Config{
+		PRSections: []SectionConfig{
+			{Title: "Bad", Filter: PrIssueFilter{CreatedBy: "alice"}},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() should reject a section with a non-@me author filter")
+	}
+}
+
 func TestLoadMissingFileIsEmptyConfig(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := Load()
