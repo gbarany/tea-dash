@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/gbarany/tea-dash/internal/config"
-	"github.com/gbarany/tea-dash/internal/teacli"
+	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
+	"github.com/gbarany/tea-dash/internal/ui/context"
 )
 
 func update(t *testing.T, m Model, msg tea.Msg) Model {
@@ -18,18 +19,24 @@ func update(t *testing.T, m Model, msg tea.Msg) Model {
 	return next.(Model)
 }
 
+func fetchedMsg(prs []data.PullRequest) context.TaskFinishedMsg {
+	return context.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: pullsection.SectionType,
+		TaskId:      "t1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Prs: prs, TotalCount: len(prs), TaskId: "t1",
+		},
+	}
+}
+
 func TestModelRendersLoadedPulls(t *testing.T) {
-	m := New(&config.Config{Repos: []string{"gitea/tea"}})
+	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = update(t, m, pullsLoadedMsg{items: []pullItem{
-		{repo: "gitea/tea", pr: teacli.PullRequest{
-			Number:    128,
-			Title:     "Add wiki CLI",
-			State:     "open",
-			Poster:    &teacli.User{Login: "lunny"},
-			UpdatedAt: time.Now().Add(-2 * time.Hour),
-		}},
-	}})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 128, Title: "Add wiki CLI", RepoNameWithOwner: "gitea/tea",
+		Author: "lunny", State: "open", UpdatedAt: time.Now().Add(-2 * time.Hour),
+	}}))
 
 	view := m.View().Content
 	for _, want := range []string{"#128", "Add wiki CLI", "gitea/tea", "@lunny", "1 pull requests"} {
@@ -40,9 +47,12 @@ func TestModelRendersLoadedPulls(t *testing.T) {
 }
 
 func TestModelRendersError(t *testing.T) {
-	m := New(&config.Config{})
+	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = update(t, m, errMsg{err: errors.New("boom")})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "t1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{TaskId: "t1", Err: errBoom},
+	})
 
 	view := m.View().Content
 	if !strings.Contains(view, "Error") || !strings.Contains(view, "boom") {
@@ -51,9 +61,76 @@ func TestModelRendersError(t *testing.T) {
 }
 
 func TestQuitKeyStopsProgram(t *testing.T) {
-	m := New(&config.Config{})
+	m := New(&config.Config{}, nil)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	if cmd == nil {
 		t.Fatal("expected a quit command, got nil")
 	}
 }
+
+func TestUnknownSectionIsNoOp(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "One", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	s := m.getCurrSection()
+	wantRows, wantTotal := s.NumRows(), s.GetTotalCount()
+
+	// Correct id, WRONG type: the compound (id && type) guard must reject this
+	// without touching the section, and return no command.
+	next, cmd := m.Update(context.TaskFinishedMsg{SectionId: 0, SectionType: "nope", TaskId: "x"})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for a type-mismatched TaskFinishedMsg, got %v", cmd)
+	}
+	s = m.getCurrSection()
+	if s.NumRows() != wantRows || s.GetTotalCount() != wantTotal {
+		t.Fatalf("section changed: rows=%d (want %d), total=%d (want %d)",
+			s.NumRows(), wantRows, s.GetTotalCount(), wantTotal)
+	}
+}
+
+func TestOpenKeyWithNoRowsIsNoOp(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("open with no rows panicked: %v", r)
+		}
+	}()
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd when there are no rows, got %v", cmd)
+	}
+}
+
+func TestRefreshGatedWhileLoading(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	// A fresh model starts in the loading state, so refresh is a no-op.
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"}); cmd != nil {
+		t.Fatalf("refresh while loading should be a no-op, got %v", cmd)
+	}
+	// Once a fetch result lands (loading=false), refresh triggers a new fetch.
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, fetchedMsg(nil))
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"}); cmd == nil {
+		t.Fatal("refresh after load should trigger a fetch, got nil cmd")
+	}
+}
+
+func TestFetchRowsRegistersTask(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	// Exercise the real StartTask closure wired in New: FetchRows registers the
+	// task synchronously (the nil-client fetch closure is not run here).
+	_ = m.getCurrSection().FetchRows()
+	if len(m.tasks) != 1 {
+		t.Fatalf("len(tasks) = %d, want 1 after FetchRows", len(m.tasks))
+	}
+}
+
+var errBoom = errBoomType("boom")
+
+type errBoomType string
+
+func (e errBoomType) Error() string { return string(e) }

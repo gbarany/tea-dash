@@ -7,36 +7,41 @@ for Gitea instead of GitHub.
 tea-dash is a keyboard-driven TUI for triaging pull requests, issues and
 notifications across one or more Gitea instances, without leaving the terminal.
 
-> **Status: early — v1.** A working single screen: a live, sortable table of
-> open pull requests across the repos you configure (fetched via `tea api`).
-> Issues, notifications and PR actions are next. See
+> **Status: early — v1.** A working single screen: a live table of
+> your open pull requests across all your repos (fetched via the Gitea API
+> (Go SDK + REST)). Issues, notifications and PR actions are next. See
 > [`docs/architecture.md`](docs/architecture.md) for the design.
 
 ## Why
 
 There is a rich TUI dashboard for GitHub (`gh-dash`) but nothing equivalent for
-Gitea/Forgejo. tea-dash fills that gap by building on Gitea's own official CLI.
+Gitea/Forgejo. tea-dash fills that gap by building on Gitea's own official Go
+SDK, reusing the `tea` CLI's stored login for auth.
 
 ## How it works
 
-tea-dash does **not** talk to the Gitea API directly. Instead it shells out to
-Gitea's official [`tea`](https://gitea.com/gitea/tea) CLI, primarily via
-`tea api`, which returns raw, fully-typed Gitea REST JSON. This means tea-dash:
+tea-dash talks to Gitea directly via the official Go SDK
+(`code.gitea.io/sdk/gitea`). It reuses your existing `tea` login
+(`~/Library/Application Support/tea/config.yml` on macOS /
+`~/.config/tea/config.yml` on Linux) for the instance URL and token, so you get
+auth for free without tea-dash handling credentials itself — but `tea` is **not**
+run at runtime. This means tea-dash:
 
-- reuses your existing `tea` logins (`~/.config/tea/config.yml`), so **auth and
-  multi-instance support come for free**;
-- stays a pure presentation layer with no credential handling of its own;
-- works against any Gitea/Forgejo server `tea` supports.
+- reuses your existing `tea` logins, so **auth and multi-instance support come
+  for free**;
+- keeps credentials out of its own hands — it only reads what `tea` already
+  stored;
+- works against any Gitea/Forgejo server the SDK supports.
 
-See [`docs/architecture.md`](docs/architecture.md) for the details, including the
-important distinction between `tea <list> -o json` (flat, all-string columns)
-and `tea api` (raw typed objects).
+See [`docs/architecture.md`](docs/architecture.md) for the details.
 
 ## Requirements
 
 - [Go](https://go.dev) 1.25+ (to build)
-- [`tea`](https://gitea.com/gitea/tea) on your `PATH`, with at least one login
-  configured (`tea login add`)
+- A `tea` login for the instance URL and token. You only need
+  [`tea`](https://gitea.com/gitea/tea) **once** to create a login
+  (`tea login add`) — it is not a runtime dependency, and does not need to be on
+  your `PATH` when tea-dash runs.
 
 ## Install
 
@@ -72,19 +77,21 @@ tea-dash --help
 ## Configuration
 
 Optional. Create `~/.config/tea-dash/config.yml`
-(`$XDG_CONFIG_HOME/tea-dash/config.yml`) to choose which repositories to watch:
+(`$XDG_CONFIG_HOME/tea-dash/config.yml`) to pick a specific tea login:
 
 ```yaml
 # tea login profile to use (optional; empty = your default tea login)
-login: ""
-# repositories to show pull requests for
-repos:
-  - gitea/tea
-  - gbarany/tea-dash
+instance:
+  login: ""
+# repos: reserved — not yet wired (planned for a later milestone).
+# tea-dash currently shows PRs across every repo you can access.
+# repos:
+#   - gitea/tea
+#   - gbarany/tea-dash
 ```
 
-If the file is absent, tea-dash falls back to the Gitea repository in your
-current directory (resolved by `tea` from the git remote).
+With or without a config file, tea-dash shows the pull requests you authored
+across every repo you can access on your Gitea instance.
 
 ## Development
 
@@ -101,7 +108,9 @@ Project layout:
 ```
 main.go                 entrypoint + flag handling; loads config, starts the TUI
 internal/ui/            Bubble Tea model, table, keybindings, styles
-internal/teacli/        wrapper around the `tea` CLI (tea api) + typed responses
+internal/gitea/         Gitea Go SDK client wrapper + me-scoped PR search
+internal/auth/          resolves instance URL + token from the tea config
+internal/data/          TUI-agnostic domain model (PullRequest)
 internal/config/        ~/.config/tea-dash/config.yml loading
 internal/build/         version metadata (set via -ldflags)
 ```
