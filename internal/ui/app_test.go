@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/gbarany/tea-dash/internal/config"
-	"github.com/gbarany/tea-dash/internal/teacli"
+	"github.com/gbarany/tea-dash/internal/data"
 )
 
 func update(t *testing.T, m Model, msg tea.Msg) Model {
@@ -19,17 +19,16 @@ func update(t *testing.T, m Model, msg tea.Msg) Model {
 }
 
 func TestModelRendersLoadedPulls(t *testing.T) {
-	m := New(&config.Config{Repos: []string{"gitea/tea"}})
+	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = update(t, m, pullsLoadedMsg{items: []pullItem{
-		{repo: "gitea/tea", pr: teacli.PullRequest{
-			Number:    128,
-			Title:     "Add wiki CLI",
-			State:     "open",
-			Poster:    &teacli.User{Login: "lunny"},
-			UpdatedAt: time.Now().Add(-2 * time.Hour),
-		}},
-	}})
+	m = update(t, m, pullsLoadedMsg{items: []data.PullRequest{{
+		Number:            128,
+		Title:             "Add wiki CLI",
+		RepoNameWithOwner: "gitea/tea",
+		Author:            "lunny",
+		State:             "open",
+		UpdatedAt:         time.Now().Add(-2 * time.Hour),
+	}}})
 
 	view := m.View().Content
 	for _, want := range []string{"#128", "Add wiki CLI", "gitea/tea", "@lunny", "1 pull requests"} {
@@ -40,7 +39,7 @@ func TestModelRendersLoadedPulls(t *testing.T) {
 }
 
 func TestModelRendersError(t *testing.T) {
-	m := New(&config.Config{})
+	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = update(t, m, errMsg{err: errors.New("boom")})
 
@@ -51,7 +50,7 @@ func TestModelRendersError(t *testing.T) {
 }
 
 func TestQuitKeyStopsProgram(t *testing.T) {
-	m := New(&config.Config{})
+	m := New(&config.Config{}, nil)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	if cmd == nil {
 		t.Fatal("expected a quit command, got nil")

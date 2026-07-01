@@ -11,7 +11,6 @@ var (
 	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	helpStyle    = lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("241"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ADD8"))
 )
 
