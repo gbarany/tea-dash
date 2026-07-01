@@ -31,6 +31,11 @@ type Instance struct {
 	CACert   string `yaml:"caCert"`             // path to a private CA bundle
 }
 
+// SectionConfig describes one dashboard section (a tab). M1b adds Filters/Limit.
+type SectionConfig struct {
+	Title string `yaml:"title"`
+}
+
 // Repo is a parsed owner/name repository reference.
 type Repo struct {
 	Owner string
