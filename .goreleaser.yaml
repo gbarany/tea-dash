@@ -49,3 +49,26 @@ changelog:
 
 release:
   draft: false
+
+homebrew_casks:
+  - name: tea-dash
+    repository:
+      owner: gbarany
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/gbarany/tea-dash"
+    description: "Terminal dashboard for Gitea/Forgejo, in the spirit of gh-dash"
+    license: "MIT"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    # The binaries aren't code-signed/notarized, so strip the macOS quarantine
+    # bit on install (else Gatekeeper blocks "tea-dash is damaged").
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/tea-dash"]
+          end
