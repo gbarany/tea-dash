@@ -20,13 +20,10 @@ type Section interface {
 	GetTitle() string
 	GetTotalCount() int
 	GetIsLoading() bool
-	SetIsLoading(bool)
 	GetError() error
 
 	NumRows() int
-	CurrRow() int
 	GetCurrRow() data.RowData
-	BuildRows() []table.Row
 	FetchRows() tea.Cmd
 
 	Update(msg tea.Msg) (Section, tea.Cmd)
@@ -41,6 +38,12 @@ type NewOptions struct {
 	Ctx     *context.ProgramContext
 	Config  config.SectionConfig
 	Columns []table.Column
+
+	// Body copy for the loading/empty states, so the generic base carries no
+	// section-specific wording.
+	LoadingText string
+	EmptyText   string
+	EmptyHint   string
 }
 
 // BaseModel provides the shared machinery concrete sections embed.
@@ -52,6 +55,9 @@ type BaseModel struct {
 	isLoading   bool
 	lastFetchID string
 	err         error
+	loadingText string
+	emptyText   string
+	emptyHint   string
 
 	Ctx     *context.ProgramContext
 	Config  config.SectionConfig
@@ -78,6 +84,9 @@ func NewBaseModel(o NewOptions) BaseModel {
 		Spinner:     sp,
 		Columns:     o.Columns,
 		isLoading:   true,
+		loadingText: o.LoadingText,
+		emptyText:   o.EmptyText,
+		emptyHint:   o.EmptyHint,
 	}
 }
 
@@ -115,13 +124,13 @@ func (m *BaseModel) View() string {
 	st := m.Ctx.Styles
 	switch {
 	case m.isLoading:
-		return "\n  " + m.Spinner.View() + " Loading pull requests…"
+		return "\n  " + m.Spinner.View() + " " + m.loadingText
 	case m.err != nil:
 		return "\n" + st.ErrorText.Render("  Error: "+m.err.Error()) + "\n\n" +
 			st.DimText.Render("  Check your Gitea login (run `tea login add`) and network.")
 	case m.numRows == 0:
-		return "\n  No open pull requests authored by you.\n\n" +
-			st.DimText.Render("  This board shows PRs you created across all repos on your Gitea instance.")
+		return "\n  " + m.emptyText + "\n\n" +
+			st.DimText.Render("  "+m.emptyHint)
 	default:
 		return m.Table.View()
 	}

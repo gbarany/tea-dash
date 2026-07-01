@@ -25,6 +25,14 @@ type Model struct {
 	tasks         map[string]context.Task
 	currSectionId int
 	sections      []section.Section
+	notice        string // transient status message (e.g. browser-open failure)
+}
+
+// openFailedMsg reports that opening a URL in the browser failed, so the UI can
+// surface the error (and the URL, to copy) instead of failing silently.
+type openFailedMsg struct {
+	url string
+	err error
 }
 
 // New builds the root model. client may be nil in tests (only FetchRows uses it).
@@ -81,7 +89,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delete(m.tasks, msg.TaskId)
 		return m, m.updateSection(msg.SectionId, msg.SectionType, msg.Msg)
 
+	case openFailedMsg:
+		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
+		return m, nil
+
 	case tea.KeyPressMsg:
+		m.notice = "" // any key dismisses a transient notice
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -107,7 +120,11 @@ func (m Model) View() tea.View {
 	if tv := m.tabs.View(); tv != "" {
 		parts = append(parts, tv)
 	}
-	parts = append(parts, m.getCurrSection().View(), m.statusLine(),
+	status := m.statusLine()
+	if m.notice != "" {
+		status = m.ctx.Styles.ErrorText.Render(m.notice)
+	}
+	parts = append(parts, m.getCurrSection().View(), status,
 		helpStyle.Render("↑/↓ move · r refresh · o/enter open in browser · q quit"))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
@@ -124,8 +141,13 @@ func (m Model) openSelected() tea.Cmd {
 		return nil
 	}
 	url := row.GetUrl()
+	if url == "" {
+		return nil
+	}
 	return func() tea.Msg {
-		_ = openURL(url)
+		if err := openURL(url); err != nil {
+			return openFailedMsg{url: url, err: err}
+		}
 		return nil
 	}
 }
@@ -167,7 +189,12 @@ func (m Model) statusLine() string {
 	if s.GetIsLoading() || s.GetError() != nil {
 		return ""
 	}
-	return m.ctx.Styles.DimText.Render(fmt.Sprintf("%d pull requests", s.GetTotalCount()))
+	total := s.GetTotalCount()
+	shown := s.NumRows()
+	if total > shown {
+		return m.ctx.Styles.DimText.Render(fmt.Sprintf("showing %d of %d pull requests", shown, total))
+	}
+	return m.ctx.Styles.DimText.Render(fmt.Sprintf("%d pull requests", total))
 }
 
 // toSectioners adapts sections to the tab bar's minimal interface.

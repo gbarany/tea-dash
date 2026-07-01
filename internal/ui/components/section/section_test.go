@@ -15,11 +15,14 @@ func newBase(t *testing.T) *BaseModel {
 	t.Helper()
 	ctx := &context.ProgramContext{Styles: context.DefaultStyles()}
 	b := NewBaseModel(NewOptions{
-		Id:      0,
-		Type:    "pr",
-		Ctx:     ctx,
-		Config:  config.SectionConfig{Title: "My Pull Requests"},
-		Columns: []table.Column{{Title: "#", Width: 6}, {Title: "Title", Width: 20}},
+		Id:          0,
+		Type:        "pr",
+		Ctx:         ctx,
+		Config:      config.SectionConfig{Title: "My Pull Requests"},
+		Columns:     []table.Column{{Title: "#", Width: 6}, {Title: "Title", Width: 20}},
+		LoadingText: "Loading pull requests…",
+		EmptyText:   "No open pull requests authored by you.",
+		EmptyHint:   "This board shows PRs you created across all repos on your Gitea instance.",
 	})
 	return &b
 }

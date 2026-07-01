@@ -45,9 +45,11 @@ func NewClient(ctx context.Context, cfg auth.Config) (*Client, error) {
 		}
 		tlsCfg.RootCAs = pool
 	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = tlsCfg
 	hc := &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Transport: tr,
 	}
 
 	client, err := sdk.NewClient(cfg.URL,
@@ -56,7 +58,7 @@ func NewClient(ctx context.Context, cfg auth.Config) (*Client, error) {
 		sdk.SetHTTPClient(hc),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initializing Gitea client: %w", err)
 	}
 
 	me, _, err := client.GetMyUserInfo()

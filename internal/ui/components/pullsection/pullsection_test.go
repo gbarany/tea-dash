@@ -49,6 +49,30 @@ func TestFetchedMsgBuildsRows(t *testing.T) {
 	}
 }
 
+func TestGetCurrRowNilBeforeFetch(t *testing.T) {
+	m := newModel(t)
+	if m.GetCurrRow() != nil {
+		t.Fatalf("GetCurrRow() = %+v, want nil before any fetch", m.GetCurrRow())
+	}
+}
+
+func TestDraftPRRowShowsDraft(t *testing.T) {
+	m := newModel(t)
+	m.SetLastFetchID("t1")
+	next, _ := m.Update(SectionPullRequestsFetchedMsg{
+		Prs: []data.PullRequest{{
+			Number: 9, Title: "WIP", RepoNameWithOwner: "gitea/tea",
+			Author: "me", State: "open", Draft: true,
+		}},
+		TotalCount: 1, TaskId: "t1",
+	})
+	m = next.(*Model)
+	row := m.BuildRows()[0]
+	if !strings.Contains(strings.Join([]string(row), "|"), "draft") {
+		t.Fatalf("draft PR row %v should show \"draft\"", row)
+	}
+}
+
 func TestStaleFetchIgnored(t *testing.T) {
 	m := newModel(t)
 	m.SetLastFetchID("t2") // an in-flight fetch t2 is expected

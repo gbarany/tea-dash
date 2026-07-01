@@ -32,6 +32,8 @@ func TestSearchMyPulls(t *testing.T) {
 	})
 	mux.HandleFunc("/api/v1/repos/issues/search", func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
+		// The page is capped, but the server reports the real total via header.
+		w.Header().Set("X-Total-Count", "5")
 		fmt.Fprint(w, searchJSON)
 	})
 	srv := httptest.NewServer(mux)
@@ -42,12 +44,15 @@ func TestSearchMyPulls(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	prs, err := c.SearchMyPulls(context.Background(), "open")
+	prs, total, err := c.SearchMyPulls(context.Background(), "open")
 	if err != nil {
 		t.Fatalf("SearchMyPulls: %v", err)
 	}
 	if len(prs) != 1 {
 		t.Fatalf("got %d PRs, want 1", len(prs))
+	}
+	if total != 5 {
+		t.Fatalf("total = %d, want 5 (from X-Total-Count)", total)
 	}
 	pr := prs[0]
 	if pr.Number != 7 || pr.Title != "Fix thing" ||
@@ -68,5 +73,79 @@ func TestSearchMyPulls(t *testing.T) {
 	}
 	if strings.Contains(gotQuery, "created_by") {
 		t.Fatalf("query %q must not use created_by on the search endpoint", gotQuery)
+	}
+}
+
+// searchServer builds a fake Gitea that serves the version/user probes plus a
+// /repos/issues/search handler supplied by the caller.
+func searchServer(t *testing.T, search http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/issues/search", search)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestSearchMyPullsNon2xx(t *testing.T) {
+	srv := searchServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"message":"unauthorized"}`)
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	prs, total, err := c.SearchMyPulls(context.Background(), "open")
+	if err == nil {
+		t.Fatal("expected an error on HTTP 401, got nil")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("error %q should contain the status 401", err)
+	}
+	if total != 0 {
+		t.Fatalf("total = %d, want 0 on error", total)
+	}
+	if prs != nil {
+		t.Fatalf("prs = %+v, want nil on error", prs)
+	}
+}
+
+func TestSearchMyPullsMapsMergedAndDraft(t *testing.T) {
+	const body = `[
+	  {"number":1,"title":"Merged one","state":"closed",
+	   "pull_request":{"merged":true}},
+	  {"number":2,"title":"Draft one","state":"open",
+	   "pull_request":{"draft":true}}
+	]`
+	srv := searchServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, body)
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	prs, _, err := c.SearchMyPulls(context.Background(), "open")
+	if err != nil {
+		t.Fatalf("SearchMyPulls: %v", err)
+	}
+	if len(prs) != 2 {
+		t.Fatalf("got %d PRs, want 2", len(prs))
+	}
+	if prs[0].State != "merged" {
+		t.Fatalf("merged row State = %q, want %q", prs[0].State, "merged")
+	}
+	if !prs[1].Draft {
+		t.Fatalf("draft row Draft = %v, want true", prs[1].Draft)
 	}
 }

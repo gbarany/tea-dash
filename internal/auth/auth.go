@@ -4,6 +4,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -64,8 +65,14 @@ func Resolve(ov Overrides) (Config, error) {
 // ResolveFromFile resolves auth against a specific tea config path (used in
 // tests). A missing file is not an error: overrides/env may still suffice.
 func ResolveFromFile(path string, ov Overrides) (Config, error) {
-	logins := readTeaLogins(path)
+	logins, err := readTeaLogins(path)
+	if err != nil {
+		return Config{}, err
+	}
 	login := pickLogin(logins, ov.Login)
+	if ov.Login != "" && login == nil {
+		return Config{}, fmt.Errorf("tea login %q not found", ov.Login)
+	}
 
 	url := firstNonEmpty(ov.URL, os.Getenv("TEA_DASH_URL"), loginField(login, func(l teaLogin) string { return l.URL }))
 	token := firstNonEmpty(ov.Token, os.Getenv("TEA_DASH_TOKEN"), loginField(login, func(l teaLogin) string { return l.Token }))
@@ -84,17 +91,22 @@ func ResolveFromFile(path string, ov Overrides) (Config, error) {
 	return Config{URL: url, Token: token, Insecure: insecure, CACertPath: ov.CACertPath}, nil
 }
 
-// readTeaLogins returns tea's logins, or nil if the file is absent/unreadable.
-func readTeaLogins(path string) []teaLogin {
+// readTeaLogins returns tea's logins. A missing file is not an error (returns
+// nil, nil); other read/parse failures are surfaced so real config problems are
+// not silently swallowed.
+func readTeaLogins(path string) ([]teaLogin, error) {
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("reading tea config %s: %w", path, err)
 	}
 	var cfg teaConfigFile
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil
+		return nil, fmt.Errorf("parsing tea config %s: %w", path, err)
 	}
-	return cfg.Logins
+	return cfg.Logins, nil
 }
 
 // pickLogin selects a login: by name if given, else the default, else the sole

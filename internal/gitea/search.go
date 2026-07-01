@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/gbarany/tea-dash/internal/data"
@@ -39,9 +40,12 @@ type searchIssue struct {
 }
 
 // SearchMyPulls returns the authenticated user's pull requests (authored by
-// them) across all accessible repos, in the given state ("open"/"closed"/"all").
-// It uses the cross-repo search endpoint with the me-scoping boolean created=true.
-func (c *Client) SearchMyPulls(ctx context.Context, state string) ([]data.PullRequest, error) {
+// them) across all accessible repos, in the given state ("open"/"closed"/"all"),
+// plus the server's total count (from the X-Total-Count header). It uses the
+// cross-repo search endpoint with the me-scoping boolean created=true. The page
+// is capped at limit=50 (full pagination is deferred), so total may exceed the
+// number of returned PRs.
+func (c *Client) SearchMyPulls(ctx context.Context, state string) ([]data.PullRequest, int, error) {
 	if state == "" {
 		state = "open"
 	}
@@ -52,15 +56,23 @@ func (c *Client) SearchMyPulls(ctx context.Context, state string) ([]data.PullRe
 	q.Set("limit", "50")
 
 	var rows []searchIssue
-	if err := c.rawGet(ctx, "/repos/issues/search?"+q.Encode(), &rows); err != nil {
-		return nil, err
+	header, err := c.rawGet(ctx, "/repos/issues/search?"+q.Encode(), &rows)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	prs := make([]data.PullRequest, 0, len(rows))
 	for _, it := range rows {
 		prs = append(prs, mapSearchIssue(it))
 	}
-	return prs, nil
+
+	total := len(prs)
+	if v := header.Get("X-Total-Count"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			total = n
+		}
+	}
+	return prs, total, nil
 }
 
 func mapSearchIssue(it searchIssue) data.PullRequest {
@@ -91,27 +103,41 @@ func mapSearchIssue(it searchIssue) data.PullRequest {
 }
 
 // rawGet issues an authenticated GET against {baseURL}/api/v1{path} using the
-// shared HTTP client and token, decoding the JSON body into out.
-func (c *Client) rawGet(ctx context.Context, path string, out any) error {
+// shared HTTP client and token, decoding the JSON body into out. It returns the
+// response headers (which survive the body close) so callers can read metadata
+// such as X-Total-Count.
+func (c *Client) rawGet(ctx context.Context, path string, out any) (http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1"+path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "token "+c.token)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("gitea GET %s: %s: %s", path, resp.Status, string(body))
+		return nil, fmt.Errorf("gitea GET %s: %s: %s", path, resp.Status, truncate(body, 500))
 	}
-	return json.Unmarshal(body, out)
+	if err := json.Unmarshal(body, out); err != nil {
+		return nil, fmt.Errorf("decoding gitea GET %s: %w", path, err)
+	}
+	return resp.Header, nil
+}
+
+// truncate returns b as a string, clipped to max bytes with an ellipsis marker
+// appended when it was longer, so an HTML error page cannot flood the TUI.
+func truncate(b []byte, max int) string {
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "…"
 }

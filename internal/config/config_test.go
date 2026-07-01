@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -60,10 +62,31 @@ instance:
 	}
 }
 
-func TestSectionConfigZeroValue(t *testing.T) {
-	var s SectionConfig
-	s.Title = "My Pull Requests"
-	if s.Title != "My Pull Requests" {
-		t.Fatalf("SectionConfig.Title = %q", s.Title)
+func TestLoadMissingFileIsEmptyConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load() returned a nil *Config")
+	}
+	if len(cfg.Repos) != 0 || cfg.Login != "" || cfg.Instance != (Instance{}) {
+		t.Fatalf("Load() = %+v, want an empty config", cfg)
+	}
+}
+
+func TestLoadMalformedFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p := filepath.Join(dir, "tea-dash", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("instance:\n  url: \"unterminated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("expected a parse error for malformed config YAML")
 	}
 }

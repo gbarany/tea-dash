@@ -42,11 +42,14 @@ type SectionPullRequestsFetchedMsg struct {
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	m := &Model{}
 	m.BaseModel = section.NewBaseModel(section.NewOptions{
-		Id:      id,
-		Type:    SectionType,
-		Ctx:     ctx,
-		Config:  cfg,
-		Columns: columns(ctx.MainContentWidth),
+		Id:          id,
+		Type:        SectionType,
+		Ctx:         ctx,
+		Config:      cfg,
+		Columns:     columns(ctx.MainContentWidth),
+		LoadingText: "Loading pull requests…",
+		EmptyText:   "No open pull requests authored by you.",
+		EmptyHint:   "This board shows PRs you created across all repos on your Gitea instance.",
 	})
 	return m
 }
@@ -62,10 +65,10 @@ func (m *Model) FetchRows() tea.Cmd {
 	fetch := func() tea.Msg {
 		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), fetchTimeout)
 		defer cancel()
-		prs, err := client.SearchMyPulls(ctx, "open")
+		prs, total, err := client.SearchMyPulls(ctx, "open")
 		return appctx.TaskFinishedMsg{
 			SectionId: id, SectionType: sType, TaskId: taskId,
-			Msg: SectionPullRequestsFetchedMsg{Prs: prs, TotalCount: len(prs), TaskId: taskId, Err: err},
+			Msg: SectionPullRequestsFetchedMsg{Prs: prs, TotalCount: total, TaskId: taskId, Err: err},
 		}
 	}
 	return tea.Batch(start, m.Spinner.Tick, fetch)
