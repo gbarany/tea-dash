@@ -41,13 +41,13 @@ func TestPullDetailConstruction(t *testing.T) {
 		Deletions:    3,
 		ChangedFiles: 2,
 		Comments:     []Comment{{Author: "a", Body: "b", CreatedAt: now}},
-		Reviews:      []Review{{Author: "r", State: "APPROVED", Body: "lgtm", SubmittedAt: now}},
+		Reviews:      []Review{{Author: "r", State: ReviewStateApproved, Body: "lgtm", SubmittedAt: now}},
 		CI: CIStatus{
-			State: "success",
+			State: CIStateSuccess,
 			SHA:   "deadbeef",
 			Total: 1,
 			Checks: []Check{
-				{Context: "build", State: "success", Description: "ok", TargetURL: "http://x"},
+				{Context: "build", State: CheckStateSuccess, Description: "ok", TargetURL: "http://x"},
 			},
 		},
 	}
@@ -57,11 +57,14 @@ func TestPullDetailConstruction(t *testing.T) {
 	if len(d.Comments) != 1 || d.Comments[0].Author != "a" {
 		t.Errorf("comments did not round-trip: %+v", d.Comments)
 	}
-	if len(d.Reviews) != 1 || d.Reviews[0].State != "APPROVED" {
+	if len(d.Reviews) != 1 || d.Reviews[0].State != ReviewStateApproved {
 		t.Errorf("reviews did not round-trip: %+v", d.Reviews)
 	}
 	if d.CI.Total != 1 || len(d.CI.Checks) != 1 || d.CI.Checks[0].Context != "build" {
 		t.Errorf("CI did not round-trip: %+v", d.CI)
+	}
+	if !d.CI.HasCI() {
+		t.Error("CI with a state/checks should report HasCI")
 	}
 }
 
