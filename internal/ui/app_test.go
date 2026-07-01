@@ -34,6 +34,7 @@ func fetchedMsg(prs []data.PullRequest) context.TaskFinishedMsg {
 func TestModelRendersLoadedPulls(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"}) // close default preview for full-width table assertions
 	m = update(t, m, fetchedMsg([]data.PullRequest{{
 		Number: 128, Title: "Add wiki CLI", RepoNameWithOwner: "gitea/tea",
 		Author: "lunny", State: "open", UpdatedAt: time.Now().Add(-2 * time.Hour),
@@ -180,6 +181,47 @@ func TestSectionSwitchWithTwoSections(t *testing.T) {
 	}
 }
 
+func TestDefaultPullSectionsIncludeClosedHistory(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	if len(m.prs) != 2 {
+		t.Fatalf("len(prs) = %d, want open + closed default sections", len(m.prs))
+	}
+
+	open := m.prs[0].(*pullsection.Model).Config
+	if open.Title != "Open Pull Requests" || open.Filter.State != "open" || open.Filter.CreatedBy != "@me" {
+		t.Fatalf("open default section = %+v, want title/open/@me", open)
+	}
+
+	closed := m.prs[1].(*pullsection.Model).Config
+	if closed.Title != "Closed Pull Requests" || closed.Filter.State != "closed" || closed.Filter.CreatedBy != "@me" {
+		t.Fatalf("closed default section = %+v, want title/closed/@me", closed)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.currSectionId != 1 {
+		t.Fatalf("after 'l' currSectionId = %d, want the closed PR section", m.currSectionId)
+	}
+}
+
+func TestClosedPullSectionEmptyStateIsNotOpenSpecific(t *testing.T) {
+	m := New(&config.Config{
+		PRSections: []config.SectionConfig{{
+			Title:  "Closed Pull Requests",
+			Filter: config.PrIssueFilter{State: "closed", CreatedBy: "@me"},
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, fetchedMsg(nil))
+
+	view := m.View().Content
+	if strings.Contains(view, "No open pull requests") {
+		t.Fatalf("closed PR section must not render an open-specific empty state:\n%s", view)
+	}
+	if !strings.Contains(view, "No pull requests match this filter") {
+		t.Fatalf("closed PR section missing generic empty state:\n%s", view)
+	}
+}
+
 func TestSlashFocusesSearch(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
@@ -304,6 +346,7 @@ func TestShowingCountAndSingular(t *testing.T) {
 func TestModelRendersLoadedIssues(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"}) // close default preview for full-width table assertions
 	if m.ctx.View != context.IssuesView {
 		t.Fatalf("View = %v, want IssuesView", m.ctx.View)
 	}
@@ -343,38 +386,36 @@ func TestModelRendersLoadedIssues(t *testing.T) {
 	}
 }
 
-// TestTogglePreviewOpensSidebar verifies 'p' opens the preview pane: it flips
-// ctx.PreviewOpen, sizes the pane, and the composed View() now renders the
-// sidebar region (its "Loading…" placeholder for the selected, not-yet-enriched
-// row — a string the loaded table body never shows).
-func TestTogglePreviewOpensSidebar(t *testing.T) {
+// TestPreviewStartsOpenAndToggles verifies the preview pane is visible by
+// default: the initial window size gives it dimensions and the composed View()
+// renders the sidebar region. 'p' still toggles it closed and open again.
+func TestPreviewStartsOpenAndToggles(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = update(t, m, fetchedMsg([]data.PullRequest{{
 		Number: 7, Title: "Preview me", RepoNameWithOwner: "gitea/tea",
 		Author: "me", State: "open",
 	}}))
-	if m.ctx.PreviewOpen {
-		t.Fatal("preview should start closed")
-	}
-	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 	if !m.ctx.PreviewOpen {
-		t.Fatal("'p' should open the preview")
+		t.Fatal("preview should start open")
 	}
 	if m.ctx.PreviewWidth <= 0 {
 		t.Fatalf("preview width should be positive when open, got %d", m.ctx.PreviewWidth)
 	}
 	view := m.View().Content
 	if !strings.Contains(view, "Loading") {
-		t.Fatalf("open preview should render the sidebar region (Loading placeholder):\n%s", view)
+		t.Fatalf("default-open preview should render the sidebar region (Loading placeholder):\n%s", view)
 	}
-	// Toggling again closes the pane and restores the full-width table.
 	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 	if m.ctx.PreviewOpen {
-		t.Fatal("second 'p' should close the preview")
+		t.Fatal("'p' should close the preview")
 	}
 	if m.ctx.PreviewWidth != 0 {
 		t.Fatalf("closed preview width should be 0, got %d", m.ctx.PreviewWidth)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("second 'p' should reopen the preview")
 	}
 }
 
@@ -388,7 +429,6 @@ func TestEnrichedMsgPopulatesSidebar(t *testing.T) {
 		Number: 42, Title: "Add preview", RepoNameWithOwner: "gbarany/tea-dash",
 		Author: "me", State: "open",
 	}}))
-	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 
 	key := m.selKey()
 	if key != "gbarany/tea-dash#42" {
@@ -417,7 +457,6 @@ func TestEnrichedMsgErrorRendersFailureAndCanRecover(t *testing.T) {
 		Number: 9, Title: "Needs detail", RepoNameWithOwner: "gbarany/tea-dash",
 		Author: "me", State: "open",
 	}}))
-	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 
 	key := m.selKey()
 	m = update(t, m, enrichedMsg{key: key, sectionType: pullsection.SectionType, err: errBoom})
@@ -451,7 +490,6 @@ func TestRefreshClearsSelectedPreviewCache(t *testing.T) {
 		Number: 11, Title: "Refresh detail", RepoNameWithOwner: "gbarany/tea-dash",
 		Author: "me", State: "open",
 	}}))
-	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 
 	key := m.selKey()
 	m = update(t, m, enrichedMsg{
@@ -493,7 +531,6 @@ func TestPreviewErrorsDoNotLeakBetweenPullsAndIssuesWithSameNumber(t *testing.T)
 			TotalCount: 1, TaskId: "i1",
 		},
 	})
-	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 
 	key := m.selKey()
 	m = update(t, m, enrichedMsg{
@@ -553,7 +590,6 @@ func TestPreviewRefreshesWhenSwitchingSections(t *testing.T) {
 			TotalCount: 1, TaskId: "p1",
 		},
 	})
-	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 	firstKey := m.selKey()
 	m = update(t, m, enrichedMsg{
 		key:  firstKey,
@@ -585,7 +621,6 @@ func TestPreviewLayoutSmallTerminalDoesNotPanic(t *testing.T) {
 			t.Fatalf("tiny preview layout panicked: %v", r)
 		}
 	}()
-	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 	_ = m.View()
 }
 
@@ -599,8 +634,8 @@ func TestPreviewToggleGatedWhileSearching(t *testing.T) {
 		t.Fatal("'/' should focus the search bar")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
-	if m.ctx.PreviewOpen {
-		t.Fatal("'p' while searching must not toggle the preview")
+	if !m.ctx.PreviewOpen {
+		t.Fatal("'p' while searching must not toggle the default-open preview")
 	}
 	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "p") {
 		t.Fatalf("search value = %q, want it to contain the typed \"p\"", got)

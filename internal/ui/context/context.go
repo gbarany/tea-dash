@@ -85,9 +85,15 @@ func (c *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
 		if c.Config != nil && len(c.Config.PRSections) > 0 {
 			return c.Config.PRSections
 		}
-		return []config.SectionConfig{{
-			Title:  "My Pull Requests",
-			Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"},
-		}}
+		return []config.SectionConfig{
+			{
+				Title:  "Open Pull Requests",
+				Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"},
+			},
+			{
+				Title:  "Closed Pull Requests",
+				Filter: config.PrIssueFilter{State: "closed", CreatedBy: "@me"},
+			},
+		}
 	}
 }

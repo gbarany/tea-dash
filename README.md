@@ -101,13 +101,18 @@ defaults:
   prsLimit: 50     # rows fetched per PR section (0 -> 50)
   issuesLimit: 50  # rows fetched per issue section (0 -> 50)
 
-# Each section becomes a tab you page through with h/l. Omit prSections /
-# issuesSections entirely to get a single "@me"-authored default section.
+# Each section becomes a tab you page through with h/l. Omit prSections to get
+# two "@me"-authored PR defaults: open and closed pull requests. Omit
+# issuesSections to get one open "@me"-authored issues section.
 prSections:
-  - title: My PRs
+  - title: Open PRs
     filter:
       state: open          # open | closed | all (default open)
       createdBy: "@me"     # me-scoped author fields accept "@me" only
+  - title: Closed PRs
+    filter:
+      state: closed        # closed includes merged PRs; merged rows show "merged"
+      createdBy: "@me"
   - title: Review Requested
     filter:
       reviewRequested: "@me"
@@ -132,8 +137,9 @@ issuesSections:
 > author filter.
 
 With or without a config file, tea-dash shows the pull requests and issues you
-authored across every repo you can access on your Gitea instance; sections and
-filters let you tailor what each tab shows.
+authored across every repo you can access on your Gitea instance. The default
+PR view has separate open and closed-history tabs; sections and filters let you
+tailor what each tab shows.
 
 ## Development
 
