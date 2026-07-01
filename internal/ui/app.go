@@ -12,6 +12,9 @@ import (
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
 	"github.com/gbarany/tea-dash/internal/gitea"
+	"github.com/gbarany/tea-dash/internal/ui/actions"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionfeedback"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
@@ -36,6 +39,11 @@ type Model struct {
 	issues        []section.Section
 	notifications []section.Section
 	notice        string // transient status message (e.g. browser-open failure)
+
+	actionDispatcher func(actions.Intent) tea.Cmd
+	actionPrompt     actionprompt.Model
+	pendingAction    actions.Intent
+	actionFeedback   actionfeedback.Model
 
 	// pullDetails and issueDetails memoize fetched detail views keyed by
 	// "owner/repo#num". The map is chosen by the row's kind (PR vs issue), so
@@ -107,6 +115,8 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 		tabs:           tabs.New(ctx),
 		sidebar:        sidebar.New(ctx),
 		tasks:          tasks,
+		actionPrompt:   actionprompt.New(),
+		actionFeedback: actionfeedback.New(),
 		pullDetails:    map[string]*data.PullDetail{},
 		issueDetails:   map[string]*data.IssueDetail{},
 		pullEnrichErr:  map[string]error{},
@@ -116,6 +126,12 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
 	m.setCurrentViewSections(buildSections(view, ctx))
 	return m
+}
+
+// SetActionDispatcher wires the frontend action-intent seam. The dispatcher is
+// responsible for all backend or local-git side effects.
+func (m *Model) SetActionDispatcher(dispatcher func(actions.Intent) tea.Cmd) {
+	m.actionDispatcher = dispatcher
 }
 
 // buildSections constructs the section models for a view from its config list.
@@ -146,6 +162,9 @@ func (m Model) Init() tea.Cmd {
 
 // Update routes messages: layout, async results, keys, then generic fallthrough.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyPressMsg); ok && m.actionPrompt.Active() {
+		return m, m.updateActionPrompt(msg)
+	}
 	// While the current section's search bar is focused, route key presses
 	// straight to it so typing isn't eaten by nav/quit keys. Resize and async
 	// messages still flow through the normal switch below.
@@ -173,6 +192,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openFailedMsg:
 		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
+		return m, nil
+
+	case actions.ResultMsg:
+		m.notice = ""
+		m.actionFeedback = m.actionFeedback.Set(feedbackFromActionResult(msg))
 		return m, nil
 
 	case enrichedMsg:
@@ -209,6 +233,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m.notice = "" // any key dismisses a transient notice
 		switch {
+		case key.Matches(msg, m.keys.Comment):
+			return m, m.startAction(actions.KindComment)
+		case key.Matches(msg, m.keys.Merge):
+			return m, m.startAction(actions.KindMerge)
+		case key.Matches(msg, m.keys.Close):
+			return m, m.startAction(actions.KindClose)
+		case key.Matches(msg, m.keys.Reopen):
+			return m, m.startAction(actions.KindReopen)
+		case key.Matches(msg, m.keys.Review):
+			return m, m.startAction(actions.KindReview)
+		case key.Matches(msg, m.keys.ExternalDiff):
+			return m, m.startAction(actions.KindExternalDiff)
+		case key.Matches(msg, m.keys.Checkout):
+			return m, m.startAction(actions.KindCheckout)
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Refresh):
@@ -302,8 +340,12 @@ func (m Model) View() tea.View {
 		parts = append(parts, tv)
 	}
 	status := m.statusLine()
-	if m.notice != "" {
+	if m.actionPrompt.Active() {
+		status = m.actionPrompt.View(m.ctx.ScreenWidth - 4)
+	} else if m.notice != "" {
 		status = m.ctx.Styles.ErrorText.Render(m.notice)
+	} else if !m.actionFeedback.Empty() {
+		status = m.actionFeedback.View(m.ctx.ScreenWidth - 4)
 	}
 	body := ""
 	if s := m.getCurrSection(); s != nil {
@@ -313,7 +355,7 @@ func (m Model) View() tea.View {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
 	}
 	parts = append(parts, body, status,
-		helpStyle.Render("↑/↓ move · h/l section · s view · / search · p preview · e expand · r refresh · o open · q quit"))
+		helpStyle.Render("↑/↓ move · h/l section · s view · / search · p preview · c comment · m merge · x close · q quit"))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true}
@@ -549,6 +591,177 @@ func (m Model) openSelected() tea.Cmd {
 			return openFailedMsg{url: url, err: err}
 		}
 		return nil
+	}
+}
+
+func (m *Model) startAction(kind actions.Kind) tea.Cmd {
+	target, ok := m.selectedActionTarget()
+	if !ok {
+		m.notice = "Select a row before running an action."
+		return nil
+	}
+	if actionRequiresPullRequest(kind) && target.RowKind != actions.RowKindPullRequest {
+		m.notice = fmt.Sprintf("%s is only available for pull requests.", actionLabel(kind))
+		return nil
+	}
+	intent := actions.Intent{
+		Kind:   kind,
+		Target: target,
+		Prompt: actions.Prompt{Mode: promptModeForAction(kind)},
+	}
+	m.pendingAction = intent
+	m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(kind, target))
+	return nil
+}
+
+func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
+	var result actionprompt.Result
+	var cmd tea.Cmd
+	m.actionPrompt, result, cmd = m.actionPrompt.Update(msg)
+	if result.Canceled {
+		m.pendingAction = actions.Intent{}
+		m.actionFeedback = m.actionFeedback.Set(actionfeedback.Cancel("Action cancelled."))
+		return cmd
+	}
+	if !result.Submitted {
+		return cmd
+	}
+	intent := m.pendingAction
+	intent.Prompt.Value = result.Value
+	intent.Prompt.Label = result.Label
+	m.pendingAction = actions.Intent{}
+	if m.actionDispatcher == nil {
+		m.notice = "Action not wired yet."
+		return cmd
+	}
+	m.actionFeedback = m.actionFeedback.Set(actionfeedback.Start(actionStartText(intent)))
+	dispatchCmd := m.actionDispatcher(intent)
+	if cmd == nil {
+		return dispatchCmd
+	}
+	if dispatchCmd == nil {
+		return cmd
+	}
+	return tea.Batch(cmd, dispatchCmd)
+}
+
+func (m Model) selectedActionTarget() (actions.Target, bool) {
+	s := m.getCurrSection()
+	row := m.getCurrRowData()
+	if s == nil || row == nil {
+		return actions.Target{}, false
+	}
+	rowKind := actions.RowKind(s.GetType())
+	switch row.(type) {
+	case data.PullRequest:
+		rowKind = actions.RowKindPullRequest
+	case data.Issue:
+		rowKind = actions.RowKindIssue
+	}
+	return actions.Target{
+		SectionID:   s.GetId(),
+		SectionType: s.GetType(),
+		RowKind:     rowKind,
+		Repo:        row.GetRepoNameWithOwner(),
+		Number:      row.GetNumber(),
+		Title:       row.GetTitle(),
+		URL:         row.GetURL(),
+	}, true
+}
+
+func actionRequiresPullRequest(kind actions.Kind) bool {
+	switch kind {
+	case actions.KindMerge, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
+		return true
+	default:
+		return false
+	}
+}
+
+func promptModeForAction(kind actions.Kind) actions.PromptMode {
+	switch kind {
+	case actions.KindComment:
+		return actions.PromptText
+	case actions.KindReview:
+		return actions.PromptPicker
+	default:
+		return actions.PromptConfirm
+	}
+}
+
+func promptConfigForAction(kind actions.Kind, target actions.Target) actionprompt.Config {
+	title := fmt.Sprintf("%s #%d", actionLabel(kind), target.Number)
+	message := fmt.Sprintf("%s - %s", target.Repo, target.Title)
+	switch kind {
+	case actions.KindComment:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       title,
+			Message:     message,
+			Placeholder: "Write a comment",
+		}
+	case actions.KindReview:
+		return actionprompt.Config{
+			Mode:    actionprompt.ModePicker,
+			Title:   title,
+			Message: message,
+			Options: []actionprompt.Option{
+				{Label: "Comment", Value: "comment"},
+				{Label: "Approve", Value: "approve"},
+				{Label: "Request changes", Value: "request_changes"},
+			},
+		}
+	default:
+		return actionprompt.Config{
+			Mode:    actionprompt.ModeConfirm,
+			Title:   title,
+			Message: message,
+		}
+	}
+}
+
+func actionLabel(kind actions.Kind) string {
+	switch kind {
+	case actions.KindComment:
+		return "Comment"
+	case actions.KindMerge:
+		return "Merge"
+	case actions.KindClose:
+		return "Close"
+	case actions.KindReopen:
+		return "Reopen"
+	case actions.KindReview:
+		return "Review"
+	case actions.KindExternalDiff:
+		return "External diff"
+	case actions.KindCheckout:
+		return "Checkout"
+	default:
+		return string(kind)
+	}
+}
+
+func actionStartText(intent actions.Intent) string {
+	return fmt.Sprintf("Starting %s for %s#%d.", actionLabel(intent.Kind), intent.Target.Repo, intent.Target.Number)
+}
+
+func feedbackFromActionResult(msg actions.ResultMsg) actionfeedback.Message {
+	text := msg.Message
+	if text == "" && msg.Err != nil {
+		text = msg.Err.Error()
+	}
+	if text == "" {
+		text = actionStartText(msg.Intent)
+	}
+	switch msg.Status {
+	case actions.ResultSucceeded:
+		return actionfeedback.Success(text)
+	case actions.ResultErrored:
+		return actionfeedback.Error(text)
+	case actions.ResultCanceled:
+		return actionfeedback.Cancel(text)
+	default:
+		return actionfeedback.Start(text)
 	}
 }
 

@@ -16,6 +16,13 @@ type keyMap struct {
 	ScrollUp      key.Binding
 	ScrollDown    key.Binding
 	Expand        key.Binding
+	Comment       key.Binding
+	Merge         key.Binding
+	Close         key.Binding
+	Reopen        key.Binding
+	Review        key.Binding
+	ExternalDiff  key.Binding
+	Checkout      key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -63,6 +70,34 @@ func defaultKeyMap() keyMap {
 		Expand: key.NewBinding(
 			key.WithKeys("e"),
 			key.WithHelp("e", "expand"),
+		),
+		Comment: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "comment"),
+		),
+		Merge: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "merge"),
+		),
+		Close: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "close"),
+		),
+		Reopen: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "reopen"),
+		),
+		Review: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "review"),
+		),
+		ExternalDiff: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "external diff"),
+		),
+		Checkout: key.NewBinding(
+			key.WithKeys("C"),
+			key.WithHelp("C", "checkout"),
 		),
 	}
 }
