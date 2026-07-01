@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	sdk "code.gitea.io/sdk/gitea"
@@ -25,6 +26,19 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	me         string
+
+	// sdkMu serializes typed SDK calls through one wrapper point. The SDK itself
+	// is concurrency-safe; keeping this narrow gate makes future per-call
+	// context/cancellation work explicit and keeps detail fetches conservative.
+	sdkMu sync.Mutex
+}
+
+// call runs fn with the SDK mutex held, serializing typed SDK calls through a
+// single wrapper point.
+func (c *Client) call(fn func() error) error {
+	c.sdkMu.Lock()
+	defer c.sdkMu.Unlock()
+	return fn()
 }
 
 // NewClient builds a Gitea client from resolved auth, negotiating TLS,

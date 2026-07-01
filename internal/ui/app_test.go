@@ -343,6 +343,270 @@ func TestModelRendersLoadedIssues(t *testing.T) {
 	}
 }
 
+// TestTogglePreviewOpensSidebar verifies 'p' opens the preview pane: it flips
+// ctx.PreviewOpen, sizes the pane, and the composed View() now renders the
+// sidebar region (its "Loading…" placeholder for the selected, not-yet-enriched
+// row — a string the loaded table body never shows).
+func TestTogglePreviewOpensSidebar(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 7, Title: "Preview me", RepoNameWithOwner: "gitea/tea",
+		Author: "me", State: "open",
+	}}))
+	if m.ctx.PreviewOpen {
+		t.Fatal("preview should start closed")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("'p' should open the preview")
+	}
+	if m.ctx.PreviewWidth <= 0 {
+		t.Fatalf("preview width should be positive when open, got %d", m.ctx.PreviewWidth)
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "Loading") {
+		t.Fatalf("open preview should render the sidebar region (Loading placeholder):\n%s", view)
+	}
+	// Toggling again closes the pane and restores the full-width table.
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if m.ctx.PreviewOpen {
+		t.Fatal("second 'p' should close the preview")
+	}
+	if m.ctx.PreviewWidth != 0 {
+		t.Fatalf("closed preview width should be 0, got %d", m.ctx.PreviewWidth)
+	}
+}
+
+// TestEnrichedMsgPopulatesSidebar verifies that, with the preview open, an
+// enrichedMsg for the selected row's key is cached and the sidebar re-renders to
+// show the fetched body (and no longer the loading placeholder).
+func TestEnrichedMsgPopulatesSidebar(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Add preview", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+
+	key := m.selKey()
+	if key != "gbarany/tea-dash#42" {
+		t.Fatalf("selKey = %q, want gbarany/tea-dash#42", key)
+	}
+	m = update(t, m, enrichedMsg{
+		key:  key,
+		pull: &data.PullDetail{Body: "uniquebodytoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	if _, ok := m.pullDetails[key]; !ok {
+		t.Fatalf("pullDetails should contain %q after enrichedMsg", key)
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "uniquebodytoken") {
+		t.Fatalf("sidebar should reflect the enriched body:\n%s", view)
+	}
+	if strings.Contains(view, "Loading") {
+		t.Fatalf("sidebar should no longer show Loading after enrichment:\n%s", view)
+	}
+}
+
+func TestEnrichedMsgErrorRendersFailureAndCanRecover(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 9, Title: "Needs detail", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{key: key, sectionType: pullsection.SectionType, err: errBoom})
+	view := m.View().Content
+	for _, want := range []string{"Failed to load preview", "boom", "Press r to retry"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("failed preview missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Loading") {
+		t.Fatalf("failed preview should not look like a perpetual loading state:\n%s", view)
+	}
+
+	m = update(t, m, enrichedMsg{
+		key:  key,
+		pull: &data.PullDetail{Body: "recoveredbodytoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	view = m.View().Content
+	if strings.Contains(view, "Failed to load preview") || !strings.Contains(view, "recoveredbodytoken") {
+		t.Fatalf("successful retry should replace the failed preview:\n%s", view)
+	}
+	if _, ok := m.pullEnrichErr[key]; ok {
+		t.Fatalf("pullEnrichErr should be cleared after a successful retry for %q", key)
+	}
+}
+
+func TestRefreshClearsSelectedPreviewCache(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 11, Title: "Refresh detail", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  key,
+		pull: &data.PullDetail{Body: "staledetailtoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	m = update(t, m, enrichedMsg{key: key, sectionType: pullsection.SectionType, err: errBoom})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd == nil {
+		t.Fatal("refresh after load should still trigger a fetch")
+	}
+	m = next.(Model)
+	if _, ok := m.pullDetails[key]; ok {
+		t.Fatalf("refresh should clear cached pull detail for %q", key)
+	}
+	if _, ok := m.pullEnrichErr[key]; ok {
+		t.Fatalf("refresh should clear cached preview error for %q", key)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "staledetailtoken") || strings.Contains(view, "Failed to load preview") {
+		t.Fatalf("refresh should replace stale preview content with a loading state:\n%s", view)
+	}
+	if !strings.Contains(view, "Loading") {
+		t.Fatalf("refresh should leave the selected preview ready to retry detail loading:\n%s", view)
+	}
+}
+
+func TestPreviewErrorsDoNotLeakBetweenPullsAndIssuesWithSameNumber(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: issuesection.SectionType, TaskId: "i1",
+		Msg: issuesection.SectionIssuesFetchedMsg{
+			Rows: []data.Issue{{
+				Number: 7, Title: "Issue seven", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "i1",
+		},
+	})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:   key,
+		issue: &data.IssueDetail{Body: "issuebodytoken"},
+	})
+
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 7, Title: "Pull seven", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p1",
+		},
+	})
+	m = update(t, m, enrichedMsg{key: key, sectionType: pullsection.SectionType, err: errBoom})
+
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	view := m.View().Content
+	if !strings.Contains(view, "issuebodytoken") {
+		t.Fatalf("issue detail with the same repo/number should remain visible:\n%s", view)
+	}
+	if strings.Contains(view, "Failed to load preview") {
+		t.Fatalf("pull preview error should not leak into issue preview:\n%s", view)
+	}
+}
+
+func TestPreviewRefreshesWhenSwitchingSections(t *testing.T) {
+	cfg := &config.Config{
+		PRSections: []config.SectionConfig{
+			{Title: "Mine", Filter: config.PrIssueFilter{CreatedBy: "@me"}},
+			{Title: "Review", Filter: config.PrIssueFilter{ReviewRequested: "@me"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p0",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p0",
+		},
+	})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 1, SectionType: pullsection.SectionType, TaskId: "p1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p1",
+		},
+	})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	firstKey := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  firstKey,
+		pull: &data.PullDetail{Body: "firstdetailbody", BaseRef: "main", HeadRef: "one"},
+	})
+	if view := m.View().Content; !strings.Contains(view, "firstdetailbody") {
+		t.Fatalf("preview should show first section detail before switching:\n%s", view)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
+	view := m.View().Content
+	if strings.Contains(view, "firstdetailbody") {
+		t.Fatalf("section switch should not leave the old row detail in the preview:\n%s", view)
+	}
+	if !strings.Contains(view, "Second row") || !strings.Contains(view, "Loading") {
+		t.Fatalf("section switch should render the newly selected row's loading preview:\n%s", view)
+	}
+}
+
+func TestPreviewLayoutSmallTerminalDoesNotPanic(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 1, Height: 1})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 3, Title: "Tiny", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("tiny preview layout panicked: %v", r)
+		}
+	}()
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	_ = m.View()
+}
+
+// TestPreviewToggleGatedWhileSearching verifies 'p' does not toggle the preview
+// while the search bar is focused; it is typed into the box like any other key.
+func TestPreviewToggleGatedWhileSearching(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if !m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' should focus the search bar")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if m.ctx.PreviewOpen {
+		t.Fatal("'p' while searching must not toggle the preview")
+	}
+	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "p") {
+		t.Fatalf("search value = %q, want it to contain the typed \"p\"", got)
+	}
+}
+
 // isQuitCmd reports whether running cmd yields a tea.QuitMsg.
 func isQuitCmd(cmd tea.Cmd) bool {
 	if cmd == nil {
