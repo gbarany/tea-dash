@@ -773,7 +773,9 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
 		{name: "external diff", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindExternalDiff},
+		{name: "external diff ctrl-t alias", key: tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, kind: actions.KindExternalDiff},
 		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},
+		{name: "checkout space alias", key: tea.KeyPressMsg{Code: ' ', Text: " "}, kind: actions.KindCheckout},
 	}
 
 	for _, tt := range tests {
@@ -825,6 +827,124 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 				t.Fatalf("prompt = %+v, want %+v", got[0].Prompt, tt.wantPrompt)
 			}
 		})
+	}
+}
+
+func TestHelpKeyTogglesFullHelp(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	if strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("full help should be hidden before '?' is pressed")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	view := m.View().Content
+	for _, want := range []string{"R refresh all", "y copy number", "Y copy URL", "C/space checkout"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("full help missing %q:\n%s", want, view)
+		}
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("second '?' should hide full help")
+	}
+}
+
+func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {
+	cfg := &config.Config{
+		PRSections: []config.SectionConfig{
+			{Title: "Mine", Filter: config.PrIssueFilter{CreatedBy: "@me"}},
+			{Title: "Review", Filter: config.PrIssueFilter{ReviewRequested: "@me"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p0",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p0",
+		},
+	})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 1, SectionType: pullsection.SectionType, TaskId: "p1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p1",
+		},
+	})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'R', Text: "R"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("'R' should batch refresh commands for all current sections")
+	}
+	if len(m.tasks) != 2 {
+		t.Fatalf("len(tasks) = %d, want both sections to register refresh tasks", len(m.tasks))
+	}
+}
+
+func TestCopyHotkeysUseSelectedRow(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		want string
+	}{
+		{name: "copy number", key: tea.KeyPressMsg{Code: 'y', Text: "y"}, want: "42"},
+		{name: "copy url", key: tea.KeyPressMsg{Code: 'Y', Text: "Y"}, want: "https://example.test/gbarany/tea-dash/pulls/42"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var copied string
+			m := New(&config.Config{}, nil)
+			m.copyToClipboard = func(s string) error {
+				copied = s
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedMsg([]data.PullRequest{{
+				Number: 42, Title: "Copy row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+			}}))
+
+			next, cmd := m.Update(tt.key)
+			m = next.(Model)
+			if cmd == nil {
+				t.Fatalf("%s should return a clipboard command", tt.name)
+			}
+			m = update(t, m, cmd())
+			if copied != tt.want {
+				t.Fatalf("copied = %q, want %q", copied, tt.want)
+			}
+			if !strings.Contains(m.View().Content, "Copied") {
+				t.Fatalf("copy result should be visible in the status area:\n%s", m.View().Content)
+			}
+		})
+	}
+}
+
+func TestGHDashFirstLastHotkeysMoveSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("'G' selected #%d, want #2", got)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'g', Text: "g"})
+	if got := m.getCurrRowData().GetNumber(); got != 1 {
+		t.Fatalf("'g' selected #%d, want #1", got)
 	}
 }
 

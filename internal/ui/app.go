@@ -44,6 +44,8 @@ type Model struct {
 	actionPrompt     actionprompt.Model
 	pendingAction    actions.Intent
 	actionFeedback   actionfeedback.Model
+	copyToClipboard  func(string) error
+	showHelp         bool
 
 	// pullDetails and issueDetails memoize fetched detail views keyed by
 	// "owner/repo#num". The map is chosen by the row's kind (PR vs issue), so
@@ -67,6 +69,11 @@ type Model struct {
 type openFailedMsg struct {
 	url string
 	err error
+}
+
+type copyResultMsg struct {
+	value string
+	err   error
 }
 
 // enrichedMsg carries the result of a lazy detail fetch back to the root, keyed
@@ -110,17 +117,18 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 	}
 
 	m := Model{
-		ctx:            ctx,
-		keys:           defaultKeyMap(),
-		tabs:           tabs.New(ctx),
-		sidebar:        sidebar.New(ctx),
-		tasks:          tasks,
-		actionPrompt:   actionprompt.New(),
-		actionFeedback: actionfeedback.New(),
-		pullDetails:    map[string]*data.PullDetail{},
-		issueDetails:   map[string]*data.IssueDetail{},
-		pullEnrichErr:  map[string]error{},
-		issueEnrichErr: map[string]error{},
+		ctx:             ctx,
+		keys:            defaultKeyMap(),
+		tabs:            tabs.New(ctx),
+		sidebar:         sidebar.New(ctx),
+		tasks:           tasks,
+		actionPrompt:    actionprompt.New(),
+		actionFeedback:  actionfeedback.New(),
+		copyToClipboard: writeClipboard,
+		pullDetails:     map[string]*data.PullDetail{},
+		issueDetails:    map[string]*data.IssueDetail{},
+		pullEnrichErr:   map[string]error{},
+		issueEnrichErr:  map[string]error{},
 	}
 	// Build only the starting view's sections; the other slice stays nil until
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
@@ -192,6 +200,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openFailedMsg:
 		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
+		return m, nil
+
+	case copyResultMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("Couldn't copy: %v", msg.err)
+		} else {
+			m.notice = fmt.Sprintf("Copied %s.", msg.value)
+		}
 		return m, nil
 
 	case actions.ResultMsg:
@@ -269,8 +285,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, s.FetchRows()
 			}
 			return m, nil
+		case key.Matches(msg, m.keys.RefreshAll):
+			return m, m.refreshAllSections()
 		case key.Matches(msg, m.keys.Open):
 			return m, m.openSelected()
+		case key.Matches(msg, m.keys.CopyNumber):
+			return m, m.copySelectedNumber()
+		case key.Matches(msg, m.keys.CopyURL):
+			return m, m.copySelectedURL()
+		case key.Matches(msg, m.keys.Help):
+			m.showHelp = !m.showHelp
+			return m, nil
 		case key.Matches(msg, m.keys.NextSection):
 			if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 				m.currSectionId++
@@ -366,10 +391,17 @@ func (m Model) View() tea.View {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
 	}
 	parts = append(parts, body, status,
-		helpStyle.Render("↑/↓ move · h/l section · s view · / search · p preview · c comment · m merge · x/X close/reopen · v review · d diff · C checkout · q quit"))
+		helpStyle.Render(m.helpLine()))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true}
+}
+
+func (m Model) helpLine() string {
+	if m.showHelp {
+		return "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL · c comment · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout · q quit"
+	}
+	return "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh · c comment · m merge · d/ctrl+t diff · C/space checkout · ? help · q quit"
 }
 
 // currentViewSections returns the section slice for the active view.
@@ -618,6 +650,51 @@ func (m Model) openSelected() tea.Cmd {
 		}
 		return nil
 	}
+}
+
+func (m Model) copySelectedNumber() tea.Cmd {
+	row := m.getCurrRowData()
+	if row == nil {
+		return nil
+	}
+	return m.copyValue(fmt.Sprintf("%d", row.GetNumber()))
+}
+
+func (m Model) copySelectedURL() tea.Cmd {
+	row := m.getCurrRowData()
+	if row == nil || row.GetURL() == "" {
+		return nil
+	}
+	return m.copyValue(row.GetURL())
+}
+
+func (m Model) copyValue(value string) tea.Cmd {
+	copyFn := m.copyToClipboard
+	if copyFn == nil {
+		copyFn = writeClipboard
+	}
+	return func() tea.Msg {
+		return copyResultMsg{value: value, err: copyFn(value)}
+	}
+}
+
+func (m *Model) refreshAllSections() tea.Cmd {
+	var cmds []tea.Cmd
+	switch m.ctx.View {
+	case context.IssuesView:
+		m.issueDetails = map[string]*data.IssueDetail{}
+		m.issueEnrichErr = map[string]error{}
+	default:
+		m.pullDetails = map[string]*data.PullDetail{}
+		m.pullEnrichErr = map[string]error{}
+	}
+	for _, s := range m.currentViewSections() {
+		cmds = append(cmds, s.FetchRows())
+	}
+	if m.ctx.PreviewOpen {
+		m.syncSidebar()
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) startAction(kind actions.Kind) tea.Cmd {

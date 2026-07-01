@@ -6,6 +6,7 @@ import "charm.land/bubbles/v2/key"
 // keys) is handled by the underlying table widget.
 type keyMap struct {
 	Refresh       key.Binding
+	RefreshAll    key.Binding
 	Open          key.Binding
 	Quit          key.Binding
 	NextSection   key.Binding
@@ -23,6 +24,9 @@ type keyMap struct {
 	Review        key.Binding
 	ExternalDiff  key.Binding
 	Checkout      key.Binding
+	CopyNumber    key.Binding
+	CopyURL       key.Binding
+	Help          key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -30,6 +34,10 @@ func defaultKeyMap() keyMap {
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),
 			key.WithHelp("r", "refresh"),
+		),
+		RefreshAll: key.NewBinding(
+			key.WithKeys("R"),
+			key.WithHelp("R", "refresh all"),
 		),
 		Open: key.NewBinding(
 			key.WithKeys("o", "enter"),
@@ -92,12 +100,24 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("v", "review"),
 		),
 		ExternalDiff: key.NewBinding(
-			key.WithKeys("d"),
-			key.WithHelp("d", "external diff"),
+			key.WithKeys("d", "ctrl+t"),
+			key.WithHelp("d/ctrl+t", "external diff"),
 		),
 		Checkout: key.NewBinding(
-			key.WithKeys("C"),
-			key.WithHelp("C", "checkout"),
+			key.WithKeys("C", " ", "space"),
+			key.WithHelp("C/space", "checkout"),
+		),
+		CopyNumber: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "copy number"),
+		),
+		CopyURL: key.NewBinding(
+			key.WithKeys("Y"),
+			key.WithHelp("Y", "copy URL"),
+		),
+		Help: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "help"),
 		),
 	}
 }

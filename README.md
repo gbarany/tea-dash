@@ -10,8 +10,8 @@ notifications across one or more Gitea instances, without leaving the terminal.
 > **Status: early — v1.** A working multi-view dashboard: live tables of your
 > pull requests, issues, and unread notifications across all your repos (fetched
 > via the Gitea API (Go SDK + REST)), with view switching (`s`), configurable
-> sections you page through with `h`/`l`, preview pane support, and live keyword
-> search (`/`). PR actions are in progress. See
+> sections you page through with `h`/`l`, live keyword search (`/`),
+> default-open preview, and PR / issue actions. See
 > [`docs/architecture.md`](docs/architecture.md) for the design.
 
 ## Why
@@ -72,6 +72,7 @@ tea-dash --help
 | Key             | Action                  |
 | --------------- | ----------------------- |
 | `↑`/`↓`, `j`/`k`| move selection          |
+| `g` / `G`       | first / last row        |
 | `s`             | switch view (PRs/issues/notifications)|
 | `h` / `l`       | prev / next section     |
 | `/`             | search by keyword       |
@@ -79,13 +80,15 @@ tea-dash --help
 | `e`             | expand / fold preview body |
 | `ctrl+u` / `ctrl+d` | scroll preview       |
 | `o` / `enter`   | open in browser         |
+| `y` / `Y`       | copy row number / URL   |
 | `c`             | add comment             |
 | `m`             | merge PR                |
 | `x` / `X`       | close / reopen          |
 | `v`             | submit PR review        |
-| `d`             | open PR diff in external pager |
-| `C`             | checkout PR locally     |
-| `r`             | refresh                 |
+| `d` / `ctrl+t`  | open PR diff in external pager |
+| `C` / `space`   | checkout PR locally     |
+| `r` / `R`       | refresh section / all sections |
+| `?`             | show / hide full help   |
 | `q` / `ctrl+c`  | quit                    |
 
 ## Configuration
