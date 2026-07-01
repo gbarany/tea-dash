@@ -6,11 +6,11 @@ require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/lipgloss/v2 v2.0.1
+	code.gitea.io/sdk/gitea v0.25.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	code.gitea.io/sdk/gitea v0.25.1 // indirect
 	github.com/42wim/httpsig v1.2.4 // indirect
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect

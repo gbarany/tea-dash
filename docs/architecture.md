@@ -1,66 +1,78 @@
 # Architecture
 
-tea-dash is a Bubble Tea TUI that renders data obtained by shelling out to
-Gitea's official [`tea`](https://gitea.com/gitea/tea) CLI. It deliberately does
-**not** implement its own Gitea API client or credential storage.
+tea-dash is a Bubble Tea TUI that talks to Gitea **directly**, using Gitea's
+official Go SDK ([`code.gitea.io/sdk/gitea`](https://pkg.go.dev/code.gitea.io/sdk/gitea)).
+It does **not** shell out to the `tea` CLI at runtime. It does, however, reuse
+the login profiles `tea` already stores on disk, so you get auth and
+multi-instance support without tea-dash managing credentials of its own.
 
-## Why shell out to `tea`
+## Why the SDK (and not the `tea` CLI)
 
-- **Auth & multi-instance for free.** `tea` stores named login profiles in
-  `~/.config/tea/config.yml` and resolves the active login from repo context or
-  the `--login` flag. tea-dash reuses this instead of re-implementing tokens,
-  SSH, OAuth and instance management.
-- **Pure presentation layer.** No secrets pass through tea-dash.
-- **Broad compatibility.** Anything `tea` can reach (Gitea, Forgejo, Codeberg),
+- **Typed, complete data.** The SDK returns real Gitea REST structs, so the data
+  layer works with typed values instead of parsing stringly-typed CLI output.
+- **No subprocess at runtime.** `tea` does not need to be on `PATH` when tea-dash
+  runs. It is only needed **once**, to create a login (`tea login add`).
+- **Auth & multi-instance for (almost) free.** `tea` stores named login profiles
+  in its config file (`~/Library/Application Support/tea/config.yml` on macOS,
+  `~/.config/tea/config.yml` on Linux). tea-dash reads that file to recover the
+  instance URL and token instead of re-implementing token/OAuth/SSH management.
+- **Broad compatibility.** Anything the SDK can reach (Gitea, Forgejo, Codeberg)
   tea-dash can display.
 
-## The three output tiers of `tea`
+## Auth resolution
 
-Understanding how `tea` emits machine-readable data drives the data layer:
+`internal/auth` resolves a `Config{URL, Token, Insecure, CACertPath}` from three
+sources, in precedence order:
 
-1. **List commands** — `tea <entity> list -o json`. Emits an array of **flat
-   objects whose keys are the selected `--fields` (snake_cased) and whose values
-   are all strings** (numbers, booleans and dates included). You choose the keys
-   via `--fields`. Cheap, but lossy/untyped.
-2. **Single-item detail** — `tea issues <n> -o json` / `tea pulls <n> -o json`.
-   Emits a **curated, properly-typed struct** with a fixed schema (comments only
-   when `--comments` is passed).
-3. **`tea api <endpoint>`** — streams the **raw, complete, typed Gitea REST
-   JSON**, supports query params and server pagination. This is the richest and
-   most predictable source.
+1. **Explicit overrides** from tea-dash's own `instance:` block in
+   `~/.config/tea-dash/config.yml` (URL, token, TLS options, and the name of the
+   `tea` login to select).
+2. **Environment**: `TEA_DASH_URL` / `TEA_DASH_TOKEN`.
+3. **The `tea` login** picked from `tea`'s config file — by name if the config
+   selects one, else the login marked `default`, else the sole login.
 
-**Decision:** tea-dash reads primarily via **`tea api`** (tier 3), decoding into
-Go structs in `internal/teacli`. Tier-1 lists are used only where a flat string
-table is sufficient. Mutations (checkout, merge, comment, close, …) go through
-the porcelain subcommands with explicit flags.
+A missing `tea` config is not an error: overrides or env vars may fully specify
+the connection. If neither a URL nor a token can be resolved, startup fails with
+an actionable message.
 
-## Gotchas the data layer must respect
+## Gitea transport
 
-- **Never request the PR `ci` field in a bulk list**: it triggers an N+1 status
-  fetch and, on error, writes to **stdout**, corrupting JSON. Fetch CI status
-  lazily/separately.
-- **Always pass `-o json` on detail views**: without it, `tea` renders markdown
-  and may prompt interactively for comments.
-- **Avoid interactive paths**: `tea login add` (no flags), `tea pulls review`,
-  and any body/`$EDITOR` prompt. Always pass bodies and `--confirm`/`-y`.
-- **stdout = data, stderr = errors**; non-zero exit signals failure. The
-  `teacli.Client` surfaces stderr in returned errors.
-- **PR list filtering is weak** in `tea pulls list` (state only). For rich PR
-  filters use `tea issues list --kind pulls …` or `tea api …/pulls?…`.
+`internal/gitea` wraps the SDK client. `NewClient`:
+
+- negotiates TLS (honouring `insecureSkipVerify` / a private `caCert` bundle),
+- pins a single shared `*http.Client` (30s timeout) used by both the SDK and the
+  raw escape hatch,
+- caches the authenticated user's login via `GetMyUserInfo` (exposed as `Me()`).
+
+Most reads go through the typed SDK. The one exception is the **me-scoped,
+cross-repo pull-request search**, which the typed SDK cannot express: it is
+served by a small raw HTTP escape hatch (`rawGet`) that calls
+`GET /repos/issues/search?type=pulls&created=true&state=…` and tolerantly
+decodes the rows (unknown fields ignored). Results are mapped into the domain
+model, never leaking SDK/REST types past the transport boundary.
+
+## Domain model
+
+`internal/data` holds TUI-agnostic domain types (notably `PullRequest`),
+decoupled from both the Gitea transport and the Bubble Tea UI. A `PullRequest`
+is denormalized — each row from the cross-repo search carries its own
+`owner/repo` — so the UI can render a flat table without extra lookups.
 
 ## Package layout
 
-| Package            | Responsibility                                            |
-| ------------------ | --------------------------------------------------------- |
-| `main`             | entrypoint, `--version`/`--help`, starts the Bubble Tea program |
-| `internal/ui`      | root model, sections/tabs, keybindings, Lipgloss styles   |
-| `internal/teacli`  | wrapper around the `tea` binary (`Run`, `API`) + types    |
-| `internal/build`   | version metadata injected at link time via `-ldflags`     |
+| Package           | Responsibility                                                            |
+| ----------------- | ------------------------------------------------------------------------- |
+| `main`            | entrypoint, `--version`/`--help`; loads config, resolves auth, builds the client, starts the Bubble Tea program |
+| `internal/ui`     | root model, table, keybindings, Lipgloss styles, loading/error states     |
+| `internal/gitea`  | Gitea SDK wrapper + raw HTTP escape hatch (me-scoped cross-repo PR search) |
+| `internal/auth`   | resolves the instance URL + token from overrides, env, and `tea`'s config |
+| `internal/data`   | TUI-agnostic domain model (`PullRequest`, `Label`, …)                     |
+| `internal/config` | loads `~/.config/tea-dash/config.yml` (instance block, repos)             |
+| `internal/build`  | version metadata injected at link time via `-ldflags`                     |
 
 ## Roadmap (next steps)
 
-1. Wire the Pull Requests section to `teacli.ListRepoPulls` with a Bubbles
-   `table`/`list` and a loading/error state.
-2. Add config (repos/instances to watch, per-section filters) à la `gh-dash`.
-3. Issue and notification sections.
-4. Detail pane (tier-2/`tea api`) and actions (checkout, merge, comment).
+1. Add config-driven, per-repo sections and per-section filters (à la `gh-dash`).
+2. Issue and notification sections.
+3. A detail pane (PR/issue body via the SDK, rendered with `glamour`).
+4. Actions (checkout, merge, comment, close, …) through the SDK.
