@@ -59,3 +59,11 @@ instance:
 		t.Fatalf("instance = %+v", c.Instance)
 	}
 }
+
+func TestSectionConfigZeroValue(t *testing.T) {
+	var s SectionConfig
+	s.Title = "My Pull Requests"
+	if s.Title != "My Pull Requests" {
+		t.Fatalf("SectionConfig.Title = %q", s.Title)
+	}
+}
