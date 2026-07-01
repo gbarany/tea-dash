@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 func TestParseRepoValid(t *testing.T) {
 	cases := map[string]Repo{
@@ -34,5 +38,24 @@ func TestParsedRepos(t *testing.T) {
 	}
 	if len(repos) != 2 || repos[0].String() != "gitea/tea" {
 		t.Fatalf("ParsedRepos() = %v", repos)
+	}
+}
+
+func TestUnmarshalInstance(t *testing.T) {
+	const y = `
+instance:
+  login: work
+  url: https://git.example.com
+  token: abc
+  insecureSkipVerify: true
+  caCert: /etc/ssl/corp.pem
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Instance.Login != "work" || c.Instance.URL != "https://git.example.com" ||
+		c.Instance.Token != "abc" || !c.Instance.Insecure || c.Instance.CACert != "/etc/ssl/corp.pem" {
+		t.Fatalf("instance = %+v", c.Instance)
 	}
 }

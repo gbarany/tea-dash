@@ -13,10 +13,22 @@ import (
 
 // Config is the user configuration for tea-dash.
 type Config struct {
-	// Login is an optional tea login profile name. Empty means tea's default.
+	// Instance overrides / selects the Gitea login (else tea's config is reused).
+	Instance Instance `yaml:"instance"`
+	// Login is a deprecated alias for Instance.Login (tea login profile name).
 	Login string `yaml:"login"`
-	// Repos lists the repositories to watch, each as "owner/name".
+	// Repos lists repositories to watch. Unused in M0; per-repo sections
+	// return in M1.
 	Repos []string `yaml:"repos"`
+}
+
+// Instance selects and overrides the Gitea connection.
+type Instance struct {
+	Login    string `yaml:"login"`              // pick a named tea login
+	URL      string `yaml:"url"`                // override instance URL
+	Token    string `yaml:"token"`              // override token
+	Insecure bool   `yaml:"insecureSkipVerify"` // disable TLS verification
+	CACert   string `yaml:"caCert"`             // path to a private CA bundle
 }
 
 // Repo is a parsed owner/name repository reference.
