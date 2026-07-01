@@ -18,4 +18,8 @@ func TestGetViewSectionsConfig(t *testing.T) {
 	if len(secs) != 1 || secs[0].Title != "My Pull Requests" {
 		t.Fatalf("GetViewSectionsConfig = %+v", secs)
 	}
+	// The default PR section is filter-driven now: me-scoped, open state.
+	if secs[0].Filter.CreatedBy != "@me" || secs[0].Filter.State != "open" {
+		t.Fatalf("default section filter = %+v, want CreatedBy=@me State=open", secs[0].Filter)
+	}
 }

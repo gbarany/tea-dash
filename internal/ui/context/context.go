@@ -62,5 +62,8 @@ type ProgramContext struct {
 // GetViewSectionsConfig returns the section configs for the current view.
 // M1b grows this into a per-view, config-driven list.
 func (c *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
-	return []config.SectionConfig{{Title: "My Pull Requests"}}
+	return []config.SectionConfig{{
+		Title:  "My Pull Requests",
+		Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"},
+	}}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gbarany/tea-dash/internal/config"
@@ -40,50 +41,100 @@ type searchIssue struct {
 	} `json:"pull_request"`
 }
 
-// SearchMyPulls returns the authenticated user's pull requests (authored by
-// them) across all accessible repos, in the given state ("open"/"closed"/"all"),
-// plus the server's total count (from the X-Total-Count header). It uses the
-// cross-repo search endpoint with the me-scoping boolean created=true. The page
-// is capped at limit=50 (full pagination is deferred), so total may exceed the
-// number of returned PRs.
-func (c *Client) SearchMyPulls(ctx context.Context, state string) ([]data.PullRequest, int, error) {
-	if state == "" {
-		state = "open"
-	}
-	q := url.Values{}
-	q.Set("type", "pulls")
-	q.Set("created", "true")
-	q.Set("state", state)
-	q.Set("limit", "50")
+// isMe reports whether s is the "@me" sentinel that maps to the search
+// endpoint's me-scoping booleans (created/assigned/mentioned/review_requested).
+func isMe(s string) bool { return s == "@me" }
 
+// buildSearchParams renders a structured filter into the cross-repo
+// /repos/issues/search query string. Me-scoped fields ("@me") become the
+// endpoint's boolean flags (created=true etc.) rather than the per-repo
+// created_by/assigned_by params, which the search endpoint ignores — this is
+// the C1 guard. limit is clamped to a positive value (default 50).
+func buildSearchParams(f config.PrIssueFilter, limit int) url.Values {
+	q := url.Values{}
+	q.Set("type", f.Type)
+	q.Set("state", f.State)
+	if f.Q != "" {
+		q.Set("q", f.Q)
+	}
+	if len(f.Labels) > 0 {
+		q.Set("labels", strings.Join(f.Labels, ","))
+	}
+	if f.Milestone != "" {
+		q.Set("milestones", f.Milestone)
+	}
+	if isMe(f.CreatedBy) {
+		q.Set("created", "true")
+	}
+	if isMe(f.AssignedBy) {
+		q.Set("assigned", "true")
+	}
+	if isMe(f.Mentioned) {
+		q.Set("mentioned", "true")
+	}
+	if isMe(f.ReviewRequested) {
+		q.Set("review_requested", "true")
+	}
+	if f.Since != "" {
+		q.Set("since", f.Since)
+	}
+	if f.Sort != "" {
+		q.Set("sort", f.Sort)
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	q.Set("limit", strconv.Itoa(limit))
+	return q
+}
+
+// search runs one page of the cross-repo /repos/issues/search endpoint for the
+// given filter and returns the raw rows plus the server's total (from the
+// X-Total-Count header, falling back to the returned row count). The page is
+// capped at limit (full pagination is deferred), so total may exceed len(rows).
+func (c *Client) search(ctx context.Context, f config.PrIssueFilter, limit int) ([]searchIssue, int, error) {
 	var rows []searchIssue
-	header, err := c.rawGet(ctx, "/repos/issues/search?"+q.Encode(), &rows)
+	header, err := c.rawGet(ctx, "/repos/issues/search?"+buildSearchParams(f, limit).Encode(), &rows)
 	if err != nil {
 		return nil, 0, err
 	}
-
-	prs := make([]data.PullRequest, 0, len(rows))
-	for _, it := range rows {
-		prs = append(prs, mapSearchIssue(it))
-	}
-
-	total := len(prs)
+	total := len(rows)
 	if v := header.Get("X-Total-Count"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			total = n
 		}
 	}
+	return rows, total, nil
+}
+
+// SearchPulls returns the pull requests matching f across all accessible repos,
+// plus the server's total count. f.Type is forced to "pulls".
+func (c *Client) SearchPulls(ctx context.Context, f config.PrIssueFilter) ([]data.PullRequest, int, error) {
+	f.Type = "pulls"
+	rows, total, err := c.search(ctx, f, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	prs := make([]data.PullRequest, 0, len(rows))
+	for _, it := range rows {
+		prs = append(prs, mapSearchIssue(it))
+	}
 	return prs, total, nil
 }
 
-// SearchIssues is the issues counterpart of the pull-request search. This is a
-// stub kept so components depending on it compile during parallel M1b work; the
-// real implementation (structured filter -> query params) lands in the M1b
-// search-layer change.
+// SearchIssues returns the issues matching f across all accessible repos, plus
+// the server's total count. f.Type is forced to "issues".
 func (c *Client) SearchIssues(ctx context.Context, f config.PrIssueFilter) ([]data.Issue, int, error) {
-	_ = ctx
-	_ = f
-	return nil, 0, nil
+	f.Type = "issues"
+	rows, total, err := c.search(ctx, f, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	issues := make([]data.Issue, 0, len(rows))
+	for _, it := range rows {
+		issues = append(issues, mapSearchIssueToIssue(it))
+	}
+	return issues, total, nil
 }
 
 func mapSearchIssue(it searchIssue) data.PullRequest {
@@ -111,6 +162,29 @@ func mapSearchIssue(it searchIssue) data.PullRequest {
 		pr.Labels = append(pr.Labels, data.Label{Name: l.Name, Color: l.Color})
 	}
 	return pr
+}
+
+// mapSearchIssueToIssue maps a search row into the issue domain type. Unlike
+// mapSearchIssue it carries no Draft/Merged; State is used as returned.
+func mapSearchIssueToIssue(it searchIssue) data.Issue {
+	issue := data.Issue{
+		Number:    it.Number,
+		Title:     it.Title,
+		State:     it.State,
+		HTMLURL:   it.HTMLURL,
+		CreatedAt: it.CreatedAt,
+		UpdatedAt: it.UpdatedAt,
+	}
+	if it.User != nil {
+		issue.Author = it.User.Login
+	}
+	if it.Repository != nil {
+		issue.RepoNameWithOwner = it.Repository.FullName
+	}
+	for _, l := range it.Labels {
+		issue.Labels = append(issue.Labels, data.Label{Name: l.Name, Color: l.Color})
+	}
+	return issue
 }
 
 // rawGet issues an authenticated GET against {baseURL}/api/v1{path} using the
