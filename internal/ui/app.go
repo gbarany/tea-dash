@@ -708,7 +708,7 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 	switch kind {
 	case actions.KindComment:
 		return actions.PromptText
-	case actions.KindReview:
+	case actions.KindMerge, actions.KindReview:
 		return actions.PromptPicker
 	default:
 		return actions.PromptConfirm
@@ -735,6 +735,19 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 				{Label: "Comment", Value: "comment"},
 				{Label: "Approve", Value: "approve"},
 				{Label: "Request changes", Value: "request_changes"},
+			},
+		}
+	case actions.KindMerge:
+		return actionprompt.Config{
+			Mode:    actionprompt.ModePicker,
+			Title:   title,
+			Message: message,
+			Options: []actionprompt.Option{
+				{Label: "Merge", Value: string(data.MergeStyleMerge)},
+				{Label: "Squash", Value: string(data.MergeStyleSquash)},
+				{Label: "Rebase", Value: string(data.MergeStyleRebase)},
+				{Label: "Rebase merge", Value: string(data.MergeStyleRebaseMerge)},
+				{Label: "Fast-forward only", Value: string(data.MergeStyleFastForwardOnly)},
 			},
 		}
 	default:

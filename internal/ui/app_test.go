@@ -751,12 +751,24 @@ func TestActiveActionPromptCapturesGlobalKeys(t *testing.T) {
 
 func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 	tests := []struct {
-		name string
-		key  tea.KeyPressMsg
-		kind actions.Kind
+		name        string
+		key         tea.KeyPressMsg
+		kind        actions.Kind
+		beforeEnter []tea.KeyPressMsg
+		wantPrompt  actions.Prompt
 	}{
 		{name: "comment", key: tea.KeyPressMsg{Code: 'c', Text: "c"}, kind: actions.KindComment},
-		{name: "merge", key: tea.KeyPressMsg{Code: 'm', Text: "m"}, kind: actions.KindMerge},
+		{
+			name:        "merge",
+			key:         tea.KeyPressMsg{Code: 'm', Text: "m"},
+			kind:        actions.KindMerge,
+			beforeEnter: []tea.KeyPressMsg{{Code: 'j', Text: "j"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptPicker,
+				Value: "squash",
+				Label: "Squash",
+			},
+		},
 		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
 		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
@@ -786,6 +798,9 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 				m = update(t, m, tea.KeyPressMsg{Code: 'o', Text: "o"})
 				m = update(t, m, tea.KeyPressMsg{Code: 'k', Text: "k"})
 			}
+			for _, key := range tt.beforeEnter {
+				m = update(t, m, key)
+			}
 			m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 			if len(got) != 1 {
@@ -805,6 +820,9 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 			}
 			if tt.kind == actions.KindComment && got[0].Prompt.Value != "ok" {
 				t.Fatalf("comment prompt value = %q, want ok", got[0].Prompt.Value)
+			}
+			if tt.wantPrompt != (actions.Prompt{}) && got[0].Prompt != tt.wantPrompt {
+				t.Fatalf("prompt = %+v, want %+v", got[0].Prompt, tt.wantPrompt)
 			}
 		})
 	}
