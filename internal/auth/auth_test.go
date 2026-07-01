@@ -145,3 +145,58 @@ func TestResolveMalformedConfigErrors(t *testing.T) {
 		t.Fatal("expected a parse error for malformed tea config YAML")
 	}
 }
+
+func TestResolveTokenCommand(t *testing.T) {
+	t.Setenv("TEA_DASH_TOKEN", "")
+	missing := filepath.Join(t.TempDir(), "none.yml")
+	got, err := ResolveFromFile(missing, Overrides{URL: "https://x.example", TokenCommand: "echo tokfromcmd"})
+	if err != nil {
+		t.Fatalf("ResolveFromFile: %v", err)
+	}
+	if got.Token != "tokfromcmd" {
+		t.Fatalf("token = %q, want %q (trimmed stdout of tokenCommand)", got.Token, "tokfromcmd")
+	}
+}
+
+func TestResolveTokenCommandFailureErrors(t *testing.T) {
+	t.Setenv("TEA_DASH_TOKEN", "")
+	missing := filepath.Join(t.TempDir(), "none.yml")
+	_, err := ResolveFromFile(missing, Overrides{URL: "https://x.example", TokenCommand: "exit 3"})
+	if err == nil || !strings.Contains(err.Error(), "tokenCommand") {
+		t.Fatalf("expected a tokenCommand failure error, got %v", err)
+	}
+}
+
+func TestResolveTokenCommandEmptyErrors(t *testing.T) {
+	t.Setenv("TEA_DASH_TOKEN", "")
+	missing := filepath.Join(t.TempDir(), "none.yml")
+	_, err := ResolveFromFile(missing, Overrides{URL: "https://x.example", TokenCommand: "true"})
+	if err == nil || !strings.Contains(err.Error(), "no output") {
+		t.Fatalf("expected an empty-output error, got %v", err)
+	}
+}
+
+func TestResolveTokenEnv(t *testing.T) {
+	t.Setenv("TEA_DASH_TOKEN", "")
+	t.Setenv("MY_TEADASH_TOK", "envtok2")
+	missing := filepath.Join(t.TempDir(), "none.yml")
+	got, err := ResolveFromFile(missing, Overrides{URL: "https://x.example", TokenEnv: "MY_TEADASH_TOK"})
+	if err != nil {
+		t.Fatalf("ResolveFromFile: %v", err)
+	}
+	if got.Token != "envtok2" {
+		t.Fatalf("token = %q, want the value of the named env var", got.Token)
+	}
+}
+
+func TestResolveLiteralTokenBeatsCommand(t *testing.T) {
+	t.Setenv("TEA_DASH_TOKEN", "")
+	missing := filepath.Join(t.TempDir(), "none.yml")
+	got, err := ResolveFromFile(missing, Overrides{URL: "https://x.example", Token: "literal", TokenCommand: "echo fromcmd"})
+	if err != nil {
+		t.Fatalf("ResolveFromFile: %v", err)
+	}
+	if got.Token != "literal" {
+		t.Fatalf("token = %q, want the literal token to win over tokenCommand", got.Token)
+	}
+}

@@ -44,11 +44,13 @@ func run() error {
 	}
 
 	ov := auth.Overrides{
-		Login:      firstNonEmpty(cfg.Instance.Login, cfg.Login),
-		URL:        cfg.Instance.URL,
-		Token:      cfg.Instance.Token,
-		Insecure:   cfg.Instance.Insecure,
-		CACertPath: expandHome(cfg.Instance.CACert),
+		Login:        firstNonEmpty(cfg.Instance.Login, cfg.Login),
+		URL:          cfg.Instance.URL,
+		Token:        cfg.Instance.Token,
+		TokenCommand: cfg.Instance.TokenCommand,
+		TokenEnv:     cfg.Instance.TokenEnv,
+		Insecure:     cfg.Instance.Insecure,
+		CACertPath:   expandHome(cfg.Instance.CACert),
 	}
 	authCfg, err := auth.Resolve(ov)
 	if err != nil {

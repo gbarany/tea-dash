@@ -3,10 +3,13 @@
 package auth
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,11 +24,13 @@ type Config struct {
 
 // Overrides come from tea-dash's own config (its `instance:` block).
 type Overrides struct {
-	Login      string // pick a named tea login
-	URL        string
-	Token      string
-	Insecure   bool
-	CACertPath string
+	Login        string // pick a named tea login
+	URL          string
+	Token        string // literal token (instance.token)
+	TokenCommand string // shell command whose stdout is the token (e.g. `op read op://...`)
+	TokenEnv     string // name of an env var to read the token from
+	Insecure     bool
+	CACertPath   string
 }
 
 // teaLogin mirrors one entry in tea's config.yml `logins:` list.
@@ -75,13 +80,16 @@ func ResolveFromFile(path string, ov Overrides) (Config, error) {
 	}
 
 	url := firstNonEmpty(ov.URL, os.Getenv("TEA_DASH_URL"), loginField(login, func(l teaLogin) string { return l.URL }))
-	token := firstNonEmpty(ov.Token, os.Getenv("TEA_DASH_TOKEN"), loginField(login, func(l teaLogin) string { return l.Token }))
-
 	if url == "" {
 		return Config{}, errors.New("no Gitea instance URL: run `tea login add`, or set instance.url / TEA_DASH_URL")
 	}
+
+	token, err := resolveToken(ov, login)
+	if err != nil {
+		return Config{}, err
+	}
 	if token == "" {
-		return Config{}, errors.New("no Gitea token: run `tea login add`, or set instance.token / TEA_DASH_TOKEN")
+		return Config{}, tokenError(login)
 	}
 
 	insecure := ov.Insecure
@@ -145,4 +153,68 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// resolveToken resolves the API token, in precedence order:
+//
+//	instance.token > instance.tokenCommand > instance.tokenEnv > TEA_DASH_TOKEN >
+//	the selected tea login's token
+//
+// A configured tokenCommand that fails (or yields nothing) is a hard error
+// rather than a silent fall-through, so a misconfigured secret manager surfaces.
+func resolveToken(ov Overrides, login *teaLogin) (string, error) {
+	if ov.Token != "" {
+		return ov.Token, nil
+	}
+	if ov.TokenCommand != "" {
+		out, err := runTokenCommand(ov.TokenCommand)
+		if err != nil {
+			return "", fmt.Errorf("instance.tokenCommand failed: %w", err)
+		}
+		if out == "" {
+			return "", fmt.Errorf("instance.tokenCommand %q produced no output", ov.TokenCommand)
+		}
+		return out, nil
+	}
+	if ov.TokenEnv != "" {
+		if v := os.Getenv(ov.TokenEnv); v != "" {
+			return v, nil
+		}
+	}
+	if v := os.Getenv("TEA_DASH_TOKEN"); v != "" {
+		return v, nil
+	}
+	return loginField(login, func(l teaLogin) string { return l.Token }), nil
+}
+
+// runTokenCommand runs command through the user's $SHELL and returns its
+// trimmed stdout. On failure it includes stderr so the cause is actionable.
+func runTokenCommand(command string) (string, error) {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "sh"
+	}
+	cmd := exec.Command(shell, "-c", command)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// tokenError builds an actionable error for the no-token case, calling out the
+// common situation where a tea login exists but its token lives in the OS
+// keychain (which tea-dash cannot read) rather than tea's config file.
+func tokenError(login *teaLogin) error {
+	if login != nil {
+		return fmt.Errorf("found tea login %q but no usable token: its token is not in tea's config "+
+			"file (tea may keep it in your OS keychain, which tea-dash cannot read). Set instance.token, "+
+			"instance.tokenCommand (e.g. `op read \"op://vault/item/credential\"`), or TEA_DASH_TOKEN", login.Name)
+	}
+	return errors.New("no Gitea token: run `tea login add`, or set instance.token / instance.tokenCommand / TEA_DASH_TOKEN")
 }
