@@ -1,0 +1,18 @@
+# Binaries & build output
+/bin/
+/dist/
+/tea-dash
+*.exe
+*.test
+*.out
+coverage.*
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
