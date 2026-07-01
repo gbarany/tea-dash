@@ -9,6 +9,7 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/context"
 )
@@ -25,7 +26,7 @@ func fetchedMsg(prs []data.PullRequest) context.TaskFinishedMsg {
 		SectionType: pullsection.SectionType,
 		TaskId:      "t1",
 		Msg: pullsection.SectionPullRequestsFetchedMsg{
-			Prs: prs, TotalCount: len(prs), TaskId: "t1",
+			Rows: prs, TotalCount: len(prs), TaskId: "t1",
 		},
 	}
 }
@@ -226,7 +227,7 @@ func TestCrossViewFetchRoutesToOwnSlice(t *testing.T) {
 	m = update(t, m, context.TaskFinishedMsg{
 		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "t1",
 		Msg: pullsection.SectionPullRequestsFetchedMsg{
-			Prs: []data.PullRequest{{
+			Rows: []data.PullRequest{{
 				Number: 5, Title: "Late PR", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
 			}},
 			TotalCount: 1, TaskId: "t1",
@@ -277,7 +278,7 @@ func TestShowingCountAndSingular(t *testing.T) {
 	m = update(t, m, context.TaskFinishedMsg{
 		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "t1",
 		Msg: pullsection.SectionPullRequestsFetchedMsg{
-			Prs: []data.PullRequest{{
+			Rows: []data.PullRequest{{
 				Number: 1, Title: "One", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
 			}},
 			TotalCount: 5, TaskId: "t1",
@@ -293,6 +294,52 @@ func TestShowingCountAndSingular(t *testing.T) {
 	view := m.View().Content
 	if !strings.Contains(view, "1 pull request") || strings.Contains(view, "1 pull requests") {
 		t.Fatalf("status line should read singular \"1 pull request\":\n%s", view)
+	}
+}
+
+// TestModelRendersLoadedIssues mirrors TestShowingCountAndSingular but for the
+// ISSUES view, guarding the issue-specific status-line wording: a copy-pasted
+// "pull request" phrasing in issuesection.NewModel would fail here. It routes an
+// issues fetch through the real Update path and asserts the rendered View().
+func TestModelRendersLoadedIssues(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("View = %v, want IssuesView", m.ctx.View)
+	}
+
+	// One row shown, server total 5 -> "showing 1 of 5 issues" (plural wording).
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: issuesection.SectionType, TaskId: "t1",
+		Msg: issuesection.SectionIssuesFetchedMsg{
+			Rows: []data.Issue{{
+				Number: 7, Title: "Fix flaky test", RepoNameWithOwner: "gitea/tea",
+				Author: "me", State: "open", UpdatedAt: time.Now().Add(-time.Hour),
+			}},
+			TotalCount: 5, TaskId: "t1",
+		},
+	})
+	view := m.View().Content
+	for _, want := range []string{"#7", "Fix flaky test", "gitea/tea", "@me", "showing 1 of 5 issues"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("issues view is missing %q\n---\n%s", want, view)
+		}
+	}
+
+	// total == shown == 1 -> singular "1 issue" (never "1 issues").
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: issuesection.SectionType, TaskId: "t2",
+		Msg: issuesection.SectionIssuesFetchedMsg{
+			Rows: []data.Issue{{
+				Number: 8, Title: "Only one", RepoNameWithOwner: "gitea/tea",
+				Author: "me", State: "open", UpdatedAt: time.Now().Add(-time.Hour),
+			}},
+			TotalCount: 1, TaskId: "t2",
+		},
+	})
+	view = m.View().Content
+	if !strings.Contains(view, "1 issue") || strings.Contains(view, "1 issues") {
+		t.Fatalf("status line should read singular \"1 issue\":\n%s", view)
 	}
 }
 

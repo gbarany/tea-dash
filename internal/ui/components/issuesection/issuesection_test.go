@@ -83,7 +83,7 @@ func TestFetchedMsgBuildsRows(t *testing.T) {
 	m := newModel(t)
 	m.SetLastFetchID("t1")
 	next, _ := m.Update(SectionIssuesFetchedMsg{
-		Issues: []data.Issue{{
+		Rows: []data.Issue{{
 			Number: 77, Title: "Bug X", RepoNameWithOwner: "acme/widgets",
 			Author: "octo", State: "open", UpdatedAt: time.Now().Add(-2 * time.Hour),
 		}},
@@ -110,7 +110,7 @@ func TestStaleFetchIgnored(t *testing.T) {
 	m := newModel(t)
 	m.SetLastFetchID("t2") // an in-flight fetch t2 is expected
 	next, _ := m.Update(SectionIssuesFetchedMsg{
-		Issues: []data.Issue{{Number: 1}}, TotalCount: 1, TaskId: "t1", // stale
+		Rows: []data.Issue{{Number: 1}}, TotalCount: 1, TaskId: "t1", // stale
 	})
 	m = next.(*Model)
 	if m.NumRows() != 0 {
