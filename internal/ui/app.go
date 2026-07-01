@@ -35,10 +35,16 @@ type Model struct {
 	issues        []section.Section
 	notice        string // transient status message (e.g. browser-open failure)
 
-	// detailCache memoizes fetched detail views keyed by "owner/repo#num". The
-	// value is a *data.PullDetail or *data.IssueDetail depending on the view the
-	// row belongs to; syncSidebar type-asserts to the concrete kind.
-	detailCache map[string]any
+	// pullDetails and issueDetails memoize fetched detail views keyed by
+	// "owner/repo#num". The map is chosen by the row's kind (PR vs issue), so
+	// syncSidebar reads the right one without any runtime type assertion.
+	pullDetails  map[string]*data.PullDetail
+	issueDetails map[string]*data.IssueDetail
+	// enrichErr records the last failed detail fetch per key so the preview can
+	// show an error block (instead of a perpetual "Loading…") while keeping the
+	// row retryable — a successful retry deletes the entry. Kept out of the
+	// detail maps so a cached failure never masquerades as a loaded detail.
+	enrichErr map[string]error
 	// expanded controls whether the preview shows the full body or the folded
 	// (read-more) form. Reset to false each time the preview is (re)opened.
 	expanded bool
@@ -55,9 +61,10 @@ type openFailedMsg struct {
 // by the "owner/repo#num" it was requested for so a stale result (the user moved
 // on) is still cached under the right key rather than shown against the wrong row.
 type enrichedMsg struct {
-	key    string
-	detail any // *data.PullDetail | *data.IssueDetail
-	err    error
+	key   string
+	pull  *data.PullDetail
+	issue *data.IssueDetail
+	err   error
 }
 
 // New builds the root model. client may be nil in tests (only FetchRows uses it).
@@ -84,12 +91,14 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 	}
 
 	m := Model{
-		ctx:         ctx,
-		keys:        defaultKeyMap(),
-		tabs:        tabs.New(ctx),
-		sidebar:     sidebar.New(ctx),
-		tasks:       tasks,
-		detailCache: map[string]any{},
+		ctx:          ctx,
+		keys:         defaultKeyMap(),
+		tabs:         tabs.New(ctx),
+		sidebar:      sidebar.New(ctx),
+		tasks:        tasks,
+		pullDetails:  map[string]*data.PullDetail{},
+		issueDetails: map[string]*data.IssueDetail{},
+		enrichErr:    map[string]error{},
 	}
 	// Build only the starting view's sections; the other slice stays nil until
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
@@ -140,7 +149,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case context.TaskFinishedMsg:
 		delete(m.tasks, msg.TaskId)
-		return m, m.updateSection(msg.SectionId, msg.SectionType, msg.Msg)
+		cmd := m.updateSection(msg.SectionId, msg.SectionType, msg.Msg)
+		if m.ctx.PreviewOpen {
+			m.syncSidebar()
+			cmd = tea.Batch(cmd, m.enrichCurrRow())
+		}
+		return m, cmd
 
 	case openFailedMsg:
 		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
@@ -150,8 +164,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Cache the fetched detail (keyed by the row it was requested for) and
 		// re-render the current preview, which picks up the new detail when the
 		// selection still points at that row.
-		if msg.err == nil && msg.detail != nil {
-			m.detailCache[msg.key] = msg.detail
+		if msg.err != nil {
+			m.enrichErr[msg.key] = msg.err
+		} else {
+			delete(m.enrichErr, msg.key)
+			if msg.pull != nil {
+				m.pullDetails[msg.key] = msg.pull
+			}
+			if msg.issue != nil {
+				m.issueDetails[msg.key] = msg.issue
+			}
 		}
 		m.syncSidebar()
 		return m, nil
@@ -185,12 +207,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currSectionId++
 			}
 			m.tabs.SetCurrSectionId(m.currSectionId)
+			if m.ctx.PreviewOpen {
+				m.syncSidebar()
+				return m, m.enrichCurrRow()
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.PrevSection):
 			if m.currSectionId > 0 {
 				m.currSectionId--
 			}
 			m.tabs.SetCurrSectionId(m.currSectionId)
+			if m.ctx.PreviewOpen {
+				m.syncSidebar()
+				return m, m.enrichCurrRow()
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.SwitchView):
 			cmd := m.switchView()
@@ -320,17 +350,27 @@ func (m Model) selKey() string {
 }
 
 // enrichCurrRow lazily fetches the selected row's detail. It returns nil (no
-// work) when there is no selection, the detail is already cached, or there is no
-// client (tests); otherwise it returns a command that fetches in the background
-// and reports back via enrichedMsg. Whether the row is a pull request or an
-// issue is decided by the current section's type.
+// work) when there is no selection, the detail is already cached, or there is
+// no client (tests); otherwise it returns a command that fetches in the
+// background and reports back via enrichedMsg. Whether the row is a pull request
+// or an issue is decided by the current section's type. A prior error is not a
+// cached detail, so refresh/navigation can retry the same row.
 func (m *Model) enrichCurrRow() tea.Cmd {
 	key := m.selKey()
 	if key == "" {
 		return nil
 	}
-	if _, ok := m.detailCache[key]; ok {
-		return nil
+	if s := m.getCurrSection(); s != nil {
+		switch s.GetType() {
+		case pullsection.SectionType:
+			if _, ok := m.pullDetails[key]; ok {
+				return nil
+			}
+		case issuesection.SectionType:
+			if _, ok := m.issueDetails[key]; ok {
+				return nil
+			}
+		}
 	}
 	row := m.getCurrRowData()
 	owner, name, ok := data.SplitOwnerRepo(row.GetRepoNameWithOwner())
@@ -352,13 +392,13 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 			if err != nil {
 				return enrichedMsg{key: key, err: err}
 			}
-			return enrichedMsg{key: key, detail: &d}
+			return enrichedMsg{key: key, pull: &d}
 		}
 		d, err := client.GetIssueDetail(owner, name, index)
 		if err != nil {
 			return enrichedMsg{key: key, err: err}
 		}
-		return enrichedMsg{key: key, detail: &d}
+		return enrichedMsg{key: key, issue: &d}
 	}
 }
 
@@ -373,20 +413,16 @@ func (m *Model) syncSidebar() {
 	}
 	key := m.selKey()
 	w := m.ctx.PreviewWidth
+	if err := m.enrichErr[key]; err != nil {
+		m.sidebar.SetContent(m.failedPreview(row, err))
+		return
+	}
 	var rendered string
 	switch r := row.(type) {
 	case data.PullRequest:
-		var d *data.PullDetail
-		if v, ok := m.detailCache[key].(*data.PullDetail); ok {
-			d = v
-		}
-		rendered = prview.RenderPull(r, d, w, m.expanded)
+		rendered = prview.RenderPull(r, m.pullDetails[key], w, m.expanded)
 	case data.Issue:
-		var d *data.IssueDetail
-		if v, ok := m.detailCache[key].(*data.IssueDetail); ok {
-			d = v
-		}
-		rendered = prview.RenderIssue(r, d, w, m.expanded)
+		rendered = prview.RenderIssue(r, m.issueDetails[key], w, m.expanded)
 	}
 	m.sidebar.SetContent(rendered)
 }
@@ -412,7 +448,23 @@ func (m *Model) switchView() tea.Cmd {
 	m.currSectionId = 0
 	m.tabs.SetCurrSectionId(0)
 	m.syncProgramContext()
+	if m.ctx.PreviewOpen {
+		m.syncSidebar()
+		cmds = append(cmds, m.enrichCurrRow())
+	}
 	return tea.Batch(cmds...)
+}
+
+func (m Model) failedPreview(row data.RowData, err error) string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		fmt.Sprintf("%s · #%d", row.GetRepoNameWithOwner(), row.GetNumber()),
+		row.GetTitle(),
+		"",
+		m.ctx.Styles.ErrorText.Render("Failed to load preview."),
+		fmt.Sprintf("%v", err),
+		"",
+		m.ctx.Styles.DimText.Render("Press r to retry."),
+	)
 }
 
 func (m Model) openSelected() tea.Cmd {

@@ -27,15 +27,14 @@ type Client struct {
 	httpClient *http.Client
 	me         string
 
-	// sdkMu serializes calls into c.sdk. The SDK pins its context globally via
-	// sdk.SetContext (see NewClient) and exposes no per-call ctx, so concurrent
-	// goroutines touching c.sdk would race on that shared context; call() holds
-	// this lock for the duration of every typed SDK call.
+	// sdkMu serializes typed SDK calls through one wrapper point. The SDK itself
+	// is concurrency-safe; keeping this narrow gate makes future per-call
+	// context/cancellation work explicit and keeps detail fetches conservative.
 	sdkMu sync.Mutex
 }
 
-// call runs fn with the SDK mutex held, serializing access to the shared,
-// context-pinned SDK client so concurrent detail fetches cannot race.
+// call runs fn with the SDK mutex held, serializing typed SDK calls through a
+// single wrapper point.
 func (c *Client) call(fn func() error) error {
 	c.sdkMu.Lock()
 	defer c.sdkMu.Unlock()

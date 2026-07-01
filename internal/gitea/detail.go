@@ -9,8 +9,8 @@ import (
 )
 
 // GetPullDetail fetches the read-only detail view of a single pull request.
-// The typed SDK call runs under c.call so it cannot race the globally-pinned
-// SDK context. Comments/Reviews/CI are populated by a later sub-plan.
+// The typed SDK call runs through c.call, the wrapper point for SDK calls.
+// Comments/Reviews/CI are populated by a later sub-plan.
 func (c *Client) GetPullDetail(owner, repo string, index int64) (data.PullDetail, error) {
 	var pr *sdk.PullRequest
 	err := c.call(func() error {
@@ -25,7 +25,7 @@ func (c *Client) GetPullDetail(owner, repo string, index int64) (data.PullDetail
 }
 
 // GetIssueDetail fetches the read-only detail view of a single issue. The SDK
-// call runs under c.call. Comments are populated by a later sub-plan.
+// call runs through c.call. Comments are populated by a later sub-plan.
 func (c *Client) GetIssueDetail(owner, repo string, index int64) (data.IssueDetail, error) {
 	var iss *sdk.Issue
 	err := c.call(func() error {
