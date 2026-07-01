@@ -25,7 +25,7 @@ func fetchedMsg(prs []data.PullRequest) context.TaskFinishedMsg {
 		SectionType: pullsection.SectionType,
 		TaskId:      "t1",
 		Msg: pullsection.SectionPullRequestsFetchedMsg{
-			Prs: prs, TotalCount: len(prs), TaskId: "t1",
+			Rows: prs, TotalCount: len(prs), TaskId: "t1",
 		},
 	}
 }
@@ -226,7 +226,7 @@ func TestCrossViewFetchRoutesToOwnSlice(t *testing.T) {
 	m = update(t, m, context.TaskFinishedMsg{
 		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "t1",
 		Msg: pullsection.SectionPullRequestsFetchedMsg{
-			Prs: []data.PullRequest{{
+			Rows: []data.PullRequest{{
 				Number: 5, Title: "Late PR", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
 			}},
 			TotalCount: 1, TaskId: "t1",
@@ -277,7 +277,7 @@ func TestShowingCountAndSingular(t *testing.T) {
 	m = update(t, m, context.TaskFinishedMsg{
 		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "t1",
 		Msg: pullsection.SectionPullRequestsFetchedMsg{
-			Prs: []data.PullRequest{{
+			Rows: []data.PullRequest{{
 				Number: 1, Title: "One", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
 			}},
 			TotalCount: 5, TaskId: "t1",

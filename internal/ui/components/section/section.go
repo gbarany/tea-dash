@@ -4,6 +4,9 @@
 package section
 
 import (
+	"fmt"
+	"time"
+
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
@@ -191,4 +194,48 @@ func (m *BaseModel) View() string {
 		return m.SearchBar.View() + "\n" + body
 	}
 	return body
+}
+
+// DefaultColumns reproduces the shared column widths and title-grow formula used
+// by the pull-request and issue sections (# / Title / Repo / Author / State /
+// Updated).
+func DefaultColumns(mainWidth int) []table.Column {
+	const (
+		numW     = 6
+		repoW    = 22
+		authorW  = 16
+		stateW   = 8
+		updatedW = 10
+	)
+	titleW := mainWidth - (numW + repoW + authorW + stateW + updatedW) - 6
+	if titleW < 20 {
+		titleW = 20
+	}
+	return []table.Column{
+		{Title: "#", Width: numW},
+		{Title: "Title", Width: titleW},
+		{Title: "Repo", Width: repoW},
+		{Title: "Author", Width: authorW},
+		{Title: "State", Width: stateW},
+		{Title: "Updated", Width: updatedW},
+	}
+}
+
+// HumanizeTime renders a coarse "just now / Xm / Xh / Xd ago" relative time,
+// returning "" for the zero time.
+func HumanizeTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
