@@ -75,10 +75,16 @@ tea-dash --help
 | `s`             | switch view (PRs/issues/notifications)|
 | `h` / `l`       | prev / next section     |
 | `/`             | search by keyword       |
-| `p`             | toggle preview pane     |
-| `e`             | expand preview body     |
-| `ctrl+u/d`      | scroll preview          |
+| `p`             | show / hide preview panel |
+| `e`             | expand / fold preview body |
+| `ctrl+u` / `ctrl+d` | scroll preview       |
 | `o` / `enter`   | open in browser         |
+| `c`             | add comment             |
+| `m`             | merge PR                |
+| `x` / `X`       | close / reopen          |
+| `v`             | submit PR review        |
+| `d`             | open PR diff in external pager |
+| `C`             | checkout PR locally     |
 | `r`             | refresh                 |
 | `q` / `ctrl+c`  | quit                    |
 
@@ -104,6 +110,16 @@ defaults:
   prsLimit: 50           # rows fetched per PR section (0 -> 50)
   issuesLimit: 50        # rows fetched per issue section (0 -> 50)
   notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)
+
+pager:
+  diff: diffnav     # command that receives PR diff bytes on stdin (falls back to $PAGER, then less -R)
+
+repoPaths:
+  "gbarany/*": "~/dev/sandbox/{{.Repo}}"  # used by C checkout; exact repo names and wildcards both work
+
+git:
+  remote: origin
+  prBranchTemplate: "pr-{{.PrIndex}}"
 
 # Each section becomes a tab you page through with h/l. Omit prSections to get
 # two "@me"-authored PR defaults: open and closed pull requests. Omit
