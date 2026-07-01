@@ -420,7 +420,7 @@ func TestEnrichedMsgErrorRendersFailureAndCanRecover(t *testing.T) {
 	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
 
 	key := m.selKey()
-	m = update(t, m, enrichedMsg{key: key, err: errBoom})
+	m = update(t, m, enrichedMsg{key: key, sectionType: pullsection.SectionType, err: errBoom})
 	view := m.View().Content
 	for _, want := range []string{"Failed to load preview", "boom", "Press r to retry"} {
 		if !strings.Contains(view, want) {
@@ -439,8 +439,88 @@ func TestEnrichedMsgErrorRendersFailureAndCanRecover(t *testing.T) {
 	if strings.Contains(view, "Failed to load preview") || !strings.Contains(view, "recoveredbodytoken") {
 		t.Fatalf("successful retry should replace the failed preview:\n%s", view)
 	}
-	if _, ok := m.enrichErr[key]; ok {
-		t.Fatalf("enrichErr should be cleared after a successful retry for %q", key)
+	if _, ok := m.pullEnrichErr[key]; ok {
+		t.Fatalf("pullEnrichErr should be cleared after a successful retry for %q", key)
+	}
+}
+
+func TestRefreshClearsSelectedPreviewCache(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 11, Title: "Refresh detail", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  key,
+		pull: &data.PullDetail{Body: "staledetailtoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	m = update(t, m, enrichedMsg{key: key, sectionType: pullsection.SectionType, err: errBoom})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd == nil {
+		t.Fatal("refresh after load should still trigger a fetch")
+	}
+	m = next.(Model)
+	if _, ok := m.pullDetails[key]; ok {
+		t.Fatalf("refresh should clear cached pull detail for %q", key)
+	}
+	if _, ok := m.pullEnrichErr[key]; ok {
+		t.Fatalf("refresh should clear cached preview error for %q", key)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "staledetailtoken") || strings.Contains(view, "Failed to load preview") {
+		t.Fatalf("refresh should replace stale preview content with a loading state:\n%s", view)
+	}
+	if !strings.Contains(view, "Loading") {
+		t.Fatalf("refresh should leave the selected preview ready to retry detail loading:\n%s", view)
+	}
+}
+
+func TestPreviewErrorsDoNotLeakBetweenPullsAndIssuesWithSameNumber(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: issuesection.SectionType, TaskId: "i1",
+		Msg: issuesection.SectionIssuesFetchedMsg{
+			Rows: []data.Issue{{
+				Number: 7, Title: "Issue seven", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "i1",
+		},
+	})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:   key,
+		issue: &data.IssueDetail{Body: "issuebodytoken"},
+	})
+
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 7, Title: "Pull seven", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p1",
+		},
+	})
+	m = update(t, m, enrichedMsg{key: key, sectionType: pullsection.SectionType, err: errBoom})
+
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	view := m.View().Content
+	if !strings.Contains(view, "issuebodytoken") {
+		t.Fatalf("issue detail with the same repo/number should remain visible:\n%s", view)
+	}
+	if strings.Contains(view, "Failed to load preview") {
+		t.Fatalf("pull preview error should not leak into issue preview:\n%s", view)
 	}
 }
 
