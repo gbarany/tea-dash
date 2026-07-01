@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	sdk "code.gitea.io/sdk/gitea"
@@ -25,6 +26,20 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	me         string
+
+	// sdkMu serializes calls into c.sdk. The SDK pins its context globally via
+	// sdk.SetContext (see NewClient) and exposes no per-call ctx, so concurrent
+	// goroutines touching c.sdk would race on that shared context; call() holds
+	// this lock for the duration of every typed SDK call.
+	sdkMu sync.Mutex
+}
+
+// call runs fn with the SDK mutex held, serializing access to the shared,
+// context-pinned SDK client so concurrent detail fetches cannot race.
+func (c *Client) call(fn func() error) error {
+	c.sdkMu.Lock()
+	defer c.sdkMu.Unlock()
+	return fn()
 }
 
 // NewClient builds a Gitea client from resolved auth, negotiating TLS,

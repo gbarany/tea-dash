@@ -343,6 +343,91 @@ func TestModelRendersLoadedIssues(t *testing.T) {
 	}
 }
 
+// TestTogglePreviewOpensSidebar verifies 'p' opens the preview pane: it flips
+// ctx.PreviewOpen, sizes the pane, and the composed View() now renders the
+// sidebar region (its "Loading…" placeholder for the selected, not-yet-enriched
+// row — a string the loaded table body never shows).
+func TestTogglePreviewOpensSidebar(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 7, Title: "Preview me", RepoNameWithOwner: "gitea/tea",
+		Author: "me", State: "open",
+	}}))
+	if m.ctx.PreviewOpen {
+		t.Fatal("preview should start closed")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("'p' should open the preview")
+	}
+	if m.ctx.PreviewWidth <= 0 {
+		t.Fatalf("preview width should be positive when open, got %d", m.ctx.PreviewWidth)
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "Loading") {
+		t.Fatalf("open preview should render the sidebar region (Loading placeholder):\n%s", view)
+	}
+	// Toggling again closes the pane and restores the full-width table.
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if m.ctx.PreviewOpen {
+		t.Fatal("second 'p' should close the preview")
+	}
+	if m.ctx.PreviewWidth != 0 {
+		t.Fatalf("closed preview width should be 0, got %d", m.ctx.PreviewWidth)
+	}
+}
+
+// TestEnrichedMsgPopulatesSidebar verifies that, with the preview open, an
+// enrichedMsg for the selected row's key is cached and the sidebar re-renders to
+// show the fetched body (and no longer the loading placeholder).
+func TestEnrichedMsgPopulatesSidebar(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Add preview", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+
+	key := m.selKey()
+	if key != "gbarany/tea-dash#42" {
+		t.Fatalf("selKey = %q, want gbarany/tea-dash#42", key)
+	}
+	m = update(t, m, enrichedMsg{
+		key:    key,
+		detail: &data.PullDetail{Body: "uniquebodytoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	if _, ok := m.detailCache[key]; !ok {
+		t.Fatalf("detailCache should contain %q after enrichedMsg", key)
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "uniquebodytoken") {
+		t.Fatalf("sidebar should reflect the enriched body:\n%s", view)
+	}
+	if strings.Contains(view, "Loading") {
+		t.Fatalf("sidebar should no longer show Loading after enrichment:\n%s", view)
+	}
+}
+
+// TestPreviewToggleGatedWhileSearching verifies 'p' does not toggle the preview
+// while the search bar is focused; it is typed into the box like any other key.
+func TestPreviewToggleGatedWhileSearching(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if !m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' should focus the search bar")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if m.ctx.PreviewOpen {
+		t.Fatal("'p' while searching must not toggle the preview")
+	}
+	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "p") {
+		t.Fatalf("search value = %q, want it to contain the typed \"p\"", got)
+	}
+}
+
 // isQuitCmd reports whether running cmd yields a tea.QuitMsg.
 func isQuitCmd(cmd tea.Cmd) bool {
 	if cmd == nil {

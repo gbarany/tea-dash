@@ -49,6 +49,14 @@ type ProgramContext struct {
 	ScreenWidth, ScreenHeight           int
 	MainContentWidth, MainContentHeight int
 
+	// Preview pane state. PreviewOpen toggles the side panel; PreviewWidth and
+	// PreviewHeight are the pane's content dimensions. Layout math (splitting the
+	// screen between the list and the preview) is wired in the integration stage;
+	// these fields are declared here so the preview components can size to them.
+	PreviewOpen   bool
+	PreviewWidth  int
+	PreviewHeight int
+
 	Config *config.Config
 	Client *gitea.Client // may be nil in tests
 	User   string        // client.Me(); "" when client is nil

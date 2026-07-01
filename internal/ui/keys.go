@@ -5,13 +5,17 @@ import "charm.land/bubbles/v2/key"
 // keyMap defines the app-level key bindings. Row navigation (↑/↓, j/k, page
 // keys) is handled by the underlying table widget.
 type keyMap struct {
-	Refresh     key.Binding
-	Open        key.Binding
-	Quit        key.Binding
-	NextSection key.Binding
-	PrevSection key.Binding
-	SwitchView  key.Binding
-	Search      key.Binding
+	Refresh       key.Binding
+	Open          key.Binding
+	Quit          key.Binding
+	NextSection   key.Binding
+	PrevSection   key.Binding
+	SwitchView    key.Binding
+	Search        key.Binding
+	TogglePreview key.Binding
+	ScrollUp      key.Binding
+	ScrollDown    key.Binding
+	Expand        key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -43,6 +47,22 @@ func defaultKeyMap() keyMap {
 		Search: key.NewBinding(
 			key.WithKeys("/"),
 			key.WithHelp("/", "search"),
+		),
+		TogglePreview: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "preview"),
+		),
+		ScrollUp: key.NewBinding(
+			key.WithKeys("ctrl+u"),
+			key.WithHelp("ctrl+u", "scroll preview up"),
+		),
+		ScrollDown: key.NewBinding(
+			key.WithKeys("ctrl+d"),
+			key.WithHelp("ctrl+d", "scroll preview down"),
+		),
+		Expand: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "expand"),
 		),
 	}
 }
