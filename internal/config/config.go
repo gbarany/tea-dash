@@ -20,6 +20,21 @@ type Config struct {
 	// Repos lists repositories to watch. Unused in M0; per-repo sections
 	// return in M1.
 	Repos []string `yaml:"repos"`
+	// PRSections and IssuesSections configure the tabs for the pulls and issues
+	// views respectively. Empty falls back to a single me-scoped default section.
+	PRSections     []SectionConfig `yaml:"prSections"`
+	IssuesSections []SectionConfig `yaml:"issuesSections"`
+	// Defaults sets the startup view and per-view row limits.
+	Defaults Defaults `yaml:"defaults"`
+}
+
+// Defaults holds startup and limit defaults. PRsLimit and IssuesLimit set the
+// per-view row-fetch cap used when a section omits its own Limit. Precedence:
+// section Limit -> per-view default -> 50.
+type Defaults struct {
+	View        string `yaml:"view"` // "prs" | "issues"
+	PRsLimit    int    `yaml:"prsLimit"`
+	IssuesLimit int    `yaml:"issuesLimit"`
 }
 
 // Instance selects and overrides the Gitea connection.
@@ -31,9 +46,87 @@ type Instance struct {
 	CACert   string `yaml:"caCert"`             // path to a private CA bundle
 }
 
-// SectionConfig describes one dashboard section (a tab). M1b adds Filters/Limit.
+// SectionConfig describes one dashboard section (a tab).
 type SectionConfig struct {
-	Title string `yaml:"title"`
+	Title  string        `yaml:"title"`
+	Filter PrIssueFilter `yaml:"filter"`
+	// Limit caps this section's row fetch. 0 falls back to the per-view default
+	// (defaults.prsLimit / defaults.issuesLimit), which in turn falls back to 50.
+	// Precedence: section Limit -> per-view default -> 50.
+	Limit int `yaml:"limit"`
+}
+
+// PrIssueFilter is the structured, config-driven filter for one section. Every
+// field is optional; the zero value means "unconstrained" except State, which
+// defaults to "open". Me-scoped fields take the sentinel "@me".
+type PrIssueFilter struct {
+	State     string   `yaml:"state"`     // open | closed | all (default open)
+	Type      string   `yaml:"-"`         // pulls | issues (set by the section)
+	Labels    []string `yaml:"labels"`    // label names (AND-ed via the search endpoint)
+	Milestone string   `yaml:"milestone"` // milestone name
+	// The me-scoped author fields accept "@me" only (a plain login is not
+	// supported by the cross-repo search endpoint, which has no per-login author
+	// filter). Validate rejects any other non-empty value.
+	CreatedBy       string `yaml:"createdBy"`       // "@me" only
+	AssignedBy      string `yaml:"assignedBy"`      // "@me" only
+	Mentioned       string `yaml:"mentioned"`       // "@me" only
+	ReviewRequested string `yaml:"reviewRequested"` // "@me" only (PRs only)
+	Since           string `yaml:"since"`           // RFC3339 lower bound on updatedAt
+	Sort            string `yaml:"sort"`            // e.g. recentupdate
+	Q               string `yaml:"-"`               // live keyword (set by "/", never persisted)
+}
+
+// Validate rejects unsupported me-scoped author values. The cross-repo search
+// endpoint has no per-login author filter, so CreatedBy/AssignedBy/Mentioned/
+// ReviewRequested may only be empty or the "@me" sentinel.
+func (f PrIssueFilter) Validate() error {
+	for _, field := range []struct {
+		name string
+		val  string
+	}{
+		{"createdBy", f.CreatedBy},
+		{"assignedBy", f.AssignedBy},
+		{"mentioned", f.Mentioned},
+		{"reviewRequested", f.ReviewRequested},
+	} {
+		if field.val != "" && field.val != "@me" {
+			return fmt.Errorf("filter.%s = %q: only \"@me\" is supported (the cross-repo search endpoint has no per-login author filter)", field.name, field.val)
+		}
+	}
+	return nil
+}
+
+// Validate checks the config for unsupported filter values and an invalid
+// default view, returning the first error found.
+func (c *Config) Validate() error {
+	for _, s := range c.PRSections {
+		if err := s.Filter.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, s := range c.IssuesSections {
+		if err := s.Filter.Validate(); err != nil {
+			return err
+		}
+	}
+	switch c.Defaults.View {
+	case "", "prs", "issues":
+	default:
+		return fmt.Errorf("defaults.view = %q: want \"prs\" or \"issues\"", c.Defaults.View)
+	}
+	return nil
+}
+
+// WithDefaults fills the section-driven Type and the "open" State default,
+// leaving user-set scope fields untouched.
+func (f PrIssueFilter) WithDefaults(defaultType string) PrIssueFilter {
+	if f.State == "" {
+		f.State = "open"
+	}
+	if f.Type == "" {
+		f.Type = defaultType
+	}
+	return f
 }
 
 // Repo is a parsed owner/name repository reference.

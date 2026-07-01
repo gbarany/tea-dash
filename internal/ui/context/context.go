@@ -21,6 +21,7 @@ type ViewType int
 
 const (
 	PullsView ViewType = iota
+	IssuesView
 )
 
 // TaskState is the lifecycle of an async task.
@@ -51,7 +52,7 @@ type ProgramContext struct {
 	Config *config.Config
 	Client *gitea.Client // may be nil in tests
 	User   string        // client.Me(); "" when client is nil
-	View   ViewType      // M1a: always PullsView
+	View   ViewType      // PullsView | IssuesView
 	Error  error
 	Styles Styles
 
@@ -59,8 +60,26 @@ type ProgramContext struct {
 	StartTask func(task Task) tea.Cmd
 }
 
-// GetViewSectionsConfig returns the section configs for the current view.
-// M1b grows this into a per-view, config-driven list.
+// GetViewSectionsConfig returns the section configs for the current view,
+// preferring the user's per-view config and falling back to a single me-scoped
+// default section.
 func (c *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
-	return []config.SectionConfig{{Title: "My Pull Requests"}}
+	switch c.View {
+	case IssuesView:
+		if c.Config != nil && len(c.Config.IssuesSections) > 0 {
+			return c.Config.IssuesSections
+		}
+		return []config.SectionConfig{{
+			Title:  "My Issues",
+			Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"},
+		}}
+	default:
+		if c.Config != nil && len(c.Config.PRSections) > 0 {
+			return c.Config.PRSections
+		}
+		return []config.SectionConfig{{
+			Title:  "My Pull Requests",
+			Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"},
+		}}
+	}
 }

@@ -62,6 +62,74 @@ instance:
 	}
 }
 
+func TestUnmarshalSectionsAndDefaults(t *testing.T) {
+	const y = `
+defaults:
+  view: issues
+  prsLimit: 25
+  issuesLimit: 40
+prSections:
+  - title: My PRs
+    filter:
+      state: open
+      createdBy: "@me"
+  - title: Review Requested
+    filter:
+      reviewRequested: "@me"
+issuesSections:
+  - title: My Issues
+    filter:
+      state: open
+      createdBy: "@me"
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Defaults.View != "issues" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 {
+		t.Fatalf("defaults = %+v", c.Defaults)
+	}
+	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
+		c.PRSections[1].Filter.ReviewRequested != "@me" {
+		t.Fatalf("prSections = %+v", c.PRSections)
+	}
+	if len(c.IssuesSections) != 1 || c.IssuesSections[0].Title != "My Issues" ||
+		c.IssuesSections[0].Filter.CreatedBy != "@me" {
+		t.Fatalf("issuesSections = %+v", c.IssuesSections)
+	}
+}
+
+func TestFilterValidateRejectsNonMe(t *testing.T) {
+	if err := (PrIssueFilter{CreatedBy: "alice"}).Validate(); err == nil {
+		t.Fatal("Validate() should reject a plain login (only \"@me\" is supported)")
+	}
+	if err := (PrIssueFilter{CreatedBy: "@me"}).Validate(); err != nil {
+		t.Fatalf("Validate() rejected \"@me\": %v", err)
+	}
+}
+
+func TestConfigValidateBadView(t *testing.T) {
+	if err := (&Config{Defaults: Defaults{View: "nope"}}).Validate(); err == nil {
+		t.Fatal("Validate() should reject an unknown defaults.view")
+	}
+	for _, view := range []string{"", "prs", "issues"} {
+		if err := (&Config{Defaults: Defaults{View: view}}).Validate(); err != nil {
+			t.Fatalf("Validate() rejected valid view %q: %v", view, err)
+		}
+	}
+}
+
+func TestConfigValidateRejectsBadSectionFilter(t *testing.T) {
+	cfg := &Config{
+		PRSections: []SectionConfig{
+			{Title: "Bad", Filter: PrIssueFilter{CreatedBy: "alice"}},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() should reject a section with a non-@me author filter")
+	}
+}
+
 func TestLoadMissingFileIsEmptyConfig(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := Load()

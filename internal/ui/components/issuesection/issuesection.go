@@ -1,5 +1,5 @@
-// Package pullsection is the pull-requests dashboard section.
-package pullsection
+// Package issuesection is the issues dashboard section.
+package issuesection
 
 import (
 	stdctx "context"
@@ -16,29 +16,29 @@ import (
 	appctx "github.com/gbarany/tea-dash/internal/ui/context"
 )
 
-// SectionType is the routing type tag for pull-request sections.
-const SectionType = "pr"
+// SectionType is the routing type tag for issue sections.
+const SectionType = "issue"
 
 const fetchTimeout = 30 * time.Second
 
-// Model is the pull-requests section.
+// Model is the issues section.
 type Model struct {
 	section.BaseModel
-	prs []data.PullRequest
+	issues []data.Issue
 }
 
 // compile-time interface assertion
 var _ section.Section = (*Model)(nil)
 
-// SectionPullRequestsFetchedMsg is the fetch payload carried in TaskFinishedMsg.Msg.
-type SectionPullRequestsFetchedMsg struct {
-	Prs        []data.PullRequest
+// SectionIssuesFetchedMsg is the fetch payload carried in TaskFinishedMsg.Msg.
+type SectionIssuesFetchedMsg struct {
+	Issues     []data.Issue
 	TotalCount int
 	TaskId     string
 	Err        error
 }
 
-// NewModel builds a pull-requests section.
+// NewModel builds an issues section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	m := &Model{}
 	m.BaseModel = section.NewBaseModel(section.NewOptions{
@@ -47,35 +47,35 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		Ctx:          ctx,
 		Config:       cfg,
 		Columns:      columns(ctx.MainContentWidth),
-		LoadingText:  "Loading pull requests…",
-		EmptyText:    "No open pull requests authored by you.",
-		EmptyHint:    "This board shows PRs you created across all repos on your Gitea instance.",
-		SingularForm: "pull request",
-		PluralForm:   "pull requests",
+		LoadingText:  "Loading issues…",
+		EmptyText:    "No open issues authored by you.",
+		EmptyHint:    "This board shows issues you created across all repos on your Gitea instance.",
+		SingularForm: "issue",
+		PluralForm:   "issues",
 	})
 	return m
 }
 
-// FetchRows fetches the current user's open PRs across all repos.
+// FetchRows fetches the current user's open issues across all repos.
 func (m *Model) FetchRows() tea.Cmd {
-	taskId := fmt.Sprintf("fetch-pulls-%d-%d", m.GetId(), time.Now().UnixNano())
+	taskId := fmt.Sprintf("fetch-issues-%d-%d", m.GetId(), time.Now().UnixNano())
 	m.SetLastFetchID(taskId)
 	m.SetIsLoading(true)
 	client := m.Ctx.Client
 	id, sType := m.GetId(), m.GetType()
-	start := m.Ctx.StartTask(appctx.Task{Id: taskId, StartText: "Loading pull requests…", State: appctx.TaskStart})
-	f := m.Config.Filter.WithDefaults("pulls")
+	start := m.Ctx.StartTask(appctx.Task{Id: taskId, StartText: "Loading issues…", State: appctx.TaskStart})
+	f := m.Config.Filter.WithDefaults("issues")
 	limit := m.Config.Limit
 	if limit == 0 && m.Ctx.Config != nil {
-		limit = m.Ctx.Config.Defaults.PRsLimit
+		limit = m.Ctx.Config.Defaults.IssuesLimit
 	}
 	fetch := func() tea.Msg {
 		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), fetchTimeout)
 		defer cancel()
-		prs, total, err := client.SearchPulls(ctx, f, limit)
+		issues, total, err := client.SearchIssues(ctx, f, limit)
 		return appctx.TaskFinishedMsg{
 			SectionId: id, SectionType: sType, TaskId: taskId,
-			Msg: SectionPullRequestsFetchedMsg{Prs: prs, TotalCount: total, TaskId: taskId, Err: err},
+			Msg: SectionIssuesFetchedMsg{Issues: issues, TotalCount: total, TaskId: taskId, Err: err},
 		}
 	}
 	return tea.Batch(start, m.Spinner.Tick, fetch)
@@ -103,7 +103,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
-	case SectionPullRequestsFetchedMsg:
+	case SectionIssuesFetchedMsg:
 		if m.LastFetchID() != "" && m.LastFetchID() != msg.TaskId {
 			return m, nil // stale/superseded fetch
 		}
@@ -112,7 +112,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			m.SetError(msg.Err)
 			return m, nil
 		}
-		m.prs = msg.Prs
+		m.issues = msg.Issues
 		m.SetTotalCount(msg.TotalCount)
 		m.SetError(nil)
 		// SetRows clamps but does not reset the cursor, so a refresh keeps the
@@ -144,39 +144,39 @@ func (m *Model) UpdateProgramContext(ctx *appctx.ProgramContext) {
 	m.Table.SetColumns(m.Columns)
 }
 
-// GetCurrRow returns the selected PR, or nil when there are no rows.
+// GetCurrRow returns the selected issue, or nil when there are no rows.
 func (m *Model) GetCurrRow() data.RowData {
-	if len(m.prs) == 0 {
+	if len(m.issues) == 0 {
 		return nil
 	}
 	i := m.CurrRow()
-	if i < 0 || i >= len(m.prs) {
+	if i < 0 || i >= len(m.issues) {
 		return nil
 	}
-	return m.prs[i]
+	return m.issues[i]
 }
 
-// BuildRows maps the PRs into the table's 6-cell rows (unchanged formatting).
+// BuildRows maps the issues into the table's 6-cell rows.
 func (m *Model) BuildRows() []table.Row {
-	rows := make([]table.Row, len(m.prs))
-	for i, pr := range m.prs {
+	rows := make([]table.Row, len(m.issues))
+	for i, issue := range m.issues {
 		author := ""
-		if pr.Author != "" {
-			author = "@" + pr.Author
+		if issue.Author != "" {
+			author = "@" + issue.Author
 		}
 		rows[i] = table.Row{
-			fmt.Sprintf("#%d", pr.Number),
-			pr.Title,
-			pr.RepoNameWithOwner,
+			fmt.Sprintf("#%d", issue.Number),
+			issue.Title,
+			issue.RepoNameWithOwner,
 			author,
-			prState(pr),
-			humanizeTime(pr.UpdatedAt),
+			issue.State,
+			humanizeTime(issue.UpdatedAt),
 		}
 	}
 	return rows
 }
 
-// columns reproduces the pre-refactor column widths and title-grow formula.
+// columns reproduces the pull-requests column widths and title-grow formula.
 func columns(mainWidth int) []table.Column {
 	const (
 		numW     = 6
@@ -197,13 +197,6 @@ func columns(mainWidth int) []table.Column {
 		{Title: "State", Width: stateW},
 		{Title: "Updated", Width: updatedW},
 	}
-}
-
-func prState(pr data.PullRequest) string {
-	if pr.Draft {
-		return "draft"
-	}
-	return pr.State
 }
 
 func humanizeTime(t time.Time) string {
