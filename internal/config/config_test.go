@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -96,6 +97,100 @@ issuesSections:
 	if len(c.IssuesSections) != 1 || c.IssuesSections[0].Title != "My Issues" ||
 		c.IssuesSections[0].Filter.CreatedBy != "@me" {
 		t.Fatalf("issuesSections = %+v", c.IssuesSections)
+	}
+}
+
+func TestUnmarshalPagerRepoPathsAndGit(t *testing.T) {
+	const y = `
+pager:
+  diff: delta --paging=always
+repoPaths:
+  fcmb/api: ~/src/fcmb-api
+  fcmb/*: ~/src/fcmb/{{.Repo}}
+git:
+  remote: upstream
+  prBranchTemplate: review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Pager.Diff != "delta --paging=always" {
+		t.Fatalf("pager.diff = %q", c.Pager.Diff)
+	}
+	if c.RepoPaths["fcmb/api"] != "~/src/fcmb-api" || c.RepoPaths["fcmb/*"] != "~/src/fcmb/{{.Repo}}" {
+		t.Fatalf("repoPaths = %+v", c.RepoPaths)
+	}
+	if c.Git.Remote != "upstream" || c.Git.PRBranchTemplate != "review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}" {
+		t.Fatalf("git = %+v", c.Git)
+	}
+}
+
+func TestPagerDiffCommandDefaults(t *testing.T) {
+	t.Setenv("PAGER", "bat --plain")
+	if got := (Pager{}).DiffCommand(); got != "bat --plain" {
+		t.Fatalf("DiffCommand() = %q, want env pager", got)
+	}
+	t.Setenv("PAGER", "")
+	if got := (Pager{}).DiffCommand(); got != "less -R" {
+		t.Fatalf("DiffCommand() = %q, want less -R fallback", got)
+	}
+	if got := (Pager{Diff: "delta"}).DiffCommand(); got != "delta" {
+		t.Fatalf("DiffCommand() = %q, want configured command", got)
+	}
+}
+
+func TestGitDefaults(t *testing.T) {
+	var g Git
+	if got := g.RemoteName(); got != "origin" {
+		t.Fatalf("RemoteName() = %q, want origin", got)
+	}
+	if got := g.BranchTemplate(); got != "pr-{{.PrIndex}}" {
+		t.Fatalf("BranchTemplate() = %q, want default template", got)
+	}
+	g = Git{Remote: "upstream", PRBranchTemplate: "review/{{.PrIndex}}"}
+	if got := g.RemoteName(); got != "upstream" {
+		t.Fatalf("RemoteName() = %q, want upstream", got)
+	}
+	if got := g.BranchTemplate(); got != "review/{{.PrIndex}}" {
+		t.Fatalf("BranchTemplate() = %q, want configured template", got)
+	}
+}
+
+func TestMatchRepoPathExactBeforeWildcardAndExpandsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := map[string]string{
+		"fcmb/*":   "~/src/fcmb/{{.Repo}}",
+		"fcmb/api": "~/src/exact",
+	}
+	got, ok, err := MatchRepoPath("fcmb/api", paths)
+	if err != nil {
+		t.Fatalf("MatchRepoPath exact: %v", err)
+	}
+	if !ok {
+		t.Fatal("MatchRepoPath exact did not match")
+	}
+	if want := filepath.Join(home, "src", "exact"); got != want {
+		t.Fatalf("MatchRepoPath exact = %q, want %q", got, want)
+	}
+
+	got, ok, err = MatchRepoPath("fcmb/web", paths)
+	if err != nil {
+		t.Fatalf("MatchRepoPath wildcard: %v", err)
+	}
+	if !ok {
+		t.Fatal("MatchRepoPath wildcard did not match")
+	}
+	if want := filepath.Join(home, "src", "fcmb", "web"); got != want {
+		t.Fatalf("MatchRepoPath wildcard = %q, want %q", got, want)
+	}
+}
+
+func TestMatchRepoPathRejectsBadWildcard(t *testing.T) {
+	_, _, err := MatchRepoPath("fcmb/api", map[string]string{"fcmb/[": "/tmp/repo"})
+	if err == nil || !strings.Contains(err.Error(), "fcmb/[") {
+		t.Fatalf("MatchRepoPath bad wildcard error = %v", err)
 	}
 }
 
