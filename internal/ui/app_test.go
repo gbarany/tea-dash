@@ -740,8 +740,8 @@ func TestActiveActionPromptCapturesGlobalKeys(t *testing.T) {
 		t.Fatalf("'s' while an action prompt is active must not switch views: %v", m.ctx.View)
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
-	if m.ctx.PreviewOpen {
-		t.Fatal("'p' while an action prompt is active must not toggle preview")
+	if !m.ctx.PreviewOpen {
+		t.Fatal("'p' while an action prompt is active must not toggle the default-open preview")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
 	if m.getCurrSection().IsSearchFocused() {
