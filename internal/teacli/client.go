@@ -45,12 +45,28 @@ func (c *Client) binary() string {
 	return c.Binary
 }
 
+// apiError is the Gitea REST error envelope, e.g.
+// {"message":"Only signed in user is allowed to call APIs."}.
+type apiError struct {
+	Message string `json:"message"`
+	URL     string `json:"url"`
+}
+
+func (e *apiError) Error() string { return "gitea api: " + e.Message }
+
 // API calls `tea api <endpoint>` and, when out is non-nil, decodes the JSON
 // response body into it.
+//
+// Note: `tea api` exits 0 even on API-level failures (401/403/404), writing the
+// Gitea error envelope to stdout. We detect that envelope and surface its
+// message rather than a confusing JSON-decode error.
 func (c *Client) API(ctx context.Context, endpoint string, out any) error {
 	stdout, err := c.Run(ctx, "api", endpoint)
 	if err != nil {
 		return err
+	}
+	if apiErr := parseAPIError(stdout); apiErr != nil {
+		return apiErr
 	}
 	if out == nil {
 		return nil
@@ -59,6 +75,22 @@ func (c *Client) API(ctx context.Context, endpoint string, out any) error {
 		return fmt.Errorf("teacli: decoding response from %q: %w", endpoint, err)
 	}
 	return nil
+}
+
+// parseAPIError returns a non-nil error when body is a Gitea error envelope.
+// Successful list responses are JSON arrays (they start with '['), and normal
+// object responses have no top-level "message" field, so this only matches
+// actual errors.
+func parseAPIError(body []byte) error {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil
+	}
+	var e apiError
+	if err := json.Unmarshal(trimmed, &e); err != nil || e.Message == "" {
+		return nil
+	}
+	return &e
 }
 
 // Run executes `tea <args...>` and returns its stdout. A non-zero exit is

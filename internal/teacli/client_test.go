@@ -1,6 +1,9 @@
 package teacli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRepoPullsEndpoint(t *testing.T) {
 	tests := []struct {
@@ -28,6 +31,22 @@ func TestRepoPullsEndpoint(t *testing.T) {
 					tt.owner, tt.repo, tt.state, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseAPIError(t *testing.T) {
+	// Real error envelope returned by `tea api` when not logged in.
+	if err := parseAPIError([]byte(`{"message":"Only signed in user is allowed to call APIs."}`)); err == nil {
+		t.Fatal("expected an error for a Gitea error envelope")
+	} else if !strings.Contains(err.Error(), "Only signed in user") {
+		t.Fatalf("error message not surfaced: %v", err)
+	}
+
+	// Not errors: a list response, an object without "message", and empty.
+	for _, body := range []string{`[{"number":1}]`, `{"id":1,"title":"x"}`, ``, `  `} {
+		if err := parseAPIError([]byte(body)); err != nil {
+			t.Fatalf("parseAPIError(%q) = %v, want nil", body, err)
+		}
 	}
 }
 

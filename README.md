@@ -7,9 +7,10 @@ for Gitea instead of GitHub.
 tea-dash is a keyboard-driven TUI for triaging pull requests, issues and
 notifications across one or more Gitea instances, without leaving the terminal.
 
-> **Status: early scaffold.** The project structure, tooling and data layer are
-> in place; the dashboard views are placeholders that are being wired up to real
-> data. See [`docs/architecture.md`](docs/architecture.md) for the design.
+> **Status: early — v1.** A working single screen: a live, sortable table of
+> open pull requests across the repos you configure (fetched via `tea api`).
+> Issues, notifications and PR actions are next. See
+> [`docs/architecture.md`](docs/architecture.md) for the design.
 
 ## Why
 
@@ -61,13 +62,29 @@ tea-dash --help
 
 ### Keys
 
-| Key            | Action                |
-| -------------- | --------------------- |
-| `tab` / `l`    | next section          |
-| `shift+tab`/`h`| previous section      |
-| `r`            | refresh               |
-| `?`            | toggle help           |
-| `q` / `ctrl+c` | quit                  |
+| Key             | Action            |
+| --------------- | ----------------- |
+| `↑`/`↓`, `j`/`k`| move selection    |
+| `o` / `enter`   | open PR in browser|
+| `r`             | refresh           |
+| `q` / `ctrl+c`  | quit              |
+
+## Configuration
+
+Optional. Create `~/.config/tea-dash/config.yml`
+(`$XDG_CONFIG_HOME/tea-dash/config.yml`) to choose which repositories to watch:
+
+```yaml
+# tea login profile to use (optional; empty = your default tea login)
+login: ""
+# repositories to show pull requests for
+repos:
+  - gitea/tea
+  - gbarany/tea-dash
+```
+
+If the file is absent, tea-dash falls back to the Gitea repository in your
+current directory (resolved by `tea` from the git remote).
 
 ## Development
 
@@ -82,9 +99,10 @@ make help    # list all targets
 Project layout:
 
 ```
-main.go                 entrypoint + flag handling
-internal/ui/            Bubble Tea models, keybindings, styles
-internal/teacli/        wrapper around the `tea` CLI (tea api)
+main.go                 entrypoint + flag handling; loads config, starts the TUI
+internal/ui/            Bubble Tea model, table, keybindings, styles
+internal/teacli/        wrapper around the `tea` CLI (tea api) + typed responses
+internal/config/        ~/.config/tea-dash/config.yml loading
 internal/build/         version metadata (set via -ldflags)
 ```
 

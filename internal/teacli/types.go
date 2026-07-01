@@ -55,3 +55,16 @@ func (c *Client) ListRepoPulls(ctx context.Context, owner, repo, state string) (
 	}
 	return prs, nil
 }
+
+// ListCurrentRepoPulls lists pull requests for the repository in $PWD, relying
+// on tea's {owner}/{repo} placeholder expansion from the local git remote.
+func (c *Client) ListCurrentRepoPulls(ctx context.Context, state string) ([]PullRequest, error) {
+	if state == "" {
+		state = "open"
+	}
+	var prs []PullRequest
+	if err := c.API(ctx, "/repos/{owner}/{repo}/pulls?state="+state, &prs); err != nil {
+		return nil, err
+	}
+	return prs, nil
+}

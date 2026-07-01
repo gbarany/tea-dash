@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/gbarany/tea-dash/internal/build"
+	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/ui"
 )
 
@@ -31,8 +32,12 @@ func main() {
 }
 
 func run() error {
-	p := tea.NewProgram(ui.New(), tea.WithAltScreen())
-	_, err := p.Run()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	p := tea.NewProgram(ui.New(cfg), tea.WithAltScreen())
+	_, err = p.Run()
 	return err
 }
 
