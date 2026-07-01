@@ -180,6 +180,47 @@ func TestSectionSwitchWithTwoSections(t *testing.T) {
 	}
 }
 
+func TestDefaultPullSectionsIncludeClosedHistory(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	if len(m.prs) != 2 {
+		t.Fatalf("len(prs) = %d, want open + closed default sections", len(m.prs))
+	}
+
+	open := m.prs[0].(*pullsection.Model).Config
+	if open.Title != "Open Pull Requests" || open.Filter.State != "open" || open.Filter.CreatedBy != "@me" {
+		t.Fatalf("open default section = %+v, want title/open/@me", open)
+	}
+
+	closed := m.prs[1].(*pullsection.Model).Config
+	if closed.Title != "Closed Pull Requests" || closed.Filter.State != "closed" || closed.Filter.CreatedBy != "@me" {
+		t.Fatalf("closed default section = %+v, want title/closed/@me", closed)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.currSectionId != 1 {
+		t.Fatalf("after 'l' currSectionId = %d, want the closed PR section", m.currSectionId)
+	}
+}
+
+func TestClosedPullSectionEmptyStateIsNotOpenSpecific(t *testing.T) {
+	m := New(&config.Config{
+		PRSections: []config.SectionConfig{{
+			Title:  "Closed Pull Requests",
+			Filter: config.PrIssueFilter{State: "closed", CreatedBy: "@me"},
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, fetchedMsg(nil))
+
+	view := m.View().Content
+	if strings.Contains(view, "No open pull requests") {
+		t.Fatalf("closed PR section must not render an open-specific empty state:\n%s", view)
+	}
+	if !strings.Contains(view, "No pull requests match this filter") {
+		t.Fatalf("closed PR section missing generic empty state:\n%s", view)
+	}
+}
+
 func TestSlashFocusesSearch(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
