@@ -34,6 +34,20 @@ type PullRequest struct {
 	Labels            []Label
 }
 
+// Issue is the domain view of a Gitea issue, denormalized so a row from the
+// cross-repo search endpoint carries its own repo.
+type Issue struct {
+	Number            int64 // per-repo index
+	Title             string
+	RepoNameWithOwner string // "owner/repo"
+	Author            string // poster login
+	State             string // "open" | "closed"
+	HTMLURL           string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	Labels            []Label
+}
+
 // SplitOwnerRepo splits "owner/name" into its parts. ok is false for anything
 // that is not exactly one owner and one name.
 func SplitOwnerRepo(full string) (owner, name string, ok bool) {

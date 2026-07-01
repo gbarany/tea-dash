@@ -31,9 +31,40 @@ type Instance struct {
 	CACert   string `yaml:"caCert"`             // path to a private CA bundle
 }
 
-// SectionConfig describes one dashboard section (a tab). M1b adds Filters/Limit.
+// SectionConfig describes one dashboard section (a tab).
 type SectionConfig struct {
-	Title string `yaml:"title"`
+	Title  string        `yaml:"title"`
+	Filter PrIssueFilter `yaml:"filter"`
+	Limit  int           `yaml:"limit"` // 0 -> defaults
+}
+
+// PrIssueFilter is the structured, config-driven filter for one section. Every
+// field is optional; the zero value means "unconstrained" except State, which
+// defaults to "open". Me-scoped fields take a login or the sentinel "@me".
+type PrIssueFilter struct {
+	State           string   `yaml:"state"`           // open | closed | all (default open)
+	Type            string   `yaml:"type"`            // pulls | issues (set by the section)
+	Labels          []string `yaml:"labels"`          // label names (AND-ed via the search endpoint)
+	Milestone       string   `yaml:"milestone"`       // milestone name
+	CreatedBy       string   `yaml:"createdBy"`       // login or "@me"
+	AssignedBy      string   `yaml:"assignedBy"`      // login or "@me"
+	Mentioned       string   `yaml:"mentioned"`       // login or "@me"
+	ReviewRequested string   `yaml:"reviewRequested"` // login or "@me" (PRs only)
+	Since           string   `yaml:"since"`           // RFC3339 lower bound on updatedAt
+	Sort            string   `yaml:"sort"`            // e.g. recentupdate
+	Q               string   `yaml:"-"`               // live keyword (set by "/", never persisted)
+}
+
+// WithDefaults fills the section-driven Type and the "open" State default,
+// leaving user-set scope fields untouched.
+func (f PrIssueFilter) WithDefaults(defaultType string) PrIssueFilter {
+	if f.State == "" {
+		f.State = "open"
+	}
+	if f.Type == "" {
+		f.Type = defaultType
+	}
+	return f
 }
 
 // Repo is a parsed owner/name repository reference.

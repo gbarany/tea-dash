@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
 )
 
@@ -73,6 +74,16 @@ func (c *Client) SearchMyPulls(ctx context.Context, state string) ([]data.PullRe
 		}
 	}
 	return prs, total, nil
+}
+
+// SearchIssues is the issues counterpart of the pull-request search. This is a
+// stub kept so components depending on it compile during parallel M1b work; the
+// real implementation (structured filter -> query params) lands in the M1b
+// search-layer change.
+func (c *Client) SearchIssues(ctx context.Context, f config.PrIssueFilter) ([]data.Issue, int, error) {
+	_ = ctx
+	_ = f
+	return nil, 0, nil
 }
 
 func mapSearchIssue(it searchIssue) data.PullRequest {
