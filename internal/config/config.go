@@ -2,11 +2,15 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+	"text/template"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,6 +31,13 @@ type Config struct {
 	NotificationsSections []SectionConfig `yaml:"notificationsSections"`
 	// Defaults sets the startup view and per-view row limits.
 	Defaults Defaults `yaml:"defaults"`
+	// Pager configures external pager commands.
+	Pager Pager `yaml:"pager"`
+	// RepoPaths maps repo names or wildcard patterns (for example "fcmb/*")
+	// to local checkout paths.
+	RepoPaths map[string]string `yaml:"repoPaths"`
+	// Git configures local git checkout behavior.
+	Git Git `yaml:"git"`
 }
 
 // Defaults holds startup and limit defaults. PRsLimit and IssuesLimit set the
@@ -37,6 +48,45 @@ type Defaults struct {
 	PRsLimit           int    `yaml:"prsLimit"`
 	IssuesLimit        int    `yaml:"issuesLimit"`
 	NotificationsLimit int    `yaml:"notificationsLimit"`
+}
+
+// Pager configures external pager commands.
+type Pager struct {
+	Diff string `yaml:"diff"`
+}
+
+// DiffCommand returns the configured diff pager command, then $PAGER, then the
+// less fallback that preserves ANSI color.
+func (p Pager) DiffCommand() string {
+	if diff := strings.TrimSpace(p.Diff); diff != "" {
+		return diff
+	}
+	if pager := strings.TrimSpace(os.Getenv("PAGER")); pager != "" {
+		return pager
+	}
+	return "less -R"
+}
+
+// Git configures local git checkout behavior.
+type Git struct {
+	Remote           string `yaml:"remote"`
+	PRBranchTemplate string `yaml:"prBranchTemplate"`
+}
+
+// RemoteName returns the configured remote name or the origin default.
+func (g Git) RemoteName() string {
+	if remote := strings.TrimSpace(g.Remote); remote != "" {
+		return remote
+	}
+	return "origin"
+}
+
+// BranchTemplate returns the configured PR branch template or the default.
+func (g Git) BranchTemplate() string {
+	if tmpl := strings.TrimSpace(g.PRBranchTemplate); tmpl != "" {
+		return tmpl
+	}
+	return "pr-{{.PrIndex}}"
 }
 
 // Instance selects and overrides the Gitea connection.
@@ -153,6 +203,85 @@ func ParseRepo(s string) (Repo, error) {
 		return Repo{}, fmt.Errorf("invalid repo %q, want \"owner/name\"", s)
 	}
 	return Repo{Owner: owner, Name: name}, nil
+}
+
+// ExpandPath expands a leading "~" or "~/" to the current user's home
+// directory. Other paths are returned unchanged.
+func ExpandPath(p string) (string, error) {
+	switch {
+	case p == "~":
+		return os.UserHomeDir()
+	case strings.HasPrefix(p, "~/"):
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, p[2:]), nil
+	default:
+		return p, nil
+	}
+}
+
+// MatchRepoPath returns the path mapped for repoName, preferring an exact key
+// before evaluating wildcard patterns such as "fcmb/*". Mapped paths may use
+// {{.Owner}}, {{.Repo}}, and {{.RepoName}} template variables, and are expanded
+// through ExpandPath before being returned.
+func MatchRepoPath(repoName string, repoPaths map[string]string) (string, bool, error) {
+	repoName = strings.TrimSpace(repoName)
+	if repoName == "" || len(repoPaths) == 0 {
+		return "", false, nil
+	}
+	if p, ok := repoPaths[repoName]; ok {
+		expanded, err := expandRepoPathMapping(p, repoName)
+		return expanded, true, err
+	}
+
+	patterns := make([]string, 0, len(repoPaths))
+	for pattern := range repoPaths {
+		if strings.ContainsAny(pattern, "*?[") {
+			patterns = append(patterns, pattern)
+		}
+	}
+	sort.Strings(patterns)
+	for _, pattern := range patterns {
+		ok, err := path.Match(pattern, repoName)
+		if err != nil {
+			return "", false, fmt.Errorf("repoPaths pattern %q: %w", pattern, err)
+		}
+		if !ok {
+			continue
+		}
+		expanded, err := expandRepoPathMapping(repoPaths[pattern], repoName)
+		return expanded, true, err
+	}
+	return "", false, nil
+}
+
+func expandRepoPathMapping(p, repoName string) (string, error) {
+	if strings.Contains(p, "{{") {
+		r, err := ParseRepo(repoName)
+		if err != nil {
+			return "", err
+		}
+		tmpl, err := template.New("repoPath").Option("missingkey=error").Parse(p)
+		if err != nil {
+			return "", fmt.Errorf("repoPaths template %q: %w", p, err)
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, struct {
+			Owner    string
+			Repo     string
+			RepoName string
+		}{
+			Owner:    r.Owner,
+			Repo:     r.Name,
+			RepoName: repoName,
+		}); err != nil {
+			return "", fmt.Errorf("repoPaths template %q: %w", p, err)
+		}
+		p = buf.String()
+	}
+	return ExpandPath(p)
 }
 
 // ParsedRepos returns the configured repos parsed into Repo values.
