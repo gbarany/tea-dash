@@ -862,6 +862,43 @@ func TestNilActionDispatcherShowsNoticeOnSubmit(t *testing.T) {
 	}
 }
 
+func TestSuccessfulActionRefreshesRowsAndClearsPreviewCache(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  key,
+		pull: &data.PullDetail{Body: "staledetailtoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	if _, ok := m.pullDetails[key]; !ok {
+		t.Fatalf("test setup: expected cached pull detail for %q", key)
+	}
+
+	next, cmd := m.Update(actions.ResultMsg{
+		Intent: actions.Intent{Kind: actions.KindClose, Target: actions.Target{
+			SectionID: 0, SectionType: pullsection.SectionType, RowKind: actions.RowKindPullRequest,
+			Repo: "gbarany/tea-dash", Number: 42,
+		}},
+		Status:  actions.ResultSucceeded,
+		Message: "Closed gbarany/tea-dash#42.",
+	})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("successful action should refresh the affected section")
+	}
+	if _, ok := m.pullDetails[key]; ok {
+		t.Fatalf("successful action should clear cached pull detail for %q", key)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "staledetailtoken") || !strings.Contains(view, "Loading") {
+		t.Fatalf("successful action should replace stale preview with loading state:\n%s", view)
+	}
+}
+
 // isQuitCmd reports whether running cmd yields a tea.QuitMsg.
 func isQuitCmd(cmd tea.Cmd) bool {
 	if cmd == nil {

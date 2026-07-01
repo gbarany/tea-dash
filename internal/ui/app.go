@@ -197,6 +197,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actions.ResultMsg:
 		m.notice = ""
 		m.actionFeedback = m.actionFeedback.Set(feedbackFromActionResult(msg))
+		if msg.Status == actions.ResultSucceeded {
+			m.clearPreviewCacheForAction(msg.Intent.Target)
+			if s := m.getCurrSection(); s != nil &&
+				s.GetId() == msg.Intent.Target.SectionID &&
+				s.GetType() == msg.Intent.Target.SectionType {
+				if m.ctx.PreviewOpen {
+					m.syncSidebar()
+				}
+				return m, tea.Batch(s.FetchRows(), m.enrichCurrRow())
+			}
+		}
 		return m, nil
 
 	case enrichedMsg:
@@ -355,7 +366,7 @@ func (m Model) View() tea.View {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
 	}
 	parts = append(parts, body, status,
-		helpStyle.Render("↑/↓ move · h/l section · s view · / search · p preview · c comment · m merge · x close · q quit"))
+		helpStyle.Render("↑/↓ move · h/l section · s view · / search · p preview · c comment · m merge · x/X close/reopen · v review · d diff · C checkout · q quit"))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true}
@@ -531,6 +542,21 @@ func (m *Model) clearSelectedPreviewCache() {
 			delete(m.issueDetails, key)
 			delete(m.issueEnrichErr, key)
 		}
+	}
+}
+
+func (m *Model) clearPreviewCacheForAction(target actions.Target) {
+	if target.Repo == "" || target.Number <= 0 {
+		return
+	}
+	key := fmt.Sprintf("%s#%d", target.Repo, target.Number)
+	switch target.RowKind {
+	case actions.RowKindPullRequest:
+		delete(m.pullDetails, key)
+		delete(m.pullEnrichErr, key)
+	case actions.RowKindIssue:
+		delete(m.issueDetails, key)
+		delete(m.issueEnrichErr, key)
 	}
 }
 
