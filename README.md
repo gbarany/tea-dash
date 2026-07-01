@@ -86,9 +86,15 @@ Optional. Create `~/.config/tea-dash/config.yml`
 view, and define your own sections:
 
 ```yaml
-# tea login profile to use (optional; empty = your default tea login)
 instance:
-  login: ""
+  login: ""          # tea login profile to use (empty = your default tea login)
+  # url:   ""        # override the instance URL (else taken from the tea login)
+  # Token source (first non-empty wins): token > tokenCommand > tokenEnv > TEA_DASH_TOKEN > tea login.
+  # tea-dash reads the token from tea's config file. If tea stored yours in the OS
+  # keychain (so the config's token is empty), give tea-dash one of these instead:
+  # token:        ""                                   # a literal token (not recommended in plaintext)
+  # tokenCommand: op read "op://Private/tea-dash/credential"   # e.g. 1Password, pass, gopass
+  # tokenEnv:     TEA_DASH_TOKEN                        # name of an env var holding the token
 
 defaults:
   view: prs        # startup view: "prs" or "issues"

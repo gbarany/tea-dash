@@ -39,11 +39,13 @@ type Defaults struct {
 
 // Instance selects and overrides the Gitea connection.
 type Instance struct {
-	Login    string `yaml:"login"`              // pick a named tea login
-	URL      string `yaml:"url"`                // override instance URL
-	Token    string `yaml:"token"`              // override token
-	Insecure bool   `yaml:"insecureSkipVerify"` // disable TLS verification
-	CACert   string `yaml:"caCert"`             // path to a private CA bundle
+	Login        string `yaml:"login"`              // pick a named tea login
+	URL          string `yaml:"url"`                // override instance URL
+	Token        string `yaml:"token"`              // literal token
+	TokenCommand string `yaml:"tokenCommand"`       // command whose stdout is the token (e.g. `op read ...`)
+	TokenEnv     string `yaml:"tokenEnv"`           // name of an env var holding the token
+	Insecure     bool   `yaml:"insecureSkipVerify"` // disable TLS verification
+	CACert       string `yaml:"caCert"`             // path to a private CA bundle
 }
 
 // SectionConfig describes one dashboard section (a tab).
