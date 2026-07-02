@@ -243,6 +243,44 @@ keybindings:
 	}
 }
 
+func TestUnmarshalThemeColors(t *testing.T) {
+	const y = `
+theme:
+  colors:
+    text:
+      primary: "#CBE3E7"
+      secondary: "#A1EFD3"
+      inverted: "#1E1C31"
+      faint: "#8A889D"
+      warning: "#F48FB1"
+      success: "#A1EFD3"
+      actor: "#D4BFFF"
+    background:
+      selected: "#3E3859"
+    border:
+      primary: "#585273"
+      secondary: "#c0c0c0"
+      faint: "#2D2B40"
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Theme.Colors.Text.Primary != "#CBE3E7" ||
+		c.Theme.Colors.Text.Secondary != "#A1EFD3" ||
+		c.Theme.Colors.Text.Inverted != "#1E1C31" ||
+		c.Theme.Colors.Text.Faint != "#8A889D" ||
+		c.Theme.Colors.Text.Warning != "#F48FB1" ||
+		c.Theme.Colors.Text.Success != "#A1EFD3" ||
+		c.Theme.Colors.Text.Actor != "#D4BFFF" ||
+		c.Theme.Colors.Background.Selected != "#3E3859" ||
+		c.Theme.Colors.Border.Primary != "#585273" ||
+		c.Theme.Colors.Border.Secondary != "#c0c0c0" ||
+		c.Theme.Colors.Border.Faint != "#2D2B40" {
+		t.Fatalf("theme = %+v", c.Theme)
+	}
+}
+
 func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 	cases := []struct {
 		name string

@@ -168,6 +168,17 @@ func TestHelpMentionsSmartFilteringWhenCurrentRepoDetected(t *testing.T) {
 	}
 }
 
+func TestNewAppliesThemeColors(t *testing.T) {
+	m := New(&config.Config{
+		Theme: config.Theme{Colors: config.ThemeColors{Text: config.ThemeTextColors{Primary: "#CBE3E7"}}},
+	}, nil)
+	gotR, gotG, gotB, gotA := m.ctx.Styles.Title.GetForeground().RGBA()
+	wantR, wantG, wantB, wantA := lipgloss.Color("#CBE3E7").RGBA()
+	if gotR != wantR || gotG != wantG || gotB != wantB || gotA != wantA {
+		t.Fatalf("title color = rgba(%d,%d,%d,%d), want rgba(%d,%d,%d,%d)", gotR, gotG, gotB, gotA, wantR, wantG, wantB, wantA)
+	}
+}
+
 func TestMouseClickSelectsVisibleRowAndRefreshesPreview(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -362,7 +373,7 @@ func actionButtonClickX(t *testing.T, m Model, label string) int {
 	t.Helper()
 	x := 2
 	for _, b := range m.actionButtons() {
-		rendered := renderActionButton(b)
+		rendered := m.renderActionButton(b)
 		w := lipgloss.Width(rendered)
 		if b.Label == label {
 			return x + w/2
