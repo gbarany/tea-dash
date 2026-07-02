@@ -9,6 +9,8 @@ const (
 	KindComment       Kind = "comment"
 	KindAssign        Kind = "assign"
 	KindUnassign      Kind = "unassign"
+	KindAddLabel      Kind = "add_label"
+	KindRemoveLabel   Kind = "remove_label"
 	KindMerge         Kind = "merge"
 	KindClose         Kind = "close"
 	KindReopen        Kind = "reopen"

@@ -31,6 +31,8 @@ type Client interface {
 	UnassignPullFromMe(owner, repo string, index int64) error
 	AssignIssueToMe(owner, repo string, index int64) error
 	UnassignIssueFromMe(owner, repo string, index int64) error
+	AddLabels(owner, repo string, index int64, names []string) error
+	RemoveLabels(owner, repo string, index int64, names []string) error
 	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error)
 	SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error)
 	GetPullDiff(owner, repo string, index int64) ([]byte, error)
@@ -215,6 +217,26 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		}
 		return fmt.Sprintf("Unassigned you from %s#%d.", intent.Target.Repo, index), nil
 
+	case uiactions.KindAddLabel:
+		names, err := parseLabelNames(intent.Prompt.Value)
+		if err != nil {
+			return "", err
+		}
+		if err := r.setLabels(owner, repo, index, intent.Target.RowKind, names, true); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Added labels to %s#%d.", intent.Target.Repo, index), nil
+
+	case uiactions.KindRemoveLabel:
+		names, err := parseLabelNames(intent.Prompt.Value)
+		if err != nil {
+			return "", err
+		}
+		if err := r.setLabels(owner, repo, index, intent.Target.RowKind, names, false); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Removed labels from %s#%d.", intent.Target.Repo, index), nil
+
 	case uiactions.KindMerge:
 		style, err := mergeStyle(intent.Prompt.Value)
 		if err != nil {
@@ -377,6 +399,36 @@ func (r Runner) setAssignment(owner, repo string, index int64, kind uiactions.Ro
 	}
 }
 
+func parseLabelNames(input string) ([]string, error) {
+	parts := strings.Split(input, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("label names cannot be empty")
+	}
+	return out, nil
+}
+
+func (r Runner) setLabels(owner, repo string, index int64, kind uiactions.RowKind, names []string, add bool) error {
+	switch kind {
+	case uiactions.RowKindPullRequest, uiactions.RowKindIssue:
+		if add {
+			return r.client.AddLabels(owner, repo, index, names)
+		}
+		return r.client.RemoveLabels(owner, repo, index, names)
+	default:
+		return fmt.Errorf("labels are only available for pull requests and issues")
+	}
+}
+
 func splitRepo(repoName string) (string, string, error) {
 	owner, repo, ok := data.SplitOwnerRepo(repoName)
 	if !ok {
@@ -423,6 +475,10 @@ func actionLabel(kind uiactions.Kind) string {
 		return "assign"
 	case uiactions.KindUnassign:
 		return "unassign"
+	case uiactions.KindAddLabel:
+		return "add label"
+	case uiactions.KindRemoveLabel:
+		return "remove label"
 	case uiactions.KindMerge:
 		return "merge"
 	case uiactions.KindClose:

@@ -87,6 +87,7 @@ tea-dash --help
 | `y` / `Y`       | copy row number / URL   |
 | `c`             | add comment             |
 | `a` / `A`       | assign / unassign yourself |
+| `L` / `U`       | add / remove labels     |
 | `m`             | merge PR                |
 | `m` / `u` / `M` | mark notification read / unread / all read |
 | `x` / `X`       | close / reopen          |
@@ -184,6 +185,10 @@ keybindings:
       builtin: assign
     - key: A
       builtin: unassign
+    - key: L
+      builtin: addLabel
+    - key: U
+      builtin: removeLabel
     - key: g
       name: lazygit
       command: cd {{.RepoPath}} && lazygit
@@ -192,6 +197,10 @@ keybindings:
       builtin: assign
     - key: A
       builtin: unassign
+    - key: L
+      builtin: addLabel
+    - key: U
+      builtin: removeLabel
     - key: i
       command: echo issue {{.IssueNumber}} in {{.RepoName}}
   notifications:

@@ -136,6 +136,52 @@ func TestDispatchAssignRejectsUnsupportedRows(t *testing.T) {
 	}
 }
 
+func TestDispatchAddAndRemoveLabels(t *testing.T) {
+	client := &fakeClient{}
+	r := New(Options{Client: client})
+
+	add := pullIntent(uiactions.KindAddLabel)
+	add.Prompt.Value = "bug, urgent"
+	got := runDispatch(t, r, add)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("add label result = %+v", got)
+	}
+	if !reflect.DeepEqual(client.addLabels, []string{"bug", "urgent"}) || client.labelIndex != 7 {
+		t.Fatalf("add labels = %v index=%d, want [bug urgent] index 7", client.addLabels, client.labelIndex)
+	}
+
+	remove := issueIntent(uiactions.KindRemoveLabel)
+	remove.Prompt.Value = "stale"
+	got = runDispatch(t, r, remove)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("remove label result = %+v", got)
+	}
+	if !reflect.DeepEqual(client.removeLabels, []string{"stale"}) || client.labelIndex != 7 {
+		t.Fatalf("remove labels = %v index=%d, want [stale] index 7", client.removeLabels, client.labelIndex)
+	}
+}
+
+func TestDispatchLabelsRejectEmptyInput(t *testing.T) {
+	intent := pullIntent(uiactions.KindAddLabel)
+	intent.Prompt.Value = " , "
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), intent)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "label names cannot be empty") {
+		t.Fatalf("empty label result = %+v", got)
+	}
+}
+
+func TestDispatchLabelsRejectUnsupportedRows(t *testing.T) {
+	intent := branchIntent(uiactions.KindAddLabel)
+	intent.Target.Repo = "acme/widgets"
+	intent.Prompt.Value = "bug"
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), intent)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "only available for pull requests and issues") {
+		t.Fatalf("label branch result = %+v", got)
+	}
+}
+
 func TestDispatchMergeAndReview(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})
@@ -335,6 +381,9 @@ type fakeClient struct {
 	assignIssue   int64
 	unassignPull  int64
 	unassignIssue int64
+	labelIndex    int64
+	addLabels     []string
+	removeLabels  []string
 }
 
 func (f *fakeClient) AddComment(_, _ string, _ int64, body string) (data.Comment, error) {
@@ -369,6 +418,18 @@ func (f *fakeClient) AssignIssueToMe(_, _ string, index int64) error {
 
 func (f *fakeClient) UnassignIssueFromMe(_, _ string, index int64) error {
 	f.unassignIssue = index
+	return f.err
+}
+
+func (f *fakeClient) AddLabels(_, _ string, index int64, names []string) error {
+	f.labelIndex = index
+	f.addLabels = append([]string(nil), names...)
+	return f.err
+}
+
+func (f *fakeClient) RemoveLabels(_, _ string, index int64, names []string) error {
+	f.labelIndex = index
+	f.removeLabels = append([]string(nil), names...)
 	return f.err
 }
 

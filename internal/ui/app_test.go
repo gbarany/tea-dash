@@ -1245,6 +1245,7 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		key         tea.KeyPressMsg
 		kind        actions.Kind
 		beforeEnter []tea.KeyPressMsg
+		textInput   []tea.KeyPressMsg
 		wantPrompt  actions.Prompt
 	}{
 		{name: "comment", key: tea.KeyPressMsg{Code: 'c', Text: "c"}, kind: actions.KindComment},
@@ -1261,6 +1262,26 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		},
 		{name: "assign", key: tea.KeyPressMsg{Code: 'a', Text: "a"}, kind: actions.KindAssign},
 		{name: "unassign", key: tea.KeyPressMsg{Code: 'A', Text: "A"}, kind: actions.KindUnassign},
+		{
+			name:      "add label",
+			key:       tea.KeyPressMsg{Code: 'L', Text: "L"},
+			kind:      actions.KindAddLabel,
+			textInput: []tea.KeyPressMsg{{Code: 'b', Text: "b"}, {Code: 'u', Text: "u"}, {Code: 'g', Text: "g"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptText,
+				Value: "bug",
+			},
+		},
+		{
+			name:      "remove label",
+			key:       tea.KeyPressMsg{Code: 'U', Text: "U"},
+			kind:      actions.KindRemoveLabel,
+			textInput: []tea.KeyPressMsg{{Code: 's', Text: "s"}, {Code: 't', Text: "t"}, {Code: 'a', Text: "a"}, {Code: 'l', Text: "l"}, {Code: 'e', Text: "e"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptText,
+				Value: "stale",
+			},
+		},
 		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
 		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
@@ -1291,6 +1312,9 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 			if tt.kind == actions.KindComment {
 				m = update(t, m, tea.KeyPressMsg{Code: 'o', Text: "o"})
 				m = update(t, m, tea.KeyPressMsg{Code: 'k', Text: "k"})
+			}
+			for _, key := range tt.textInput {
+				m = update(t, m, key)
 			}
 			for _, key := range tt.beforeEnter {
 				m = update(t, m, key)
