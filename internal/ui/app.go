@@ -71,6 +71,11 @@ type Model struct {
 	expanded bool
 }
 
+type actionButton struct {
+	Label   string
+	Builtin string
+}
+
 // openFailedMsg reports that opening a URL in the browser failed, so the UI can
 // surface the error (and the URL, to copy) instead of failing silently.
 type openFailedMsg struct {
@@ -545,8 +550,11 @@ func (m Model) View() tea.View {
 	if m.ctx.PreviewOpen {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
 	}
-	parts = append(parts, body, status,
-		helpStyle.Render(m.helpLine()))
+	parts = append(parts, body)
+	if bar := m.actionBarView(); bar != "" {
+		parts = append(parts, bar)
+	}
+	parts = append(parts, status, helpStyle.Render(m.helpLine()))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
@@ -590,6 +598,123 @@ func keyHelp(binding key.Binding, fallback string) string {
 		return keys[0]
 	}
 	return fallback
+}
+
+func (m Model) actionButtons() []actionButton {
+	buttons := []actionButton{
+		{Label: "Open", Builtin: "open"},
+		{Label: "Refresh", Builtin: "refresh"},
+	}
+	row := m.getCurrRowData()
+	switch m.ctx.View {
+	case context.NotificationsView:
+		if n, ok := row.(data.Notification); ok {
+			if n.Unread {
+				buttons = append(buttons, actionButton{Label: "Mark read", Builtin: "markRead"})
+			} else {
+				buttons = append(buttons, actionButton{Label: "Mark unread", Builtin: "markUnread"})
+			}
+		}
+		buttons = append(buttons, actionButton{Label: "All read", Builtin: "markAllRead"})
+	case context.ActionsView:
+		buttons = append(buttons,
+			actionButton{Label: "Rerun", Builtin: "rerun"},
+			actionButton{Label: "Cancel", Builtin: "cancel"},
+		)
+	case context.BranchesView:
+		buttons = []actionButton{
+			{Label: "Refresh", Builtin: "refresh"},
+			{Label: "Checkout", Builtin: "checkout"},
+		}
+	case context.IssuesView:
+		buttons = append(buttons, actionButton{Label: "Comment", Builtin: "comment"})
+		switch rowState(row) {
+		case "closed":
+			buttons = append(buttons, actionButton{Label: "Reopen", Builtin: "reopen"})
+		default:
+			buttons = append(buttons, actionButton{Label: "Close", Builtin: "close"})
+		}
+	default:
+		buttons = append(buttons,
+			actionButton{Label: "Comment", Builtin: "comment"},
+			actionButton{Label: "Diff", Builtin: "diff"},
+			actionButton{Label: "Checkout", Builtin: "checkout"},
+		)
+		switch rowState(row) {
+		case "closed":
+			buttons = append(buttons, actionButton{Label: "Reopen", Builtin: "reopen"})
+		case "merged":
+			// A merged PR cannot be closed or reopened through the normal issue
+			// state transition, so keep only non-state-changing actions visible.
+		default:
+			buttons = append(buttons,
+				actionButton{Label: "Merge", Builtin: "merge"},
+				actionButton{Label: "Close", Builtin: "close"},
+			)
+		}
+	}
+	return buttons
+}
+
+func rowState(row data.RowData) string {
+	switch r := row.(type) {
+	case data.PullRequest:
+		return r.State
+	case data.Issue:
+		return r.State
+	case data.Notification:
+		return r.SubjectState
+	default:
+		return ""
+	}
+}
+
+func (m Model) actionBarView() string {
+	if m.actionPrompt.Active() {
+		return ""
+	}
+	buttons := m.actionButtons()
+	if len(buttons) == 0 {
+		return ""
+	}
+	rendered := make([]string, 0, len(buttons)*2-1)
+	for i, b := range buttons {
+		if i > 0 {
+			rendered = append(rendered, " ")
+		}
+		rendered = append(rendered, renderActionButton(b))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, rendered...)
+}
+
+func renderActionButton(b actionButton) string {
+	return actionButtonStyle.Render("[" + b.Label + "]")
+}
+
+func (m Model) actionBarY() int {
+	y := 1 // appStyle top padding
+	y++    // title
+	if len(m.currentViewSections()) > 1 {
+		y++ // tabs
+	}
+	y += m.ctx.MainContentHeight
+	return y
+}
+
+func (m Model) actionButtonAt(x int) (actionButton, bool) {
+	rel := x - 2 // appStyle left padding
+	if rel < 0 || m.actionPrompt.Active() {
+		return actionButton{}, false
+	}
+	pos := 0
+	for _, b := range m.actionButtons() {
+		w := lipgloss.Width(renderActionButton(b))
+		if rel >= pos && rel < pos+w {
+			return b, true
+		}
+		pos += w + 1
+	}
+	return actionButton{}, false
 }
 
 // currentViewSections returns the section slice for the active view.
@@ -952,12 +1077,29 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
 	}
+	if m.actionPrompt.Active() {
+		return m, nil
+	}
 	if msg.Y == m.tabBarY() {
 		if id, ok := m.tabs.TabAt(msg.X - 2); ok {
 			return m.switchSectionTo(id)
 		}
 	}
+	if msg.Y == m.actionBarY() {
+		if button, ok := m.actionButtonAt(msg.X); ok {
+			return m.handleActionButton(button)
+		}
+	}
 	return m.selectRowFromMouse(msg.X, msg.Y)
+}
+
+func (m Model) handleActionButton(button actionButton) (Model, tea.Cmd) {
+	next, cmd, ok := m.handleBuiltinKeybinding(config.Keybinding{Builtin: button.Builtin})
+	if ok {
+		return next, cmd
+	}
+	m.notice = fmt.Sprintf("Action button %q is not wired.", button.Label)
+	return m, nil
 }
 
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
@@ -1658,7 +1800,7 @@ func (m *Model) syncProgramContext() {
 // preview capped at 80 columns, with a 2-column gutter between the panes); when
 // it is closed the table gets the full width and the preview collapses to zero.
 func (m *Model) syncMainContentDimensions() {
-	h := m.ctx.ScreenHeight - 6
+	h := m.ctx.ScreenHeight - 7
 	if h < 3 {
 		h = 3
 	}

@@ -44,6 +44,17 @@ func TestParsedRepos(t *testing.T) {
 	}
 }
 
+func TestConfigValidateRejectsBadGlobalRepo(t *testing.T) {
+	cfg := &Config{Repos: []string{"acme/widgets", "owner/repo/extra"}}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() should reject malformed repos entries")
+	}
+	if !strings.Contains(err.Error(), "repos[1]") {
+		t.Fatalf("Validate() error = %v, want it to identify repos[1]", err)
+	}
+}
+
 func TestUnmarshalInstance(t *testing.T) {
 	const y = `
 instance:
@@ -384,6 +395,21 @@ func TestConfigValidateAllowsRepoScopedLoginFilters(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() should allow plain login filters on repo-scoped sections: %v", err)
+	}
+}
+
+func TestConfigValidateAllowsGlobalReposLoginFilters(t *testing.T) {
+	cfg := &Config{
+		Repos: []string{"acme/widgets", "acme/api"},
+		IssuesSections: []SectionConfig{
+			{Title: "Alice bugs", Filter: PrIssueFilter{CreatedBy: "alice"}},
+		},
+		PRSections: []SectionConfig{
+			{Title: "Assigned PRs", Filter: PrIssueFilter{AssignedBy: "alice"}},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() should allow plain login filters when global repos fan-out is configured: %v", err)
 	}
 }
 

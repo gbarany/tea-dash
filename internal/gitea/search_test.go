@@ -10,6 +10,7 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/config"
+	"github.com/gbarany/tea-dash/internal/data"
 )
 
 const searchJSON = `[
@@ -321,6 +322,101 @@ func TestListRepoPullsUsesRepoIssueEndpointForFilterablePRRows(t *testing.T) {
 	}
 }
 
+func TestListReposPullsPageFansOutAndSlicesGlobalPages(t *testing.T) {
+	var paths []string
+	srv := multiRepoSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/issues":
+			w.Header().Set("X-Total-Count", "3")
+			switch r.URL.Query().Get("page") {
+			case "2":
+				fmt.Fprint(w, `[{"number":11,"title":"widgets old","state":"open","updated_at":"2026-06-01T00:00:00Z","user":{"login":"alice"},"pull_request":{}}]`)
+			default:
+				fmt.Fprint(w, `[
+					{"number":12,"title":"widgets newest","state":"open","updated_at":"2026-06-05T00:00:00Z","user":{"login":"alice"},"pull_request":{}},
+					{"number":10,"title":"widgets middle","state":"open","updated_at":"2026-06-03T00:00:00Z","user":{"login":"alice"},"pull_request":{}}
+				]`)
+			}
+		case "/api/v1/repos/acme/api/issues":
+			w.Header().Set("X-Total-Count", "1")
+			if r.URL.Query().Get("page") == "2" {
+				fmt.Fprint(w, `[]`)
+				return
+			}
+			fmt.Fprint(w, `[{"number":21,"title":"api second","state":"open","updated_at":"2026-06-04T00:00:00Z","user":{"login":"bob"},"pull_request":{}}]`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	repos := []string{"acme/widgets", "acme/api"}
+
+	first, total, err := c.ListReposPullsPage(context.Background(), repos, config.PrIssueFilter{State: "open"}, 2, 1)
+	if err != nil {
+		t.Fatalf("ListReposPullsPage page 1: %v", err)
+	}
+	if total != 4 {
+		t.Fatalf("page 1 total = %d, want summed total 4", total)
+	}
+	if got := pullTitles(first); strings.Join(got, "|") != "widgets newest|api second" {
+		t.Fatalf("page 1 titles = %v, want globally newest first two", got)
+	}
+
+	second, total, err := c.ListReposPullsPage(context.Background(), repos, config.PrIssueFilter{State: "open"}, 2, 2)
+	if err != nil {
+		t.Fatalf("ListReposPullsPage page 2: %v", err)
+	}
+	if total != 4 {
+		t.Fatalf("page 2 total = %d, want summed total 4", total)
+	}
+	if got := pullTitles(second); strings.Join(got, "|") != "widgets middle|widgets old" {
+		t.Fatalf("page 2 titles = %v, want non-duplicated global second page", got)
+	}
+
+	if !containsPathWith(paths, "/api/v1/repos/acme/widgets/issues", "type=pulls") ||
+		!containsPathWith(paths, "/api/v1/repos/acme/api/issues", "type=pulls") {
+		t.Fatalf("paths = %v, want both repo issue endpoints with type=pulls", paths)
+	}
+}
+
+func TestListReposIssuesPageFansOutAndSlicesGlobalPages(t *testing.T) {
+	srv := multiRepoSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/issues":
+			w.Header().Set("X-Total-Count", "2")
+			fmt.Fprint(w, `[
+				{"number":7,"title":"widgets issue","state":"open","updated_at":"2026-06-05T00:00:00Z","user":{"login":"alice"}},
+				{"number":6,"title":"widgets older","state":"open","updated_at":"2026-06-03T00:00:00Z","user":{"login":"alice"}}
+			]`)
+		case "/api/v1/repos/acme/api/issues":
+			w.Header().Set("X-Total-Count", "1")
+			fmt.Fprint(w, `[{"number":9,"title":"api issue","state":"open","updated_at":"2026-06-04T00:00:00Z","user":{"login":"bob"}}]`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	issues, total, err := c.ListReposIssuesPage(context.Background(), []string{"acme/widgets", "acme/api"}, config.PrIssueFilter{State: "open"}, 2, 1)
+	if err != nil {
+		t.Fatalf("ListReposIssuesPage: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
+	if got := issueTitles(issues); strings.Join(got, "|") != "widgets issue|api issue" {
+		t.Fatalf("issue titles = %v, want globally sorted first page", got)
+	}
+}
+
 // searchServer builds a fake Gitea that serves the version/user probes plus a
 // /repos/issues/search handler supplied by the caller.
 func searchServer(t *testing.T, search http.HandlerFunc) *httptest.Server {
@@ -351,6 +447,47 @@ func repoSearchServer(t *testing.T, repoIssues http.HandlerFunc) *httptest.Serve
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func multiRepoSearchServer(t *testing.T, repoIssues http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/acme/widgets/issues", repoIssues)
+	mux.HandleFunc("/api/v1/repos/acme/api/issues", repoIssues)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func pullTitles(prs []data.PullRequest) []string {
+	out := make([]string, len(prs))
+	for i, pr := range prs {
+		out[i] = pr.Title
+	}
+	return out
+}
+
+func issueTitles(issues []data.Issue) []string {
+	out := make([]string, len(issues))
+	for i, issue := range issues {
+		out[i] = issue.Title
+	}
+	return out
+}
+
+func containsPathWith(paths []string, path, queryPart string) bool {
+	for _, got := range paths {
+		if strings.Contains(got, path) && strings.Contains(got, queryPart) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSearchPullsNon2xx(t *testing.T) {

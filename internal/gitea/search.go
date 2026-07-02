@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -197,6 +198,60 @@ func (c *Client) ListRepoIssuesPage(ctx context.Context, repoFull string, f conf
 	return issues, total, nil
 }
 
+// ListReposPullsPage returns one global page of pull requests fanned out across
+// a fixed repo list. It fetches enough per-repo pages to build the global prefix
+// for page, sorts by updated time, then slices the requested page. This preserves
+// progressive loading without duplicate rows while keeping the section API
+// stateless.
+func (c *Client) ListReposPullsPage(ctx context.Context, repos []string, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
+	limit, page = normalizedLimitPage(limit, page)
+	var all []data.PullRequest
+	total := 0
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		for p := 1; p <= page; p++ {
+			rows, repoTotal, err := c.ListRepoPullsPage(ctx, repo, f, limit, p)
+			if err != nil {
+				return nil, 0, err
+			}
+			if p == 1 {
+				total += repoTotal
+			}
+			all = append(all, rows...)
+		}
+	}
+	sortRowsByUpdatedDesc(all)
+	return pageSlice(all, limit, page), total, nil
+}
+
+// ListReposIssuesPage is the issue equivalent of ListReposPullsPage.
+func (c *Client) ListReposIssuesPage(ctx context.Context, repos []string, f config.PrIssueFilter, limit, page int) ([]data.Issue, int, error) {
+	limit, page = normalizedLimitPage(limit, page)
+	var all []data.Issue
+	total := 0
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		for p := 1; p <= page; p++ {
+			rows, repoTotal, err := c.ListRepoIssuesPage(ctx, repo, f, limit, p)
+			if err != nil {
+				return nil, 0, err
+			}
+			if p == 1 {
+				total += repoTotal
+			}
+			all = append(all, rows...)
+		}
+	}
+	sortRowsByUpdatedDesc(all)
+	return pageSlice(all, limit, page), total, nil
+}
+
 func (c *Client) listRepoIssueRowsPage(ctx context.Context, repoFull string, f config.PrIssueFilter, typ sdk.IssueType, limit, page int) ([]*sdk.Issue, int, error) {
 	_ = ctx // The SDK context is pinned at client construction; raw calls use per-request contexts.
 	repo, err := config.ParseRepo(repoFull)
@@ -255,6 +310,38 @@ func normalizeLimit(limit int) int {
 		return 50
 	}
 	return limit
+}
+
+func normalizedLimitPage(limit, page int) (int, int) {
+	limit = normalizeLimit(limit)
+	if page <= 0 {
+		page = 1
+	}
+	return limit, page
+}
+
+func sortRowsByUpdatedDesc[T data.RowData](rows []T) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].GetUpdatedAt().Equal(rows[j].GetUpdatedAt()) {
+			if rows[i].GetRepoNameWithOwner() == rows[j].GetRepoNameWithOwner() {
+				return rows[i].GetNumber() > rows[j].GetNumber()
+			}
+			return rows[i].GetRepoNameWithOwner() < rows[j].GetRepoNameWithOwner()
+		}
+		return rows[i].GetUpdatedAt().After(rows[j].GetUpdatedAt())
+	})
+}
+
+func pageSlice[T data.RowData](rows []T, limit, page int) []T {
+	start := (page - 1) * limit
+	if start >= len(rows) {
+		return nil
+	}
+	end := start + limit
+	if end > len(rows) {
+		end = len(rows)
+	}
+	return rows[start:end]
 }
 
 func totalFromSDKResponse(resp *sdk.Response, fallback int) int {

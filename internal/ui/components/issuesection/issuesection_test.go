@@ -1,14 +1,20 @@
 package issuesection
 
 import (
+	stdctx "context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
 	"github.com/gbarany/tea-dash/internal/ui/context"
 )
@@ -123,4 +129,102 @@ func TestGetCurrRowNilBeforeFetch(t *testing.T) {
 	if m.GetCurrRow() != nil {
 		t.Fatalf("GetCurrRow() = %+v, want nil before any fetch", m.GetCurrRow())
 	}
+}
+
+func TestFetchRowsUsesConfiguredReposFanoutWhenSectionRepoBlank(t *testing.T) {
+	var paths []string
+	srv := issueFanoutServer(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("X-Total-Count", "1")
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/issues":
+			fmt.Fprint(w, `[{"number":1,"title":"Widgets issue","state":"open","updated_at":"2026-06-02T00:00:00Z","user":{"login":"alice"}}]`)
+		case "/api/v1/repos/acme/api/issues":
+			fmt.Fprint(w, `[{"number":2,"title":"API issue","state":"open","updated_at":"2026-06-03T00:00:00Z","user":{"login":"bob"}}]`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	})
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := &context.ProgramContext{
+		Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20,
+		Config: &config.Config{
+			Repos:    []string{"acme/widgets", "acme/api"},
+			Defaults: config.Defaults{IssuesLimit: 10},
+		},
+		Client:    client,
+		StartTask: func(context.Task) tea.Cmd { return nil },
+	}
+	m := NewModel(0, ctx, config.SectionConfig{Title: "All Issues"})
+
+	msg := runIssueFetchCommand(t, m.FetchRows())
+	payload := msg.Msg.(SectionIssuesFetchedMsg)
+	if payload.Err != nil {
+		t.Fatalf("FetchRows payload error: %v", payload.Err)
+	}
+	if payload.TotalCount != 2 || len(payload.Rows) != 2 {
+		t.Fatalf("payload total=%d rows=%+v, want two fanned-out issues", payload.TotalCount, payload.Rows)
+	}
+	if payload.Rows[0].Title != "API issue" || payload.Rows[1].Title != "Widgets issue" {
+		t.Fatalf("rows = %+v, want globally sorted by updated time", payload.Rows)
+	}
+	for _, want := range []string{"/api/v1/repos/acme/widgets/issues", "/api/v1/repos/acme/api/issues"} {
+		if !containsFetchPathWith(paths, want, "type=issues") {
+			t.Fatalf("paths = %v, missing %q with type=issues", paths, want)
+		}
+	}
+}
+
+func issueFanoutServer(t *testing.T, repoIssues http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/acme/widgets/issues", repoIssues)
+	mux.HandleFunc("/api/v1/repos/acme/api/issues", repoIssues)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func runIssueFetchCommand(t *testing.T, cmd tea.Cmd) context.TaskFinishedMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("FetchRows returned nil command")
+	}
+	msg := cmd()
+	if finished, ok := msg.(context.TaskFinishedMsg); ok {
+		return finished
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("FetchRows command returned %T, want TaskFinishedMsg or BatchMsg", msg)
+	}
+	for _, nested := range batch {
+		if nested == nil {
+			continue
+		}
+		got := nested()
+		if finished, ok := got.(context.TaskFinishedMsg); ok {
+			return finished
+		}
+	}
+	t.Fatal("FetchRows batch did not contain a TaskFinishedMsg")
+	return context.TaskFinishedMsg{}
+}
+
+func containsFetchPathWith(paths []string, wantPath, wantQuery string) bool {
+	for _, got := range paths {
+		if strings.Contains(got, wantPath) && strings.Contains(got, wantQuery) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,14 +1,20 @@
 package pullsection
 
 import (
+	stdctx "context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
 	"github.com/gbarany/tea-dash/internal/ui/context"
 )
@@ -172,4 +178,168 @@ func TestStaleFetchIgnored(t *testing.T) {
 	if m.NumRows() != 0 {
 		t.Fatalf("stale fetch was applied: rows=%d", m.NumRows())
 	}
+}
+
+func TestFetchRowsUsesConfiguredReposFanoutWhenSectionRepoBlank(t *testing.T) {
+	var paths []string
+	srv := pullFanoutServer(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("X-Total-Count", "1")
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/issues":
+			fmt.Fprint(w, `[{"number":1,"title":"Widgets PR","state":"open","updated_at":"2026-06-02T00:00:00Z","user":{"login":"alice"},"pull_request":{}}]`)
+		case "/api/v1/repos/acme/api/issues":
+			fmt.Fprint(w, `[{"number":2,"title":"API PR","state":"open","updated_at":"2026-06-03T00:00:00Z","user":{"login":"bob"},"pull_request":{}}]`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	})
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := &context.ProgramContext{
+		Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20,
+		Config: &config.Config{
+			Repos:    []string{"acme/widgets", "acme/api"},
+			Defaults: config.Defaults{PRsLimit: 10},
+		},
+		Client:    client,
+		StartTask: func(context.Task) tea.Cmd { return nil },
+	}
+	m := NewModel(0, ctx, config.SectionConfig{Title: "All PRs"})
+
+	msg := runPullFetchCommand(t, m.FetchRows())
+	payload := msg.Msg.(SectionPullRequestsFetchedMsg)
+	if payload.Err != nil {
+		t.Fatalf("FetchRows payload error: %v", payload.Err)
+	}
+	if payload.TotalCount != 2 || len(payload.Rows) != 2 {
+		t.Fatalf("payload total=%d rows=%+v, want two fanned-out PRs", payload.TotalCount, payload.Rows)
+	}
+	if payload.Rows[0].Title != "API PR" || payload.Rows[1].Title != "Widgets PR" {
+		t.Fatalf("rows = %+v, want globally sorted by updated time", payload.Rows)
+	}
+	for _, want := range []string{"/api/v1/repos/acme/widgets/issues", "/api/v1/repos/acme/api/issues"} {
+		if !containsFetchPathWith(paths, want, "type=pulls") {
+			t.Fatalf("paths = %v, missing %q with type=pulls", paths, want)
+		}
+	}
+}
+
+func TestFetchRowsWithReviewRequestedUsesCrossRepoSearchEvenWithConfiguredRepos(t *testing.T) {
+	var paths []string
+	srv := pullSearchAndFanoutServer(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+			w.Header().Set("X-Total-Count", "1")
+			fmt.Fprint(w, `[{
+				"number":3,
+				"title":"Review me",
+				"state":"open",
+				"updated_at":"2026-06-04T00:00:00Z",
+				"repository":{"full_name":"acme/widgets"},
+				"user":{"login":"alice"},
+				"pull_request":{}
+			}]`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+			t.Fatalf("reviewRequested is not expressible on repo issues endpoint; got %s", r.URL.Path)
+		},
+	)
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := &context.ProgramContext{
+		Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20,
+		Config:    &config.Config{Repos: []string{"acme/widgets", "acme/api"}},
+		Client:    client,
+		StartTask: func(context.Task) tea.Cmd { return nil },
+	}
+	m := NewModel(0, ctx, config.SectionConfig{
+		Title:  "Needs Review",
+		Filter: config.PrIssueFilter{ReviewRequested: "@me"},
+	})
+
+	msg := runPullFetchCommand(t, m.FetchRows())
+	payload := msg.Msg.(SectionPullRequestsFetchedMsg)
+	if payload.Err != nil {
+		t.Fatalf("FetchRows payload error: %v", payload.Err)
+	}
+	if payload.TotalCount != 1 || len(payload.Rows) != 1 || payload.Rows[0].Title != "Review me" {
+		t.Fatalf("payload total=%d rows=%+v, want cross-repo review row", payload.TotalCount, payload.Rows)
+	}
+	if !containsFetchPathWith(paths, "/api/v1/repos/issues/search", "review_requested=true") {
+		t.Fatalf("paths = %v, want cross-repo review_requested search", paths)
+	}
+}
+
+func pullFanoutServer(t *testing.T, repoIssues http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/acme/widgets/issues", repoIssues)
+	mux.HandleFunc("/api/v1/repos/acme/api/issues", repoIssues)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func pullSearchAndFanoutServer(t *testing.T, search, repoIssues http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/issues/search", search)
+	mux.HandleFunc("/api/v1/repos/acme/widgets/issues", repoIssues)
+	mux.HandleFunc("/api/v1/repos/acme/api/issues", repoIssues)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func runPullFetchCommand(t *testing.T, cmd tea.Cmd) context.TaskFinishedMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("FetchRows returned nil command")
+	}
+	msg := cmd()
+	if finished, ok := msg.(context.TaskFinishedMsg); ok {
+		return finished
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("FetchRows command returned %T, want TaskFinishedMsg or BatchMsg", msg)
+	}
+	for _, nested := range batch {
+		if nested == nil {
+			continue
+		}
+		got := nested()
+		if finished, ok := got.(context.TaskFinishedMsg); ok {
+			return finished
+		}
+	}
+	t.Fatal("FetchRows batch did not contain a TaskFinishedMsg")
+	return context.TaskFinishedMsg{}
+}
+
+func containsFetchPathWith(paths []string, wantPath, wantQuery string) bool {
+	for _, got := range paths {
+		if strings.Contains(got, wantPath) && strings.Contains(got, wantQuery) {
+			return true
+		}
+	}
+	return false
 }

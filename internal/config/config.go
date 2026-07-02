@@ -21,8 +21,9 @@ type Config struct {
 	Instance Instance `yaml:"instance"`
 	// Login is a deprecated alias for Instance.Login (tea login profile name).
 	Login string `yaml:"login"`
-	// Repos lists remote Gitea repositories to watch. Section-level Repo is the
-	// active per-repo path; multi-repo fan-out through Repos is still reserved.
+	// Repos lists remote Gitea repositories to watch. A PR/issue section with no
+	// explicit Repo fans out across this list; with no Repos, it falls back to
+	// the instance-wide cross-repo search endpoint.
 	Repos []string `yaml:"repos"`
 	// LocalRepos lists local git repository paths for read-only branch status.
 	LocalRepos []LocalRepoConfig `yaml:"localRepos"`
@@ -211,13 +212,18 @@ func (f PrIssueFilter) validate(repoScoped bool) error {
 	return nil
 }
 
-func validatePrIssueSection(kind string, s SectionConfig) error {
-	if strings.TrimSpace(s.Repo) != "" {
+func validatePrIssueSection(kind string, s SectionConfig, hasGlobalRepos bool) error {
+	if kind == "issuesSections" && strings.TrimSpace(s.Filter.ReviewRequested) != "" {
+		return fmt.Errorf("%s.filter.reviewRequested is only supported for PR sections", kind)
+	}
+	hasSectionRepo := strings.TrimSpace(s.Repo) != ""
+	if hasSectionRepo {
 		if _, err := ParseRepo(s.Repo); err != nil {
 			return fmt.Errorf("%s.repo: %w", kind, err)
 		}
 	}
-	if err := s.Filter.ValidateForRepo(s.Repo); err != nil {
+	repoScoped := hasSectionRepo || (hasGlobalRepos && strings.TrimSpace(s.Filter.ReviewRequested) == "")
+	if err := s.Filter.validate(repoScoped); err != nil {
 		return err
 	}
 	return nil
@@ -226,13 +232,18 @@ func validatePrIssueSection(kind string, s SectionConfig) error {
 // Validate checks the config for unsupported filter values and an invalid
 // default view, returning the first error found.
 func (c *Config) Validate() error {
+	for i, repo := range c.Repos {
+		if _, err := ParseRepo(repo); err != nil {
+			return fmt.Errorf("repos[%d]: %w", i, err)
+		}
+	}
 	for _, s := range c.PRSections {
-		if err := validatePrIssueSection("prSections", s); err != nil {
+		if err := validatePrIssueSection("prSections", s, len(c.Repos) > 0); err != nil {
 			return err
 		}
 	}
 	for _, s := range c.IssuesSections {
-		if err := validatePrIssueSection("issuesSections", s); err != nil {
+		if err := validatePrIssueSection("issuesSections", s, len(c.Repos) > 0); err != nil {
 			return err
 		}
 	}

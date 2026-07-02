@@ -26,6 +26,7 @@ type SectionPullRequestsFetchedMsg = section.RowsFetchedMsg[data.PullRequest]
 
 // NewModel builds a pull-requests section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
+	programCtx := ctx
 	return section.New(section.Options[data.PullRequest]{
 		Id:           id,
 		Ctx:          ctx,
@@ -39,11 +40,14 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		PluralForm:   "pull requests",
 		Limit:        func(c *config.Config) int { return c.Defaults.PRsLimit },
 		Pageable:     true,
-		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
+		Fetch: func(fetchCtx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
 			if cfg.Repo != "" {
-				return c.ListRepoPullsPage(ctx, cfg.Repo, f, limit, page)
+				return c.ListRepoPullsPage(fetchCtx, cfg.Repo, f, limit, page)
 			}
-			return c.SearchPullsPage(ctx, f, limit, page)
+			if f.ReviewRequested == "" && programCtx != nil && programCtx.Config != nil && len(programCtx.Config.Repos) > 0 {
+				return c.ListReposPullsPage(fetchCtx, programCtx.Config.Repos, f, limit, page)
+			}
+			return c.SearchPullsPage(fetchCtx, f, limit, page)
 		},
 		BuildRow: prBuildRow,
 	})
