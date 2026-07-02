@@ -80,6 +80,9 @@ func TestUnmarshalSectionsAndDefaults(t *testing.T) {
 defaults:
   view: notifications
   refetchIntervalMinutes: 3
+  preview:
+    open: false
+    width: 72
   prsLimit: 25
   issuesLimit: 40
   notificationsLimit: 30
@@ -126,6 +129,9 @@ localRepos:
 		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 || c.Defaults.BranchesLimit != 100 ||
 		c.Defaults.RefetchIntervalMinutes != 3 {
 		t.Fatalf("defaults = %+v", c.Defaults)
+	}
+	if c.Defaults.Preview.Open == nil || *c.Defaults.Preview.Open || c.Defaults.Preview.Width != 72 {
+		t.Fatalf("defaults.preview = %+v, want open=false width=72", c.Defaults.Preview)
 	}
 	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
 		c.PRSections[1].Filter.ReviewRequested != "@me" {

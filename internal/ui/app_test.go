@@ -1328,6 +1328,39 @@ func TestPreviewStartsOpenAndToggles(t *testing.T) {
 	}
 }
 
+func TestPreviewCanStartClosedFromConfig(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{Preview: config.PreviewConfig{Open: boolPtr(false)}}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.ctx.PreviewOpen {
+		t.Fatal("defaults.preview.open=false should start with the preview closed")
+	}
+	if m.ctx.PreviewWidth != 0 || m.ctx.PreviewHeight != 0 {
+		t.Fatalf("closed preview dimensions = %dx%d, want 0x0", m.ctx.PreviewWidth, m.ctx.PreviewHeight)
+	}
+	if m.ctx.MainContentWidth != 116 {
+		t.Fatalf("closed preview main width = %d, want full content width 116", m.ctx.MainContentWidth)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("'p' should still open a config-closed preview")
+	}
+}
+
+func TestPreviewWidthCanBeConfigured(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{Preview: config.PreviewConfig{Width: 64}}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 180, Height: 40})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("preview should still default open when only width is configured")
+	}
+	if m.ctx.PreviewWidth != 64 {
+		t.Fatalf("preview width = %d, want configured width 64", m.ctx.PreviewWidth)
+	}
+	if m.ctx.MainContentWidth != 110 {
+		t.Fatalf("main content width = %d, want screen minus padding/gutter/preview = 110", m.ctx.MainContentWidth)
+	}
+}
+
 // TestEnrichedMsgPopulatesSidebar verifies that, with the preview open, an
 // enrichedMsg for the selected row's key is cached and the sidebar re-renders to
 // show the fetched body (and no longer the loading placeholder).
@@ -2452,6 +2485,10 @@ var errBoom = errBoomType("boom")
 type errBoomType string
 
 func (e errBoomType) Error() string { return string(e) }
+
+func boolPtr(v bool) *bool {
+	return &v
+}
 
 func newNotificationActionClient(
 	t *testing.T,
