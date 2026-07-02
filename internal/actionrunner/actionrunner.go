@@ -47,6 +47,9 @@ type Client interface {
 // CheckoutFunc runs or fakes a local PR checkout.
 type CheckoutFunc func(context.Context, localgit.CheckoutOptions) (localgit.CheckoutPlan, error)
 
+// IssueCheckoutFunc runs or fakes a local issue branch checkout.
+type IssueCheckoutFunc func(context.Context, localgit.IssueCheckoutOptions) (localgit.IssueCheckoutPlan, error)
+
 // BranchSwitchFunc runs or fakes a local branch switch.
 type BranchSwitchFunc func(context.Context, localgit.SwitchBranchOptions) (localgit.SwitchBranchResult, error)
 
@@ -56,28 +59,30 @@ type ExecProcessFunc func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 
 // Options configures a Runner.
 type Options struct {
-	Client       Client
-	Config       *config.Config
-	InstanceURL  string
-	CWD          string
-	ShellRunner  shell.Runner
-	GitRunner    localgit.Runner
-	Checkout     CheckoutFunc
-	BranchSwitch BranchSwitchFunc
-	ExecProcess  ExecProcessFunc
+	Client        Client
+	Config        *config.Config
+	InstanceURL   string
+	CWD           string
+	ShellRunner   shell.Runner
+	GitRunner     localgit.Runner
+	Checkout      CheckoutFunc
+	IssueCheckout IssueCheckoutFunc
+	BranchSwitch  BranchSwitchFunc
+	ExecProcess   ExecProcessFunc
 }
 
 // Runner executes actions and returns ResultMsg values for the UI.
 type Runner struct {
-	client       Client
-	cfg          *config.Config
-	instanceURL  string
-	cwd          string
-	shellRunner  shell.Runner
-	gitRunner    localgit.Runner
-	checkout     CheckoutFunc
-	branchSwitch BranchSwitchFunc
-	execProcess  ExecProcessFunc
+	client        Client
+	cfg           *config.Config
+	instanceURL   string
+	cwd           string
+	shellRunner   shell.Runner
+	gitRunner     localgit.Runner
+	checkout      CheckoutFunc
+	issueCheckout IssueCheckoutFunc
+	branchSwitch  BranchSwitchFunc
+	execProcess   ExecProcessFunc
 }
 
 // New constructs a Runner with production defaults for omitted runners.
@@ -94,6 +99,10 @@ func New(opts Options) Runner {
 	if checkout == nil {
 		checkout = localgit.RunCheckout
 	}
+	issueCheckout := opts.IssueCheckout
+	if issueCheckout == nil {
+		issueCheckout = localgit.RunIssueCheckout
+	}
 	branchSwitch := opts.BranchSwitch
 	if branchSwitch == nil {
 		branchSwitch = localgit.SwitchBranch
@@ -103,15 +112,16 @@ func New(opts Options) Runner {
 		execProcess = tea.ExecProcess
 	}
 	return Runner{
-		client:       opts.Client,
-		cfg:          cfg,
-		instanceURL:  opts.InstanceURL,
-		cwd:          opts.CWD,
-		shellRunner:  shellRunner,
-		gitRunner:    opts.GitRunner,
-		checkout:     checkout,
-		branchSwitch: branchSwitch,
-		execProcess:  execProcess,
+		client:        opts.Client,
+		cfg:           cfg,
+		instanceURL:   opts.InstanceURL,
+		cwd:           opts.CWD,
+		shellRunner:   shellRunner,
+		gitRunner:     opts.GitRunner,
+		checkout:      checkout,
+		issueCheckout: issueCheckout,
+		branchSwitch:  branchSwitch,
+		execProcess:   execProcess,
 	}
 }
 
@@ -322,20 +332,39 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		return fmt.Sprintf("Viewed diff for %s#%d.", intent.Target.Repo, index), nil
 
 	case uiactions.KindCheckout:
-		plan, err := r.checkout(ctx, localgit.CheckoutOptions{
-			RepoName:       intent.Target.Repo,
-			CWD:            r.cwd,
-			InstanceURL:    r.instanceURL,
-			RepoPaths:      r.cfg.RepoPaths,
-			Remote:         r.cfg.Git.Remote,
-			BranchTemplate: r.cfg.Git.PRBranchTemplate,
-			PrIndex:        index,
-			Runner:         r.gitRunner,
-		})
-		if err != nil {
-			return "", err
+		switch intent.Target.RowKind {
+		case uiactions.RowKindPullRequest:
+			plan, err := r.checkout(ctx, localgit.CheckoutOptions{
+				RepoName:       intent.Target.Repo,
+				CWD:            r.cwd,
+				InstanceURL:    r.instanceURL,
+				RepoPaths:      r.cfg.RepoPaths,
+				Remote:         r.cfg.Git.Remote,
+				BranchTemplate: r.cfg.Git.PRBranchTemplate,
+				PrIndex:        index,
+				Runner:         r.gitRunner,
+			})
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Checked out %s in %s.", plan.Branch, plan.RepoPath), nil
+		case uiactions.RowKindIssue:
+			plan, err := r.issueCheckout(ctx, localgit.IssueCheckoutOptions{
+				RepoName:       intent.Target.Repo,
+				CWD:            r.cwd,
+				InstanceURL:    r.instanceURL,
+				RepoPaths:      r.cfg.RepoPaths,
+				BranchTemplate: r.cfg.Git.IssueBranchTemplate,
+				IssueIndex:     index,
+				Runner:         r.gitRunner,
+			})
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Checked out issue branch %s in %s.", plan.Branch, plan.RepoPath), nil
+		default:
+			return "", fmt.Errorf("checkout is only available for pull requests and issues")
 		}
-		return fmt.Sprintf("Checked out %s in %s.", plan.Branch, plan.RepoPath), nil
 
 	case uiactions.KindRerunRun:
 		runID := targetRunID(intent.Target)

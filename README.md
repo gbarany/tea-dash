@@ -99,7 +99,7 @@ tea-dash --help
 | `x` / `X`       | close / reopen          |
 | `v`             | submit PR review        |
 | `d` / `ctrl+t`  | open PR diff in external pager |
-| `C` / `space`   | checkout PR locally; switch branch in Branches view |
+| `C` / `space`   | checkout PR/issue locally; switch branch in Branches view |
 | `R` / `!`       | rerun / cancel Actions run |
 | `r` / `R`       | refresh section / all sections (`ctrl+r` refreshes all in Actions view) |
 | `?`             | show / hide full help   |
@@ -150,6 +150,7 @@ repoPaths:
 git:
   remote: origin
   prBranchTemplate: "pr-{{.PrIndex}}"
+  issueBranchTemplate: "issue-{{.IssueIndex}}"
 
 theme:
   colors:
@@ -226,6 +227,8 @@ keybindings:
       name: lazygit
       command: cd {{.RepoPath}} && lazygit
   issues:
+    - key: C
+      builtin: checkout
     - key: a
       builtin: assign
     - key: A

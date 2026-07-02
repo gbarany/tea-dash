@@ -142,8 +142,9 @@ func (p Pager) DiffCommand() string {
 
 // Git configures local git checkout behavior.
 type Git struct {
-	Remote           string `yaml:"remote"`
-	PRBranchTemplate string `yaml:"prBranchTemplate"`
+	Remote              string `yaml:"remote"`
+	PRBranchTemplate    string `yaml:"prBranchTemplate"`
+	IssueBranchTemplate string `yaml:"issueBranchTemplate"`
 }
 
 // Keybindings groups configurable bindings by scope. Universal bindings are
@@ -180,6 +181,15 @@ func (g Git) BranchTemplate() string {
 		return tmpl
 	}
 	return "pr-{{.PrIndex}}"
+}
+
+// IssueBranchTemplateOrDefault returns the configured issue branch template or
+// the default.
+func (g Git) IssueBranchTemplateOrDefault() string {
+	if tmpl := strings.TrimSpace(g.IssueBranchTemplate); tmpl != "" {
+		return tmpl
+	}
+	return "issue-{{.IssueIndex}}"
 }
 
 // Instance selects and overrides the Gitea connection.
@@ -394,7 +404,7 @@ var prBuiltins = builtinSet(
 
 var issueBuiltins = builtinSet(
 	"comment", "assign", "unassign", "addLabel", "removeLabel", "close", "reopen",
-	"milestone", "setMilestone",
+	"milestone", "setMilestone", "checkout",
 )
 
 var notificationBuiltins = builtinSet(

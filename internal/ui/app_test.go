@@ -253,6 +253,21 @@ func TestActionBarRendersReadyButtonForDraftPullRequest(t *testing.T) {
 	}
 }
 
+func TestActionBarRendersCommonIssueButtons(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 7, Title: "Issue row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	view := m.View().Content
+	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Checkout]", "[Close]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("issue action bar missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestMouseClickActionButtonStartsPromptAction(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -1752,6 +1767,43 @@ func TestIssueActionButtonsIncludeMilestone(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("milestone action button not found in %+v", m.actionButtons())
+	}
+}
+
+func TestIssueCheckoutHotkeyDispatchesExpectedIntent(t *testing.T) {
+	var got []actions.Intent
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+		got = append(got, intent)
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 7, Title: "Issue row", RepoNameWithOwner: "acme/widgets",
+		Author: "me", State: "open", HTMLURL: "https://example.test/acme/widgets/issues/7",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'C', Text: "C"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("C should open an issue checkout prompt")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if len(got) != 1 {
+		t.Fatalf("dispatcher calls = %d, want 1", len(got))
+	}
+	wantTarget := actions.Target{
+		SectionID:   0,
+		SectionType: issuesection.SectionType,
+		RowKind:     actions.RowKindIssue,
+		Repo:        "acme/widgets",
+		Number:      7,
+		Title:       "Issue row",
+		URL:         "https://example.test/acme/widgets/issues/7",
+		Author:      "me",
+	}
+	if got[0].Kind != actions.KindCheckout || got[0].Target != wantTarget {
+		t.Fatalf("intent = %+v, want checkout target %+v", got[0], wantTarget)
 	}
 }
 
