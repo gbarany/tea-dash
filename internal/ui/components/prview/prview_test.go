@@ -184,6 +184,57 @@ func TestRenderIssueSingleComment(t *testing.T) {
 	}
 }
 
+func TestRenderActionWithDetailShowsJobsAndSteps(t *testing.T) {
+	row := data.ActionRun{
+		ID:                101,
+		RunNumber:         77,
+		DisplayTitle:      "CI passed",
+		WorkflowName:      "CI",
+		RepoNameWithOwner: "gbarany/tea-dash",
+		Status:            "completed",
+		Conclusion:        "success",
+	}
+	detail := &data.ActionRunDetail{
+		Run: row,
+		Jobs: []data.ActionJob{{
+			ID:         201,
+			RunID:      101,
+			Name:       "build",
+			Status:     "completed",
+			Conclusion: "success",
+			RunnerName: "ubuntu-latest",
+			Steps: []data.ActionStep{{
+				Number:     1,
+				Name:       "checkout",
+				Status:     "completed",
+				Conclusion: "success",
+			}, {
+				Number:     2,
+				Name:       "go test",
+				Status:     "completed",
+				Conclusion: "failure",
+			}},
+		}},
+	}
+
+	out := RenderAction(row, detail, 80)
+	for _, want := range []string{
+		"gbarany/tea-dash · #77",
+		"CI passed",
+		"Jobs:",
+		"build",
+		"ubuntu-latest",
+		"checkout",
+		"go test",
+		"completed/success",
+		"completed/failure",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("action detail preview missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestRenderNilDetailNoComments verifies a nil detail keeps the Loading
 // placeholder and renders no comments/CI sections.
 func TestRenderNilDetailNoComments(t *testing.T) {

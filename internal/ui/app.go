@@ -2,6 +2,7 @@
 package ui
 
 import (
+	stdctx "context"
 	"fmt"
 
 	"charm.land/bubbles/v2/key"
@@ -39,18 +40,18 @@ type Model struct {
 	actions       []section.Section
 	notice        string // transient status message (e.g. browser-open failure)
 
-	// pullDetails and issueDetails memoize fetched detail views keyed by
-	// "owner/repo#num". The map is chosen by the row's kind (PR vs issue), so
-	// syncSidebar reads the right one without any runtime type assertion.
-	pullDetails  map[string]*data.PullDetail
-	issueDetails map[string]*data.IssueDetail
-	// pullEnrichErr and issueEnrichErr record the last failed detail fetch per
-	// key so the preview can show an error block (instead of a perpetual
-	// "Loading…") while keeping the row retryable. They are kept separate, just
-	// like the detail maps, because PRs and issues in the same repo can share a
-	// number ("owner/repo#num").
-	pullEnrichErr  map[string]error
-	issueEnrichErr map[string]error
+	// Detail maps memoize fetched preview detail keyed by "owner/repo#num".
+	// syncSidebar reads the map matching the selected row kind.
+	pullDetails   map[string]*data.PullDetail
+	issueDetails  map[string]*data.IssueDetail
+	actionDetails map[string]*data.ActionRunDetail
+	// Enrich error maps record the last failed detail fetch per key so the
+	// preview can show an error block while keeping the row retryable. They are
+	// kept separate, just like the detail maps, because row kinds can share a
+	// number in the same repo ("owner/repo#num").
+	pullEnrichErr   map[string]error
+	issueEnrichErr  map[string]error
+	actionEnrichErr map[string]error
 	// expanded controls whether the preview shows the full body or the folded
 	// (read-more) form. Reset to false each time the preview is (re)opened.
 	expanded bool
@@ -71,6 +72,7 @@ type enrichedMsg struct {
 	sectionType string
 	pull        *data.PullDetail
 	issue       *data.IssueDetail
+	action      *data.ActionRunDetail
 	err         error
 }
 
@@ -106,15 +108,17 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 	}
 
 	m := Model{
-		ctx:            ctx,
-		keys:           defaultKeyMap(),
-		tabs:           tabs.New(ctx),
-		sidebar:        sidebar.New(ctx),
-		tasks:          tasks,
-		pullDetails:    map[string]*data.PullDetail{},
-		issueDetails:   map[string]*data.IssueDetail{},
-		pullEnrichErr:  map[string]error{},
-		issueEnrichErr: map[string]error{},
+		ctx:             ctx,
+		keys:            defaultKeyMap(),
+		tabs:            tabs.New(ctx),
+		sidebar:         sidebar.New(ctx),
+		tasks:           tasks,
+		pullDetails:     map[string]*data.PullDetail{},
+		issueDetails:    map[string]*data.IssueDetail{},
+		actionDetails:   map[string]*data.ActionRunDetail{},
+		pullEnrichErr:   map[string]error{},
+		issueEnrichErr:  map[string]error{},
+		actionEnrichErr: map[string]error{},
 	}
 	// Build only the starting view's sections; the other slice stays nil until
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
@@ -195,6 +199,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.issue != nil {
 				delete(m.issueEnrichErr, msg.key)
 				m.issueDetails[msg.key] = msg.issue
+			}
+			if msg.action != nil {
+				delete(m.actionEnrichErr, msg.key)
+				m.actionDetails[msg.key] = msg.action
 			}
 		}
 		m.syncSidebar()
@@ -399,7 +407,9 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 	if key == "" {
 		return nil
 	}
+	sectionType := ""
 	if s := m.getCurrSection(); s != nil {
+		sectionType = s.GetType()
 		switch s.GetType() {
 		case pullsection.SectionType:
 			if _, ok := m.pullDetails[key]; ok {
@@ -407,6 +417,10 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 			}
 		case issuesection.SectionType:
 			if _, ok := m.issueDetails[key]; ok {
+				return nil
+			}
+		case actionsection.SectionType:
+			if _, ok := m.actionDetails[key]; ok {
 				return nil
 			}
 		default:
@@ -422,30 +436,57 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 	if client == nil {
 		return nil
 	}
-	index := row.GetNumber()
-	isPR := false
-	if s := m.getCurrSection(); s != nil {
-		isPR = s.GetType() == pullsection.SectionType
-	}
-	return func() tea.Msg {
-		if isPR {
+	switch sectionType {
+	case pullsection.SectionType:
+		index := row.GetNumber()
+		return func() tea.Msg {
 			d, err := client.GetPullDetail(owner, name, index)
 			if err != nil {
 				return enrichedMsg{key: key, sectionType: pullsection.SectionType, err: err}
 			}
 			return enrichedMsg{key: key, sectionType: pullsection.SectionType, pull: &d}
 		}
-		d, err := client.GetIssueDetail(owner, name, index)
-		if err != nil {
-			return enrichedMsg{key: key, sectionType: issuesection.SectionType, err: err}
+	case issuesection.SectionType:
+		index := row.GetNumber()
+		return func() tea.Msg {
+			d, err := client.GetIssueDetail(owner, name, index)
+			if err != nil {
+				return enrichedMsg{key: key, sectionType: issuesection.SectionType, err: err}
+			}
+			return enrichedMsg{key: key, sectionType: issuesection.SectionType, issue: &d}
 		}
-		return enrichedMsg{key: key, sectionType: issuesection.SectionType, issue: &d}
+	case actionsection.SectionType:
+		run, ok := row.(data.ActionRun)
+		if !ok {
+			return nil
+		}
+		runID := run.ID
+		if runID == 0 {
+			runID = run.GetNumber()
+		}
+		return func() tea.Msg {
+			d, err := client.GetActionRun(stdctx.Background(), owner, name, runID)
+			if err != nil {
+				return enrichedMsg{key: key, sectionType: actionsection.SectionType, err: err}
+			}
+			jobs, err := client.ListActionJobs(stdctx.Background(), owner, name, runID)
+			if err != nil {
+				return enrichedMsg{key: key, sectionType: actionsection.SectionType, err: err}
+			}
+			return enrichedMsg{
+				key:         key,
+				sectionType: actionsection.SectionType,
+				action:      &data.ActionRunDetail{Run: d, Jobs: jobs},
+			}
+		}
+	default:
+		return nil
 	}
 }
 
 // syncSidebar renders the current row (with its cached detail, if any) into the
-// preview pane. The concrete row type selects the pull vs issue renderer; a
-// missing/other-typed cache entry renders as the "loading" placeholder.
+// preview pane. The concrete row type selects the renderer; a missing cache
+// entry renders that row kind's loading placeholder.
 func (m *Model) syncSidebar() {
 	row := m.getCurrRowData()
 	if row == nil {
@@ -471,7 +512,11 @@ func (m *Model) syncSidebar() {
 	case data.Notification:
 		rendered = prview.RenderNotification(r, w)
 	case data.ActionRun:
-		rendered = prview.RenderAction(r, w)
+		if err := m.actionEnrichErr[key]; err != nil {
+			m.sidebar.SetContent(m.failedPreview(row, err))
+			return
+		}
+		rendered = prview.RenderAction(r, m.actionDetails[key], w)
 	}
 	m.sidebar.SetContent(rendered)
 }
@@ -482,6 +527,8 @@ func (m *Model) setEnrichErr(sectionType, key string, err error) {
 		m.pullEnrichErr[key] = err
 	case issuesection.SectionType:
 		m.issueEnrichErr[key] = err
+	case actionsection.SectionType:
+		m.actionEnrichErr[key] = err
 	default:
 		if s := m.getCurrSection(); s != nil {
 			m.setEnrichErr(s.GetType(), key, err)
@@ -502,6 +549,9 @@ func (m *Model) clearSelectedPreviewCache() {
 		case issuesection.SectionType:
 			delete(m.issueDetails, key)
 			delete(m.issueEnrichErr, key)
+		case actionsection.SectionType:
+			delete(m.actionDetails, key)
+			delete(m.actionEnrichErr, key)
 		}
 	}
 }

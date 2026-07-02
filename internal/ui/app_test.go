@@ -1,14 +1,20 @@
 package ui
 
 import (
+	stdctx "context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
@@ -551,6 +557,87 @@ func TestActionsPreviewRendersStaticSummary(t *testing.T) {
 	}
 }
 
+func TestActionsPreviewFetchesAndCachesRunDetail(t *testing.T) {
+	var runCalls, jobCalls int
+	srv := actionDetailServer(t, func(mux *http.ServeMux) {
+		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash/actions/runs/101", func(w http.ResponseWriter, _ *http.Request) {
+			runCalls++
+			fmt.Fprint(w, `{
+				"id": 101,
+				"run_number": 77,
+				"display_title": "CI passed",
+				"name": "CI",
+				"status": "completed",
+				"conclusion": "success",
+				"head_branch": "main",
+				"head_sha": "abc123"
+			}`)
+		})
+		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash/actions/runs/101/jobs", func(w http.ResponseWriter, _ *http.Request) {
+			jobCalls++
+			fmt.Fprint(w, `{
+				"jobs": [{
+					"id": 201,
+					"run_id": 101,
+					"name": "build",
+					"status": "completed",
+					"conclusion": "success",
+					"runner_name": "ubuntu-latest",
+					"steps": [{
+						"number": 1,
+						"name": "checkout",
+						"status": "completed",
+						"conclusion": "success"
+					}]
+				}]
+			}`)
+		})
+	})
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	m := New(&config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{{
+			Title: "CI",
+			Repo:  "gbarany/tea-dash",
+		}},
+	}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	next, cmd := m.Update(actionFetchedMsg([]data.ActionRun{{
+		ID: 101, RunNumber: 77, DisplayTitle: "CI passed", WorkflowName: "CI",
+		RepoNameWithOwner: "gbarany/tea-dash", Status: "completed", Conclusion: "success",
+	}}))
+	m = next.(Model)
+	msg := runEnrichedCommand(t, cmd)
+	if msg.err != nil {
+		t.Fatalf("action detail fetch returned error: %v", msg.err)
+	}
+	if msg.sectionType != actionsection.SectionType || msg.action == nil {
+		t.Fatalf("enrichedMsg = %+v, want action detail for action section", msg)
+	}
+
+	m = update(t, m, msg)
+	key := m.selKey()
+	if _, ok := m.actionDetails[key]; !ok {
+		t.Fatalf("actionDetails should contain %q after enrichedMsg", key)
+	}
+	view := m.View().Content
+	for _, want := range []string{"Jobs:", "build", "ubuntu-latest", "checkout"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("action detail preview missing %q:\n%s", want, view)
+		}
+	}
+	if runCalls != 1 || jobCalls != 1 {
+		t.Fatalf("detail endpoints called run=%d jobs=%d, want once each", runCalls, jobCalls)
+	}
+	if cmd := m.enrichCurrRow(); cmd != nil {
+		t.Fatal("cached action detail should suppress another lazy fetch")
+	}
+}
+
 // TestPreviewStartsOpenAndToggles verifies the preview pane is visible by
 // default: the initial window size gives it dimensions and the composed View()
 // renders the sidebar region. 'p' still toggles it closed and open again.
@@ -816,6 +903,46 @@ func isQuitCmd(cmd tea.Cmd) bool {
 	}
 	_, ok := cmd().(tea.QuitMsg)
 	return ok
+}
+
+func runEnrichedCommand(t *testing.T, cmd tea.Cmd) enrichedMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected an enrichment command, got nil")
+	}
+	msg := cmd()
+	if enriched, ok := msg.(enrichedMsg); ok {
+		return enriched
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("enrichment command returned %T, want enrichedMsg or BatchMsg", msg)
+	}
+	for _, nested := range batch {
+		if nested == nil {
+			continue
+		}
+		if enriched, ok := nested().(enrichedMsg); ok {
+			return enriched
+		}
+	}
+	t.Fatal("enrichment batch did not contain an enrichedMsg")
+	return enrichedMsg{}
+}
+
+func actionDetailServer(t *testing.T, register func(*http.ServeMux)) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 var errBoom = errBoomType("boom")

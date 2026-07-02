@@ -49,6 +49,12 @@ type ActionStep struct {
 	CompletedAt time.Time
 }
 
+// ActionRunDetail is the preview detail payload for one Actions workflow run.
+type ActionRunDetail struct {
+	Run  ActionRun
+	Jobs []ActionJob
+}
+
 func (r ActionRun) GetRepoNameWithOwner() string { return r.RepoNameWithOwner }
 
 func (r ActionRun) GetTitle() string {
