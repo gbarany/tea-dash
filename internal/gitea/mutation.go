@@ -177,6 +177,74 @@ func updateAssigneeLogins(current []string, me string, assign bool) []string {
 	return out
 }
 
+// AddLabels adds repository labels, by exact name, to an issue or pull request.
+func (c *Client) AddLabels(owner, repo string, index int64, names []string) error {
+	ids, err := c.resolveLabelIDs(owner, repo, names)
+	if err != nil {
+		return err
+	}
+	err = c.call(func() error {
+		_, _, e := c.sdk.AddIssueLabels(owner, repo, index, sdk.IssueLabelsOption{Labels: ids})
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("add labels to %s/%s#%d: %w", owner, repo, index, err)
+	}
+	return nil
+}
+
+// RemoveLabels removes repository labels, by exact name, from an issue or pull
+// request. Gitea models PR labels through the issue-label API.
+func (c *Client) RemoveLabels(owner, repo string, index int64, names []string) error {
+	ids, err := c.resolveLabelIDs(owner, repo, names)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		labelID := id
+		err = c.call(func() error {
+			_, e := c.sdk.DeleteIssueLabel(owner, repo, index, labelID)
+			return e
+		})
+		if err != nil {
+			return fmt.Errorf("remove label %d from %s/%s#%d: %w", labelID, owner, repo, index, err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) resolveLabelIDs(owner, repo string, names []string) ([]int64, error) {
+	if len(names) == 0 {
+		return nil, fmt.Errorf("label names cannot be empty")
+	}
+	var labels []*sdk.Label
+	err := c.call(func() error {
+		var e error
+		labels, _, e = c.sdk.ListRepoLabels(owner, repo, sdk.ListLabelsOptions{
+			ListOptions: sdk.ListOptions{Page: -1},
+		})
+		return e
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list labels for %s/%s: %w", owner, repo, err)
+	}
+	byName := make(map[string]int64, len(labels))
+	for _, label := range labels {
+		if label != nil {
+			byName[label.Name] = label.ID
+		}
+	}
+	ids := make([]int64, 0, len(names))
+	for _, name := range names {
+		id, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown label %q in %s/%s", name, owner, repo)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 // MergePullRequest merges a pull request with the requested strategy and
 // optional server-side controls.
 func (c *Client) MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error) {

@@ -189,6 +189,71 @@ func TestUnassignPullPreservesOtherAssignees(t *testing.T) {
 	}
 }
 
+func TestAddLabelsResolvesNamesAndPostsIDs(t *testing.T) {
+	var posted []int64
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/widgets/labels":
+			fmt.Fprint(w, `[{"id":1,"name":"bug"},{"id":2,"name":"urgent"}]`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/acme/widgets/issues/42/labels":
+			body := decodeMutationBody(t, r)
+			raw, ok := body["labels"].([]any)
+			if !ok {
+				t.Fatalf("labels body = %#v", body)
+			}
+			for _, v := range raw {
+				posted = append(posted, int64(v.(float64)))
+			}
+			fmt.Fprint(w, `[{"id":1,"name":"bug"},{"id":2,"name":"urgent"}]`)
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.String())
+		}
+	})
+
+	if err := c.AddLabels("acme", "widgets", 42, []string{"bug", "urgent"}); err != nil {
+		t.Fatalf("AddLabels: %v", err)
+	}
+	if len(posted) != 2 || posted[0] != 1 || posted[1] != 2 {
+		t.Fatalf("posted label IDs = %v, want [1 2]", posted)
+	}
+}
+
+func TestRemoveLabelsResolvesNamesAndDeletesIDs(t *testing.T) {
+	var deleted []string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/widgets/labels":
+			fmt.Fprint(w, `[{"id":1,"name":"bug"},{"id":2,"name":"stale"}]`)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/repos/acme/widgets/issues/42/labels/"):
+			deleted = append(deleted, strings.TrimPrefix(r.URL.Path, "/api/v1/repos/acme/widgets/issues/42/labels/"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.String())
+		}
+	})
+
+	if err := c.RemoveLabels("acme", "widgets", 42, []string{"bug", "stale"}); err != nil {
+		t.Fatalf("RemoveLabels: %v", err)
+	}
+	if strings.Join(deleted, ",") != "1,2" {
+		t.Fatalf("deleted label IDs = %v, want [1 2]", deleted)
+	}
+}
+
+func TestAddLabelsUnknownNameErrors(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/repos/acme/widgets/labels" {
+			t.Fatalf("%s %s", r.Method, r.URL.String())
+		}
+		fmt.Fprint(w, `[{"id":1,"name":"bug"}]`)
+	})
+
+	err := c.AddLabels("acme", "widgets", 42, []string{"missing"})
+	if err == nil || !strings.Contains(err.Error(), `unknown label "missing"`) {
+		t.Fatalf("AddLabels unknown error = %v", err)
+	}
+}
+
 func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

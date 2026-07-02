@@ -405,6 +405,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindAssign)
 		case !m.scopedBuiltinOverridden("unassign") && key.Matches(msg, m.keys.Unassign):
 			return m, m.startAction(actions.KindUnassign)
+		case !m.scopedBuiltinOverridden("addlabel") && key.Matches(msg, m.keys.AddLabel):
+			return m, m.startAction(actions.KindAddLabel)
+		case !m.scopedBuiltinOverridden("removelabel") && key.Matches(msg, m.keys.RemoveLabel):
+			return m, m.startAction(actions.KindRemoveLabel)
 		case !m.scopedBuiltinOverridden("merge") && key.Matches(msg, m.keys.Merge):
 			return m, m.startAction(actions.KindMerge)
 		case !m.scopedBuiltinOverridden("close") && key.Matches(msg, m.keys.Close):
@@ -559,7 +563,7 @@ func (m Model) helpLine() string {
 		case context.BranchesView:
 			text += " · C/space switch"
 		default:
-			text += " · c comment · a/A assign/unassign · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
+			text += " · c comment · a/A assign/unassign · L/U labels · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
 		return text + " · q quit"
 	}
@@ -572,7 +576,7 @@ func (m Model) helpLine() string {
 	case context.BranchesView:
 		text += " · C/space switch"
 	default:
-		text += " · c comment · a/A assign · m merge · d/ctrl+t diff · C/space checkout"
+		text += " · c comment · a/A assign · L/U labels · m merge · d/ctrl+t diff · C/space checkout"
 	}
 	return text + fmt.Sprintf(" · %s help · %s quit", keyHelp(m.keys.Help, "?"), keyHelp(m.keys.Quit, "q"))
 }
@@ -1174,6 +1178,10 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindAssign), true
 	case "unassign":
 		return m, m.startAction(actions.KindUnassign), true
+	case "addlabel":
+		return m, m.startAction(actions.KindAddLabel), true
+	case "removelabel":
+		return m, m.startAction(actions.KindRemoveLabel), true
 	case "merge":
 		return m, m.startAction(actions.KindMerge), true
 	case "close":
@@ -1291,7 +1299,7 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 		if target.RowKind != actions.RowKindPullRequest {
 			return fmt.Errorf("%s is only available for pull requests.", actionLabel(kind))
 		}
-	case actions.KindComment, actions.KindAssign, actions.KindUnassign, actions.KindClose, actions.KindReopen:
+	case actions.KindComment, actions.KindAssign, actions.KindUnassign, actions.KindAddLabel, actions.KindRemoveLabel, actions.KindClose, actions.KindReopen:
 		if target.RowKind != actions.RowKindPullRequest && target.RowKind != actions.RowKindIssue {
 			return fmt.Errorf("%s is only available for pull requests and issues.", actionLabel(kind))
 		}
@@ -1313,6 +1321,8 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 	switch kind {
 	case actions.KindComment:
 		return actions.PromptText
+	case actions.KindAddLabel, actions.KindRemoveLabel:
+		return actions.PromptText
 	case actions.KindMerge, actions.KindReview:
 		return actions.PromptPicker
 	default:
@@ -1333,6 +1343,20 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 			Title:       title,
 			Message:     message,
 			Placeholder: "Write a comment",
+		}
+	case actions.KindAddLabel:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       title,
+			Message:     message,
+			Placeholder: "Label names, comma-separated",
+		}
+	case actions.KindRemoveLabel:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       title,
+			Message:     message,
+			Placeholder: "Label names to remove, comma-separated",
 		}
 	case actions.KindReview:
 		return actionprompt.Config{
@@ -1381,6 +1405,10 @@ func actionLabel(kind actions.Kind) string {
 		return "Assign"
 	case actions.KindUnassign:
 		return "Unassign"
+	case actions.KindAddLabel:
+		return "Add label"
+	case actions.KindRemoveLabel:
+		return "Remove label"
 	case actions.KindMerge:
 		return "Merge"
 	case actions.KindClose:

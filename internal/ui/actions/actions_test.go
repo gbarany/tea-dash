@@ -5,6 +5,8 @@ import "testing"
 func TestKindConstants(t *testing.T) {
 	tests := map[Kind]string{
 		KindComment:      "comment",
+		KindAddLabel:     "add_label",
+		KindRemoveLabel:  "remove_label",
 		KindMerge:        "merge",
 		KindClose:        "close",
 		KindReopen:       "reopen",
