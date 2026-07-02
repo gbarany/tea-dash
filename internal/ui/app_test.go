@@ -161,6 +161,49 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 	}
 }
 
+func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "Open row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"},
+	}))
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId:   1,
+		SectionType: pullsection.SectionType,
+		TaskId:      "p2",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 2, Title: "Closed row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "closed",
+			}},
+			TotalCount: 1,
+			TaskId:     "p2",
+		},
+	})
+	firstKey := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  firstKey,
+		pull: &data.PullDetail{Body: "open-detail-token", BaseRef: "main", HeadRef: "open"},
+	})
+
+	firstWidth := m.tabs.TabWidth(0)
+	next, _ := m.Update(tea.MouseClickMsg{X: 2 + firstWidth + 1, Y: m.tabBarY(), Button: tea.MouseLeft})
+	m = next.(Model)
+
+	if m.currSectionId != 1 {
+		t.Fatalf("clicked tab currSectionId = %d, want 1", m.currSectionId)
+	}
+	if got := m.getCurrRowData().GetTitle(); got != "Closed row" {
+		t.Fatalf("clicked tab selected row = %q, want closed section row", got)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "open-detail-token") {
+		t.Fatalf("tab click should refresh preview away from previous section detail:\n%s", view)
+	}
+	if !strings.Contains(view, "Closed row") || !strings.Contains(view, "Loading") {
+		t.Fatalf("tab click should render the clicked section preview loading state:\n%s", view)
+	}
+}
+
 func TestMouseWheelMovesSelectionInList(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
