@@ -133,6 +133,9 @@ func (r Runner) Dispatch(intent uiactions.Intent) tea.Cmd {
 	if intent.Kind == uiactions.KindCustomCommand {
 		return r.dispatchCustomCommand(intent)
 	}
+	if intent.Kind == uiactions.KindExternalDiff {
+		return r.dispatchExternalDiff(intent)
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 		defer cancel()
@@ -142,6 +145,34 @@ func (r Runner) Dispatch(intent uiactions.Intent) tea.Cmd {
 			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: err}
 		}
 		return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultSucceeded, Message: message}
+	}
+}
+
+func (r Runner) dispatchExternalDiff(intent uiactions.Intent) tea.Cmd {
+	return func() tea.Msg {
+		if r.client == nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: fmt.Errorf("%s is unavailable: no Gitea client", actionLabel(intent.Kind))}
+		}
+		owner, repo, err := splitRepo(intent.Target.Repo)
+		if err != nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: err}
+		}
+		diff, err := r.client.GetPullDiff(owner, repo, intent.Target.Number)
+		if err != nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: err}
+		}
+		command := r.cfg.Pager.DiffCommand()
+		cmd := shell.BuildExecCommand(command, diff, r.cwd)
+		return r.execProcess(cmd, func(err error) tea.Msg {
+			if err != nil {
+				return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: fmt.Errorf("run diff pager %q: %w", command, err)}
+			}
+			return uiactions.ResultMsg{
+				Intent:  intent,
+				Status:  uiactions.ResultSucceeded,
+				Message: fmt.Sprintf("Viewed diff for %s#%d.", intent.Target.Repo, intent.Target.Number),
+			}
+		})()
 	}
 }
 
@@ -327,23 +358,6 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			return fmt.Sprintf("%s#%d is already draft.", intent.Target.Repo, index), nil
 		}
 		return fmt.Sprintf("Marked %s#%d draft.", intent.Target.Repo, index), nil
-
-	case uiactions.KindExternalDiff:
-		diff, err := r.client.GetPullDiff(owner, repo, index)
-		if err != nil {
-			return "", err
-		}
-		command := r.cfg.Pager.DiffCommand()
-		cmd := shell.BuildCommand(command, diff, r.cwd)
-		out, err := r.shellRunner.Run(ctx, cmd)
-		if err != nil {
-			msg := strings.TrimSpace(string(out))
-			if msg != "" {
-				return "", fmt.Errorf("run diff pager %q: %w: %s", command, err, msg)
-			}
-			return "", fmt.Errorf("run diff pager %q: %w", command, err)
-		}
-		return fmt.Sprintf("Viewed diff for %s#%d.", intent.Target.Repo, index), nil
 
 	case uiactions.KindCheckout:
 		switch intent.Target.RowKind {

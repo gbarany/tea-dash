@@ -1748,8 +1748,6 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		{name: "update branch", key: tea.KeyPressMsg{Code: 'u', Text: "u"}, kind: actions.KindUpdateBranch},
 		{name: "mark ready", key: tea.KeyPressMsg{Code: 'W', Text: "W"}, kind: actions.KindMarkReady},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
-		{name: "external diff", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindExternalDiff},
-		{name: "external diff ctrl-t alias", key: tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, kind: actions.KindExternalDiff},
 		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},
 		{name: "checkout space alias", key: tea.KeyPressMsg{Code: ' ', Text: " "}, kind: actions.KindCheckout},
 	}
@@ -1984,6 +1982,54 @@ func TestIssueHelpShowsIssueActionsOnly(t *testing.T) {
 		if strings.Contains(help, bad) {
 			t.Fatalf("issue help = %q, should not advertise PR-only action %q", help, bad)
 		}
+	}
+}
+
+func TestExternalDiffHotkeysDispatchDirectly(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{name: "d", key: tea.KeyPressMsg{Code: 'd', Text: "d"}},
+		{name: "ctrl-t", key: tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedMsg([]data.PullRequest{{
+				Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+			}}))
+
+			m = update(t, m, tt.key)
+
+			if m.actionPrompt.Active() {
+				t.Fatalf("%s should dispatch the external diff directly, not open a confirmation prompt", tt.name)
+			}
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:   0,
+				SectionType: pullsection.SectionType,
+				RowKind:     actions.RowKindPullRequest,
+				Repo:        "gbarany/tea-dash",
+				Number:      42,
+				Title:       "Action row",
+				URL:         "https://example.test/gbarany/tea-dash/pulls/42",
+				Author:      "me",
+			}
+			if got[0].Kind != actions.KindExternalDiff || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want external diff target %+v", got[0], wantTarget)
+			}
+		})
 	}
 }
 

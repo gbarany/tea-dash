@@ -1739,7 +1739,10 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 }
 
 func actionDispatchesDirectly(kind actions.Kind) bool {
-	return kind == actions.KindRerunRun || kind == actions.KindSubscribe || kind == actions.KindUnsubscribe
+	return kind == actions.KindRerunRun ||
+		kind == actions.KindSubscribe ||
+		kind == actions.KindUnsubscribe ||
+		kind == actions.KindExternalDiff
 }
 
 func promptModeForAction(kind actions.Kind) actions.PromptMode {

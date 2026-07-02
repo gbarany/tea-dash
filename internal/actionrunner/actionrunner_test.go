@@ -3,6 +3,7 @@ package actionrunner
 import (
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -329,26 +330,30 @@ func TestDispatchMarkPullDraft(t *testing.T) {
 
 func TestDispatchExternalDiffRunsConfiguredPager(t *testing.T) {
 	client := &fakeClient{diff: []byte("diff --git a/a b/a\n+hello\n")}
-	shellRunner := &fakeShellRunner{}
+	execProcess := &fakeExecProcess{}
 	r := New(Options{
 		Client:      client,
 		Config:      &config.Config{Pager: config.Pager{Diff: "diffnav"}},
 		CWD:         "/tmp/repo",
-		ShellRunner: shellRunner,
+		ExecProcess: execProcess.Run,
 	})
 
 	got := runDispatch(t, r, pullIntent(uiactions.KindExternalDiff))
 	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
 		t.Fatalf("diff result = %+v", got)
 	}
-	if shellRunner.command.Name == "" {
-		t.Fatal("shell runner was not called")
+	if execProcess.cmd == nil {
+		t.Fatal("exec process was not called")
 	}
-	if !reflect.DeepEqual(shellRunner.command.Args, []string{"-c", "diffnav"}) {
-		t.Fatalf("shell args = %#v, want shell -c diffnav", shellRunner.command.Args)
+	if !reflect.DeepEqual(execProcess.cmd.Args[1:], []string{"-c", "diffnav"}) {
+		t.Fatalf("shell args = %#v, want shell -c diffnav", execProcess.cmd.Args)
 	}
-	if string(shellRunner.command.Stdin) != string(client.diff) || shellRunner.command.Dir != "/tmp/repo" {
-		t.Fatalf("shell command = %+v", shellRunner.command)
+	stdin, err := io.ReadAll(execProcess.cmd.Stdin)
+	if err != nil {
+		t.Fatalf("read pager stdin: %v", err)
+	}
+	if string(stdin) != string(client.diff) || execProcess.cmd.Dir != "/tmp/repo" {
+		t.Fatalf("exec command stdin=%q dir=%q, want diff bytes in /tmp/repo", string(stdin), execProcess.cmd.Dir)
 	}
 }
 
