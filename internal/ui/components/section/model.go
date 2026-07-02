@@ -22,6 +22,8 @@ type RowsFetchedMsg[T data.RowData] struct {
 	Rows       []T
 	TotalCount int
 	TaskId     string
+	Page       int
+	Append     bool
 	Err        error
 }
 
@@ -43,20 +45,24 @@ type Options[T data.RowData] struct {
 	SingularForm string
 	PluralForm   string
 
-	Fetch    func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int) ([]T, int, error)
+	Fetch    func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int, int) ([]T, int, error)
 	BuildRow func(T) table.Row
 	Limit    func(*config.Config) int
+	Pageable bool
 }
 
 // Model is the generic dashboard section shared by the pull-request and issue
 // views. It embeds BaseModel and holds the per-type seams.
 type Model[T data.RowData] struct {
 	BaseModel
-	rows       []T
-	fetch      func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int) ([]T, int, error)
-	buildRow   func(T) table.Row
-	limitFn    func(*config.Config) int
-	filterKind string
+	rows        []T
+	fetch       func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int, int) ([]T, int, error)
+	buildRow    func(T) table.Row
+	limitFn     func(*config.Config) int
+	filterKind  string
+	page        int
+	loadingMore bool
+	pageable    bool
 }
 
 // compile-time interface assertions
@@ -93,17 +99,51 @@ func New[T data.RowData](o Options[T]) *Model[T] {
 	m.buildRow = o.BuildRow
 	m.limitFn = o.Limit
 	m.filterKind = o.FilterKind
+	m.pageable = o.Pageable
 	return m
 }
 
 // FetchRows fetches the current user's rows across all repos.
 func (m *Model[T]) FetchRows() tea.Cmd {
+	m.page = 0
+	m.loadingMore = false
+	return m.fetchPage(1, false)
+}
+
+func (m *Model[T]) MaybeFetchNextPage() tea.Cmd {
+	if m.GetIsLoading() || m.GetError() != nil || m.loadingMore {
+		return nil
+	}
+	if !m.pageable {
+		return nil
+	}
+	if len(m.rows) == 0 || len(m.rows) >= m.GetTotalCount() {
+		return nil
+	}
+	if m.CurrRow() < len(m.rows)-1 {
+		return nil
+	}
+	nextPage := m.page + 1
+	if nextPage <= 1 {
+		nextPage = 2
+	}
+	return m.fetchPage(nextPage, true)
+}
+
+func (m *Model[T]) fetchPage(page int, appendRows bool) tea.Cmd {
 	taskId := fmt.Sprintf("fetch-%s-%d-%d", m.GetType(), m.GetId(), time.Now().UnixNano())
 	m.SetLastFetchID(taskId)
-	m.SetIsLoading(true)
+	if appendRows {
+		m.loadingMore = true
+	} else {
+		m.SetIsLoading(true)
+	}
 	client := m.Ctx.Client
 	id, sType := m.GetId(), m.GetType()
-	start := m.Ctx.StartTask(appctx.Task{Id: taskId, StartText: m.loadingText, State: appctx.TaskStart})
+	var start tea.Cmd
+	if m.Ctx.StartTask != nil {
+		start = m.Ctx.StartTask(appctx.Task{Id: taskId, StartText: m.loadingText, State: appctx.TaskStart})
+	}
 	f := m.Config.Filter.WithDefaults(m.filterKind)
 	limit := m.Config.Limit
 	if limit == 0 && m.Ctx.Config != nil {
@@ -112,10 +152,13 @@ func (m *Model[T]) FetchRows() tea.Cmd {
 	fetch := func() tea.Msg {
 		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), fetchTimeout)
 		defer cancel()
-		rows, total, err := m.fetch(ctx, client, f, limit)
+		rows, total, err := m.fetch(ctx, client, f, limit, page)
 		return appctx.TaskFinishedMsg{
 			SectionId: id, SectionType: sType, TaskId: taskId,
-			Msg: RowsFetchedMsg[T]{Rows: rows, TotalCount: total, TaskId: taskId, Err: err},
+			Msg: RowsFetchedMsg[T]{
+				Rows: rows, TotalCount: total, TaskId: taskId,
+				Page: page, Append: appendRows, Err: err,
+			},
 		}
 	}
 	return tea.Batch(start, m.Spinner.Tick, fetch)
@@ -147,12 +190,25 @@ func (m *Model[T]) Update(msg tea.Msg) (Section, tea.Cmd) {
 		if m.LastFetchID() != "" && m.LastFetchID() != msg.TaskId {
 			return m, nil // stale/superseded fetch
 		}
-		m.SetIsLoading(false)
+		if msg.Append {
+			m.loadingMore = false
+		} else {
+			m.SetIsLoading(false)
+		}
 		if msg.Err != nil {
 			m.SetError(msg.Err)
 			return m, nil
 		}
-		m.rows = msg.Rows
+		if msg.Append {
+			m.rows = append(m.rows, msg.Rows...)
+		} else {
+			m.rows = msg.Rows
+		}
+		if msg.Page > 0 {
+			m.page = msg.Page
+		} else if !msg.Append {
+			m.page = 1
+		}
 		m.SetTotalCount(msg.TotalCount)
 		m.SetError(nil)
 		// SetRows clamps but does not reset the cursor, so a refresh keeps the
@@ -175,7 +231,7 @@ func (m *Model[T]) Update(msg tea.Msg) (Section, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.Table, cmd = m.Table.Update(msg)
-	return m, cmd
+	return m, tea.Batch(cmd, m.MaybeFetchNextPage())
 }
 
 // UpdateProgramContext resizes the table and refreshes columns for the new width.

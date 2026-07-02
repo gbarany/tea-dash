@@ -12,8 +12,9 @@ leaving the terminal.
 > pull requests, issues, unread notifications, Actions runs, and read-only local
 > branch status (fetched via the Gitea API (Go SDK + REST) and local `git`),
 > with view switching (`s`), configurable sections you page through with `h`/`l`,
-> live keyword search (`/`), a default-open preview, and PR / issue actions. See
-> [`docs/architecture.md`](docs/architecture.md) for the design.
+> live keyword search (`/`), progressive PR/issue loading, a default-open
+> preview, and PR / issue actions. See [`docs/architecture.md`](docs/architecture.md)
+> for the design.
 
 ## Why
 
@@ -86,11 +87,13 @@ tea-dash --help
 | `y` / `Y`       | copy row number / URL   |
 | `c`             | add comment             |
 | `m`             | merge PR                |
+| `m` / `u` / `M` | mark notification read / unread / all read |
 | `x` / `X`       | close / reopen          |
 | `v`             | submit PR review        |
 | `d` / `ctrl+t`  | open PR diff in external pager |
-| `C` / `space`   | checkout PR locally     |
-| `r` / `R`       | refresh section / all sections |
+| `C` / `space`   | checkout PR locally; switch branch in Branches view |
+| `R` / `!`       | rerun / cancel Actions run |
+| `r` / `R`       | refresh section / all sections (`ctrl+r` refreshes all in Actions view) |
 | `?`             | show / hide full help   |
 | `q` / `ctrl+c`  | quit                    |
 
@@ -113,8 +116,8 @@ instance:
 
 defaults:
   view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
-  prsLimit: 50           # rows fetched per PR section (0 -> 50)
-  issuesLimit: 50        # rows fetched per issue section (0 -> 50)
+  prsLimit: 50           # PR page size; more rows load when you reach the bottom (0 -> 50)
+  issuesLimit: 50        # issue page size; more rows load when you reach the bottom (0 -> 50)
   notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)
   actionsLimit: 50       # rows fetched per Actions section (0 -> 50)
   branchesLimit: 0       # local branches shown (0 -> all)
@@ -148,7 +151,7 @@ prSections:
   - title: Review Requested
     filter:
       reviewRequested: "@me"
-    limit: 25              # per-section cap; overrides defaults.prsLimit
+    limit: 25              # per-section page size; overrides defaults.prsLimit
 
 issuesSections:
   - title: My Issues
@@ -168,7 +171,9 @@ branchSections:
 
 `filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
 `assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),
-`sort`. The row cap follows section `limit` -> per-view default -> 50.
+`sort`. PR and issue sections fetch one page at a time; reaching the loaded
+bottom automatically requests the next page until the server total is loaded.
+The page size follows section `limit` -> per-view default -> 50.
 
 > **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
 > `reviewRequested`) support the sentinel `"@me"` only — a plain login is

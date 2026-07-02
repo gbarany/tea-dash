@@ -46,7 +46,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		SingularForm: "action run",
 		PluralForm:   "action runs",
 		Limit:        func(c *config.Config) int { return c.Defaults.ActionsLimit },
-		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit int) ([]data.ActionRun, int, error) {
+		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, _ int) ([]data.ActionRun, int, error) {
 			repoRef := strings.TrimSpace(cfg.Repo)
 			if repoRef == "" {
 				return nil, 0, nil

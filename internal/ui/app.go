@@ -809,11 +809,12 @@ func (m Model) selectRowFromMouse(x, y int) (Model, tea.Cmd) {
 	s := m.getCurrSection()
 	before := m.selKey()
 	s.SelectRow(i)
+	moreCmd := s.MaybeFetchNextPage()
 	if !m.ctx.PreviewOpen || m.selKey() == before {
-		return m, nil
+		return m, moreCmd
 	}
 	m.syncSidebar()
-	return m, m.enrichCurrRow()
+	return m, tea.Batch(moreCmd, m.enrichCurrRow())
 }
 
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
