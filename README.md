@@ -116,7 +116,8 @@ Optional. tea-dash reads the first config it finds in this order:
 4. `$XDG_CONFIG_HOME/tea-dash/config.yml`
 
 Use config to pick a tea login, choose the startup view, and define your own
-sections:
+sections. A fuller copyable example lives at
+[`examples/tea-dash.yml`](examples/tea-dash.yml).
 
 ```yaml
 instance:

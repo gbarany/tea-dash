@@ -1,0 +1,122 @@
+# tea-dash example configuration.
+#
+# Copy this to one of tea-dash's config locations and adjust the repo names,
+# local checkout paths, and login name for your environment.
+
+instance:
+  # Empty means "use the default tea login". Set this to a named tea login when
+  # you have multiple Gitea/Forgejo instances configured.
+  login: ""
+  # Prefer tokenEnv or tokenCommand over a literal token in this file.
+  tokenEnv: TEA_DASH_TOKEN
+
+defaults:
+  view: prs
+  prsLimit: 50
+  issuesLimit: 50
+  notificationsLimit: 50
+  actionsLimit: 25
+  branchesLimit: 0
+
+repos:
+  - acme/widgets
+  - acme/api
+
+localRepos:
+  - name: widgets
+    path: ~/src/acme/widgets
+  - name: api
+    path: ~/src/acme/api
+
+pager:
+  diff: diffnav
+
+repoPaths:
+  "acme/*": "~/src/acme/{{.Repo}}"
+
+git:
+  remote: origin
+  prBranchTemplate: "pr-{{.Owner}}-{{.Repo}}-{{.PrIndex}}"
+
+prSections:
+  - title: Open PRs
+    filter:
+      state: open
+      createdBy: "@me"
+  - title: Closed PRs
+    filter:
+      state: closed
+      createdBy: "@me"
+  - title: Needs My Review
+    filter:
+      state: open
+      reviewRequested: "@me"
+  - title: Alice in Widgets
+    repo: acme/widgets
+    filter:
+      state: open
+      createdBy: alice
+
+issuesSections:
+  - title: Assigned Issues
+    filter:
+      state: open
+      assignedBy: "@me"
+      labels: [bug]
+  - title: Widget Bugs
+    repo: acme/widgets
+    filter:
+      state: open
+      createdBy: alice
+      labels: [bug, urgent]
+      milestone: v2
+
+notificationsSections:
+  - title: Inbox
+    limit: 50
+
+actionsSections:
+  - title: Widget CI
+    repo: acme/widgets
+    limit: 25
+    filter:
+      branch: main
+
+branchSections:
+  - title: Local Branches
+
+keybindings:
+  universal:
+    - key: tab
+      builtin: nextSection
+    - key: H
+      builtin: help
+  prs:
+    - key: O
+      builtin: checkout
+    - key: a
+      builtin: assign
+    - key: A
+      builtin: unassign
+    - key: L
+      builtin: addLabel
+    - key: U
+      builtin: removeLabel
+  issues:
+    - key: a
+      builtin: assign
+    - key: A
+      builtin: unassign
+    - key: L
+      builtin: addLabel
+    - key: U
+      builtin: removeLabel
+  notifications:
+    - key: D
+      builtin: markAllRead
+  actions:
+    - key: R
+      builtin: rerun
+  branches:
+    - key: enter
+      builtin: checkout
