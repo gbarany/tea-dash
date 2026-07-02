@@ -30,6 +30,7 @@ type Section interface {
 
 	NumRows() int
 	GetCurrRow() data.RowData
+	SelectRow(index int)
 	FetchRows() tea.Cmd
 
 	GetItemSingular() string
@@ -129,6 +130,9 @@ func (m *BaseModel) SetLastFetchID(id string) { m.lastFetchID = id }
 
 func (m *BaseModel) NumRows() int { return m.numRows }
 func (m *BaseModel) CurrRow() int { return m.Table.Cursor() }
+
+// SelectRow moves the table cursor to index, clamping to the available rows.
+func (m *BaseModel) SelectRow(index int) { m.Table.SetCursor(index) }
 
 // IsSearchFocused reports whether the embedded search bar is currently active.
 func (m *BaseModel) IsSearchFocused() bool { return m.isSearching }

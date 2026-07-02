@@ -107,6 +107,109 @@ func TestModelRendersLoadedPulls(t *testing.T) {
 	}
 }
 
+func TestViewEnablesMouseCellMotion(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	view := m.View()
+	if view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("MouseMode = %v, want MouseModeCellMotion", view.MouseMode)
+	}
+}
+
+func TestMouseClickSelectsVisibleRowAndRefreshesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	firstKey := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  firstKey,
+		pull: &data.PullDetail{Body: "firstdetailtoken", BaseRef: "main", HeadRef: "first"},
+	})
+
+	click := tea.MouseClickMsg{X: 3, Y: m.tableDataStartY() + 1, Button: tea.MouseLeft}
+	next, _ := m.Update(click)
+	m = next.(Model)
+
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("clicked row number = %d, want 2", got)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "firstdetailtoken") {
+		t.Fatalf("click should refresh preview away from first row detail:\n%s", view)
+	}
+	if !strings.Contains(view, "Loading") {
+		t.Fatalf("click should show the newly selected row's loading preview:\n%s", view)
+	}
+}
+
+func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	previewX := 2 + m.ctx.MainContentWidth + 2
+	click := tea.MouseClickMsg{X: previewX, Y: m.tableDataStartY() + 1, Button: tea.MouseLeft}
+	m = update(t, m, click)
+
+	if got := m.getCurrRowData().GetNumber(); got != 1 {
+		t.Fatalf("selection changed after preview click: row = %d, want 1", got)
+	}
+}
+
+func TestMouseWheelMovesSelectionInList(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 3, Title: "Third", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	firstKey := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  firstKey,
+		pull: &data.PullDetail{Body: "firstdetailtoken", BaseRef: "main", HeadRef: "first"},
+	})
+
+	listY := m.tableDataStartY()
+	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelDown})
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("wheel down selected row = %d, want 2", got)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "firstdetailtoken") || !strings.Contains(view, "Loading") {
+		t.Fatalf("wheel down should refresh preview to the selected row loading state:\n%s", view)
+	}
+	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelDown})
+	if got := m.getCurrRowData().GetNumber(); got != 3 {
+		t.Fatalf("second wheel down selected row = %d, want 3", got)
+	}
+	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelUp})
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("wheel up selected row = %d, want 2", got)
+	}
+}
+
+func TestMouseWheelInPreviewDoesNotMoveListSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	previewX := 2 + m.ctx.MainContentWidth + 2
+	m = update(t, m, tea.MouseWheelMsg{X: previewX, Y: m.tableDataStartY(), Button: tea.MouseWheelDown})
+	if got := m.getCurrRowData().GetNumber(); got != 1 {
+		t.Fatalf("preview wheel changed list selection: row = %d, want 1", got)
+	}
+}
+
 func TestModelRendersError(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})

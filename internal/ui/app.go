@@ -275,6 +275,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notificationActionMsg:
 		return m.handleNotificationAction(msg)
 
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
+
 	case spinner.TickMsg:
 		// A tick belongs to whichever section started the spinner, but sibling
 		// sections in the current view share one animation; route it to every one
@@ -432,7 +438,7 @@ func (m Model) View() tea.View {
 		helpStyle.Render(m.helpLine()))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
-	return tea.View{Content: content, AltScreen: true}
+	return tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
 }
 
 func (m Model) helpLine() string {
@@ -730,6 +736,88 @@ func (m *Model) switchView() tea.Cmd {
 		cmds = append(cmds, m.enrichCurrRow())
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m Model) tableDataStartY() int {
+	y := 1 // appStyle top padding
+	y++    // title
+	if len(m.currentViewSections()) > 1 {
+		y++ // tabs
+	}
+	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
+		y++ // search bar
+	}
+	y++ // table header
+	return y
+}
+
+func (m Model) inMainListPane(x, y int) bool {
+	if x < 2 || y < m.tableDataStartY() {
+		return false
+	}
+	width := m.ctx.MainContentWidth
+	if width <= 0 {
+		width = m.ctx.ScreenWidth - 4
+	}
+	return x < 2+width
+}
+
+func (m Model) rowIndexAtY(y int) (int, bool) {
+	s := m.getCurrSection()
+	if s == nil || s.GetIsLoading() || s.GetError() != nil {
+		return 0, false
+	}
+	i := y - m.tableDataStartY()
+	if i < 0 || i >= s.NumRows() {
+		return 0, false
+	}
+	return i, true
+}
+
+func (m Model) selectRowFromMouse(x, y int) (Model, tea.Cmd) {
+	if !m.inMainListPane(x, y) {
+		return m, nil
+	}
+	i, ok := m.rowIndexAtY(y)
+	if !ok {
+		return m, nil
+	}
+	s := m.getCurrSection()
+	before := m.selKey()
+	s.SelectRow(i)
+	if !m.ctx.PreviewOpen || m.selKey() == before {
+		return m, nil
+	}
+	m.syncSidebar()
+	return m, m.enrichCurrRow()
+}
+
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	return m.selectRowFromMouse(msg.X, msg.Y)
+}
+
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
+	if !m.inMainListPane(msg.X, msg.Y) {
+		return m, nil
+	}
+	before := m.selKey()
+	var cmd tea.Cmd
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		cmd = m.updateCurrentSection(tea.KeyPressMsg{Code: tea.KeyUp})
+	case tea.MouseWheelDown:
+		cmd = m.updateCurrentSection(tea.KeyPressMsg{Code: tea.KeyDown})
+	default:
+		return m, nil
+	}
+	if m.ctx.PreviewOpen && m.selKey() != before {
+		m.syncSidebar()
+		cmd = tea.Batch(cmd, m.enrichCurrRow())
+	}
+	return m, cmd
 }
 
 func (m Model) failedPreview(row data.RowData, err error) string {
