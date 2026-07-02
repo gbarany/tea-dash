@@ -20,10 +20,11 @@ type Config struct {
 	// Repos lists repositories to watch. Unused in M0; per-repo sections
 	// return in M1.
 	Repos []string `yaml:"repos"`
-	// PRSections and IssuesSections configure the tabs for the pulls and issues
-	// views respectively. Empty falls back to a single me-scoped default section.
-	PRSections     []SectionConfig `yaml:"prSections"`
-	IssuesSections []SectionConfig `yaml:"issuesSections"`
+	// PRSections, IssuesSections, and NotificationsSections configure the tabs
+	// for their respective views. Empty falls back to a default section.
+	PRSections            []SectionConfig `yaml:"prSections"`
+	IssuesSections        []SectionConfig `yaml:"issuesSections"`
+	NotificationsSections []SectionConfig `yaml:"notificationsSections"`
 	// Defaults sets the startup view and per-view row limits.
 	Defaults Defaults `yaml:"defaults"`
 }
@@ -32,9 +33,10 @@ type Config struct {
 // per-view row-fetch cap used when a section omits its own Limit. Precedence:
 // section Limit -> per-view default -> 50.
 type Defaults struct {
-	View        string `yaml:"view"` // "prs" | "issues"
-	PRsLimit    int    `yaml:"prsLimit"`
-	IssuesLimit int    `yaml:"issuesLimit"`
+	View               string `yaml:"view"` // "prs" | "issues" | "notifications"
+	PRsLimit           int    `yaml:"prsLimit"`
+	IssuesLimit        int    `yaml:"issuesLimit"`
+	NotificationsLimit int    `yaml:"notificationsLimit"`
 }
 
 // Instance selects and overrides the Gitea connection.
@@ -111,10 +113,15 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	for _, s := range c.NotificationsSections {
+		if err := s.Filter.Validate(); err != nil {
+			return err
+		}
+	}
 	switch c.Defaults.View {
-	case "", "prs", "issues":
+	case "", "prs", "issues", "notifications":
 	default:
-		return fmt.Errorf("defaults.view = %q: want \"prs\" or \"issues\"", c.Defaults.View)
+		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", or \"notifications\"", c.Defaults.View)
 	}
 	return nil
 }

@@ -8,11 +8,11 @@ tea-dash is a keyboard-driven TUI for triaging pull requests, issues and
 notifications across one or more Gitea instances, without leaving the terminal.
 
 > **Status: early — v1.** A working multi-view dashboard: live tables of your
-> pull requests and issues across all your repos (fetched via the Gitea API
-> (Go SDK + REST)), with view switching (`s`), configurable sections you page
-> through with `h`/`l`, and live keyword search (`/`). Notifications and PR
-> actions are next. See [`docs/architecture.md`](docs/architecture.md) for the
-> design.
+> pull requests, issues, and unread notifications across all your repos (fetched
+> via the Gitea API (Go SDK + REST)), with view switching (`s`), configurable
+> sections you page through with `h`/`l`, preview pane support, and live keyword
+> search (`/`). PR actions are in progress. See
+> [`docs/architecture.md`](docs/architecture.md) for the design.
 
 ## Why
 
@@ -72,9 +72,12 @@ tea-dash --help
 | Key             | Action                  |
 | --------------- | ----------------------- |
 | `↑`/`↓`, `j`/`k`| move selection          |
-| `s`             | switch view (PRs/issues)|
+| `s`             | switch view (PRs/issues/notifications)|
 | `h` / `l`       | prev / next section     |
 | `/`             | search by keyword       |
+| `p`             | toggle preview pane     |
+| `e`             | expand preview body     |
+| `ctrl+u/d`      | scroll preview          |
 | `o` / `enter`   | open in browser         |
 | `r`             | refresh                 |
 | `q` / `ctrl+c`  | quit                    |
@@ -97,9 +100,10 @@ instance:
   # tokenEnv:     TEA_DASH_TOKEN                        # name of an env var holding the token
 
 defaults:
-  view: prs        # startup view: "prs" or "issues"
-  prsLimit: 50     # rows fetched per PR section (0 -> 50)
-  issuesLimit: 50  # rows fetched per issue section (0 -> 50)
+  view: prs              # startup view: "prs", "issues", or "notifications"
+  prsLimit: 50           # rows fetched per PR section (0 -> 50)
+  issuesLimit: 50        # rows fetched per issue section (0 -> 50)
+  notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)
 
 # Each section becomes a tab you page through with h/l. Omit prSections to get
 # two "@me"-authored PR defaults: open and closed pull requests. Omit
@@ -125,6 +129,10 @@ issuesSections:
       assignedBy: "@me"
       labels: [bug, urgent]  # AND-ed
       milestone: v2
+
+notificationsSections:
+  - title: Unread
+    limit: 50
 ```
 
 `filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
@@ -137,9 +145,10 @@ issuesSections:
 > author filter.
 
 With or without a config file, tea-dash shows the pull requests and issues you
-authored across every repo you can access on your Gitea instance. The default
-PR view has separate open and closed-history tabs; sections and filters let you
-tailor what each tab shows.
+authored, plus unread notifications, across every repo you can access on your
+Gitea instance. The default PR view has separate open and closed-history tabs;
+sections and filters let you tailor what each tab shows. Notification sections
+currently support title/limit configuration and default to unread threads.
 
 ## Development
 
@@ -155,10 +164,10 @@ Project layout:
 
 ```
 main.go                 entrypoint + flag handling; loads config, starts the TUI
-internal/ui/            Bubble Tea model, table, keybindings, styles
-internal/gitea/         Gitea Go SDK client wrapper + me-scoped PR search
+internal/ui/            Bubble Tea model, table, preview, keybindings, styles
+internal/gitea/         Gitea Go SDK client wrapper + PR/issue/notification APIs
 internal/auth/          resolves instance URL + token from the tea config
-internal/data/          TUI-agnostic domain model (PullRequest)
+internal/data/          TUI-agnostic domain models
 internal/config/        ~/.config/tea-dash/config.yml loading
 internal/build/         version metadata (set via -ldflags)
 ```
