@@ -38,8 +38,9 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		SingularForm: "pull request",
 		PluralForm:   "pull requests",
 		Limit:        func(c *config.Config) int { return c.Defaults.PRsLimit },
-		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit int) ([]data.PullRequest, int, error) {
-			return c.SearchPulls(ctx, f, limit)
+		Pageable:     true,
+		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
+			return c.SearchPullsPage(ctx, f, limit, page)
 		},
 		BuildRow: prBuildRow,
 	})

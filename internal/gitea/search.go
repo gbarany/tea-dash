@@ -51,6 +51,10 @@ func isMe(s string) bool { return s == "@me" }
 // created_by/assigned_by params, which the search endpoint ignores — this is
 // the C1 guard. limit is clamped to a positive value (default 50).
 func buildSearchParams(f config.PrIssueFilter, limit int) url.Values {
+	return buildSearchParamsPage(f, limit, 0)
+}
+
+func buildSearchParamsPage(f config.PrIssueFilter, limit, page int) url.Values {
 	q := url.Values{}
 	q.Set("type", f.Type)
 	q.Set("state", f.State)
@@ -85,16 +89,24 @@ func buildSearchParams(f config.PrIssueFilter, limit int) url.Values {
 		limit = 50
 	}
 	q.Set("limit", strconv.Itoa(limit))
+	if page > 0 {
+		q.Set("page", strconv.Itoa(page))
+	}
 	return q
 }
 
 // search runs one page of the cross-repo /repos/issues/search endpoint for the
 // given filter and returns the raw rows plus the server's total (from the
 // X-Total-Count header, falling back to the returned row count). The page is
-// capped at limit (full pagination is deferred), so total may exceed len(rows).
+// capped at limit, so total may exceed len(rows) until callers request later
+// pages.
 func (c *Client) search(ctx context.Context, f config.PrIssueFilter, limit int) ([]searchIssue, int, error) {
+	return c.searchPage(ctx, f, limit, 0)
+}
+
+func (c *Client) searchPage(ctx context.Context, f config.PrIssueFilter, limit, page int) ([]searchIssue, int, error) {
 	var rows []searchIssue
-	header, err := c.rawGet(ctx, "/repos/issues/search?"+buildSearchParams(f, limit).Encode(), &rows)
+	header, err := c.rawGet(ctx, "/repos/issues/search?"+buildSearchParamsPage(f, limit, page).Encode(), &rows)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -111,8 +123,12 @@ func (c *Client) search(ctx context.Context, f config.PrIssueFilter, limit int) 
 // plus the server's total count. f.Type is forced to "pulls" and the "open"
 // state default is applied. limit caps the page (0 -> buildSearchParams' 50).
 func (c *Client) SearchPulls(ctx context.Context, f config.PrIssueFilter, limit int) ([]data.PullRequest, int, error) {
+	return c.SearchPullsPage(ctx, f, limit, 0)
+}
+
+func (c *Client) SearchPullsPage(ctx context.Context, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
 	f = f.WithDefaults("pulls")
-	rows, total, err := c.search(ctx, f, limit)
+	rows, total, err := c.searchPage(ctx, f, limit, page)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -127,8 +143,12 @@ func (c *Client) SearchPulls(ctx context.Context, f config.PrIssueFilter, limit 
 // the server's total count. f.Type is forced to "issues" and the "open" state
 // default is applied. limit caps the page (0 -> buildSearchParams' 50).
 func (c *Client) SearchIssues(ctx context.Context, f config.PrIssueFilter, limit int) ([]data.Issue, int, error) {
+	return c.SearchIssuesPage(ctx, f, limit, 0)
+}
+
+func (c *Client) SearchIssuesPage(ctx context.Context, f config.PrIssueFilter, limit, page int) ([]data.Issue, int, error) {
 	f = f.WithDefaults("issues")
-	rows, total, err := c.search(ctx, f, limit)
+	rows, total, err := c.searchPage(ctx, f, limit, page)
 	if err != nil {
 		return nil, 0, err
 	}

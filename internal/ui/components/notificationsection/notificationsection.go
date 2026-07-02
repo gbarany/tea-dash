@@ -40,7 +40,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		SingularForm: "notification",
 		PluralForm:   "notifications",
 		Limit:        func(c *config.Config) int { return c.Defaults.NotificationsLimit },
-		Fetch: func(ctx stdctx.Context, c *gitea.Client, _ config.PrIssueFilter, limit int) ([]data.Notification, int, error) {
+		Fetch: func(ctx stdctx.Context, c *gitea.Client, _ config.PrIssueFilter, limit, _ int) ([]data.Notification, int, error) {
 			return c.ListNotifications(ctx, limit)
 		},
 		BuildRow: notificationBuildRow,

@@ -42,7 +42,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		SingularForm: "branch",
 		PluralForm:   "branches",
 		Limit:        func(c *config.Config) int { return c.Defaults.BranchesLimit },
-		Fetch: func(fetchCtx stdctx.Context, _ *gitea.Client, _ config.PrIssueFilter, limit int) ([]localgit.Branch, int, error) {
+		Fetch: func(fetchCtx stdctx.Context, _ *gitea.Client, _ config.PrIssueFilter, limit, _ int) ([]localgit.Branch, int, error) {
 			repos, err := repositoriesFromConfig(ctx.Config, os.Getwd)
 			if err != nil {
 				return nil, 0, err

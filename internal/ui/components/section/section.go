@@ -32,6 +32,7 @@ type Section interface {
 	GetCurrRow() data.RowData
 	SelectRow(index int)
 	FetchRows() tea.Cmd
+	MaybeFetchNextPage() tea.Cmd
 
 	GetItemSingular() string
 	GetItemPlural() string
@@ -133,6 +134,10 @@ func (m *BaseModel) CurrRow() int { return m.Table.Cursor() }
 
 // SelectRow moves the table cursor to index, clamping to the available rows.
 func (m *BaseModel) SelectRow(index int) { m.Table.SetCursor(index) }
+
+// MaybeFetchNextPage is a no-op for sections that do not support progressive
+// pagination.
+func (m *BaseModel) MaybeFetchNextPage() tea.Cmd { return nil }
 
 // IsSearchFocused reports whether the embedded search bar is currently active.
 func (m *BaseModel) IsSearchFocused() bool { return m.isSearching }

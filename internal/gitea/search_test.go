@@ -166,6 +166,31 @@ func TestSearchPullsLimitReachesQuery(t *testing.T) {
 	}
 }
 
+func TestSearchPullsPageReachesQuery(t *testing.T) {
+	var gotQuery string
+	srv := searchServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("X-Total-Count", "75")
+		fmt.Fprint(w, searchJSON)
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, total, err := c.SearchPullsPage(context.Background(), config.PrIssueFilter{State: "open", CreatedBy: "@me"}, 25, 3); err != nil {
+		t.Fatalf("SearchPullsPage: %v", err)
+	} else if total != 75 {
+		t.Fatalf("total = %d, want 75", total)
+	}
+	for _, want := range []string{"limit=25", "page=3"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("query %q missing %q", gotQuery, want)
+		}
+	}
+}
+
 func TestSearchIssues(t *testing.T) {
 	var gotQuery string
 	srv := searchServer(t, func(w http.ResponseWriter, r *http.Request) {
