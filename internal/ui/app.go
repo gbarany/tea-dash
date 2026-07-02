@@ -416,6 +416,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindRemoveLabel)
 		case !m.scopedBuiltinOverridden("merge") && key.Matches(msg, m.keys.Merge):
 			return m, m.startAction(actions.KindMerge)
+		case !m.scopedBuiltinOverridden("update") && key.Matches(msg, m.keys.UpdateBranch):
+			return m, m.startAction(actions.KindUpdateBranch)
 		case !m.scopedBuiltinOverridden("close") && key.Matches(msg, m.keys.Close):
 			return m, m.startAction(actions.KindClose)
 		case !m.scopedBuiltinOverridden("reopen") && key.Matches(msg, m.keys.Reopen):
@@ -571,7 +573,7 @@ func (m Model) helpLine() string {
 		case context.BranchesView:
 			text += " · C/space switch"
 		default:
-			text += " · c comment · a/A assign/unassign · L/U labels · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
+			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
 		return text + " · q quit"
 	}
@@ -584,7 +586,7 @@ func (m Model) helpLine() string {
 	case context.BranchesView:
 		text += " · C/space switch"
 	default:
-		text += " · c comment · a/A assign · L/U labels · m merge · d/ctrl+t diff · C/space checkout"
+		text += " · c comment · a/A assign · L/U labels · m merge · u update · d/ctrl+t diff · C/space checkout"
 	}
 	return text + fmt.Sprintf(" · %s help · %s quit", keyHelp(m.keys.Help, "?"), keyHelp(m.keys.Quit, "q"))
 }
@@ -1351,6 +1353,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindRemoveLabel), true
 	case "merge":
 		return m, m.startAction(actions.KindMerge), true
+	case "update", "updatebranch":
+		return m, m.startAction(actions.KindUpdateBranch), true
 	case "close":
 		return m, m.startAction(actions.KindClose), true
 	case "reopen":
@@ -1462,7 +1466,7 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 
 func validateActionTarget(kind actions.Kind, target actions.Target) error {
 	switch kind {
-	case actions.KindMerge, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
+	case actions.KindMerge, actions.KindUpdateBranch, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
 		if target.RowKind != actions.RowKindPullRequest {
 			return fmt.Errorf("%s is only available for pull requests.", actionLabel(kind))
 		}
@@ -1578,6 +1582,8 @@ func actionLabel(kind actions.Kind) string {
 		return "Remove label"
 	case actions.KindMerge:
 		return "Merge"
+	case actions.KindUpdateBranch:
+		return "Update branch"
 	case actions.KindClose:
 		return "Close"
 	case actions.KindReopen:

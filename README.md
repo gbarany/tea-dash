@@ -90,6 +90,7 @@ tea-dash --help
 | `a` / `A`       | assign / unassign yourself |
 | `L` / `U`       | add / remove labels     |
 | `m`             | merge PR                |
+| `u`             | update PR branch from its base branch |
 | `m` / `u` / `M` | mark notification read / unread / all read |
 | `x` / `X`       | close / reopen          |
 | `v`             | submit PR review        |
@@ -198,6 +199,8 @@ keybindings:
       builtin: addLabel
     - key: U
       builtin: removeLabel
+    - key: u
+      builtin: update
     - key: g
       name: lazygit
       command: cd {{.RepoPath}} && lazygit

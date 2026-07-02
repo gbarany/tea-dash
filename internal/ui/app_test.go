@@ -1413,6 +1413,7 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		},
 		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
 		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
+		{name: "update branch", key: tea.KeyPressMsg{Code: 'u', Text: "u"}, kind: actions.KindUpdateBranch},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
 		{name: "external diff", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindExternalDiff},
 		{name: "external diff ctrl-t alias", key: tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, kind: actions.KindExternalDiff},
