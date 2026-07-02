@@ -112,11 +112,9 @@ instance:
   # Token source (first non-empty wins): token > tokenCommand > tokenEnv > TEA_DASH_TOKEN > tea login.
   # tea-dash reads the token from tea's config file. If tea stored yours in the OS
   # keychain (so the config's token is empty), give tea-dash one of these instead:
-  # token:        ""                                   # a literal token (not recommended in plaintext)
-  # tokenCommand: op read "op://Private/tea-dash/credential"   # e.g. 1Password, pass, gopass
-  # tokenEnv:     TEA_DASH_TOKEN                        # name of an env var holding the token
-  # Example for 1Password:
-  # tokenCommand: op read "op://Private/tea-dash/credential"
+  # token:        ""                                      # a literal token (not recommended in plaintext)
+  # tokenCommand: "<command that prints the token>"        # e.g. pass, gopass, 1Password CLI, etc.
+  # tokenEnv:     TEA_DASH_TOKEN                           # name of an env var holding the token
 
 defaults:
   view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
@@ -134,7 +132,7 @@ pager:
   diff: diffnav     # command that receives PR diff bytes on stdin (falls back to $PAGER, then less -R)
 
 repoPaths:
-  "gbarany/*": "~/src/{{.Repo}}"  # used by C checkout; exact repo names and wildcards both work
+  "example/*": "~/src/{{.Repo}}"  # used by C checkout; exact repo names and wildcards both work
 
 git:
   remote: origin
