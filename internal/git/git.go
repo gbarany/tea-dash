@@ -345,6 +345,61 @@ func RunCheckout(ctx context.Context, opts CheckoutOptions) (CheckoutPlan, error
 	return plan, nil
 }
 
+// SwitchBranchOptions configures switching to an existing local branch.
+type SwitchBranchOptions struct {
+	RepoPath string
+	Branch   string
+	Runner   Runner
+}
+
+// SwitchBranchResult is the local branch switch that completed.
+type SwitchBranchResult struct {
+	RepoPath string
+	Branch   string
+}
+
+// SwitchBranch switches an existing local repository to branch. It refuses a
+// no-op switch to the current branch and wraps common git failures with
+// operator-facing recovery guidance.
+func SwitchBranch(ctx context.Context, opts SwitchBranchOptions) (SwitchBranchResult, error) {
+	repoPath := strings.TrimSpace(opts.RepoPath)
+	branch := strings.TrimSpace(opts.Branch)
+	if repoPath == "" {
+		return SwitchBranchResult{}, errors.New("repository path is required")
+	}
+	if branch == "" {
+		return SwitchBranchResult{}, errors.New("branch name is required")
+	}
+	runner := opts.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+
+	current, err := runGit(ctx, runner, repoPath, "branch", "--show-current")
+	if err != nil {
+		return SwitchBranchResult{}, err
+	}
+	if strings.TrimSpace(current.Stdout) == branch {
+		return SwitchBranchResult{}, fmt.Errorf("branch %s is already current in %s", branch, repoPath)
+	}
+	if _, err := runGit(ctx, runner, repoPath, "switch", branch); err != nil {
+		return SwitchBranchResult{}, switchBranchError(repoPath, branch, err)
+	}
+	return SwitchBranchResult{RepoPath: repoPath, Branch: branch}, nil
+}
+
+func switchBranchError(repoPath, branch string, err error) error {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "local changes") && strings.Contains(msg, "would be overwritten"):
+		return fmt.Errorf("could not switch to %s in %s: commit, stash, or discard local changes first: %w", branch, repoPath, err)
+	case strings.Contains(msg, "already checked out"):
+		return fmt.Errorf("could not switch to %s in %s: branch is already checked out in another worktree; use that worktree or switch it away first: %w", branch, repoPath, err)
+	default:
+		return fmt.Errorf("could not switch to %s in %s: %w", branch, repoPath, err)
+	}
+}
+
 func branchExists(ctx context.Context, runner Runner, dir, branch string) (bool, error) {
 	res, err := runner.Run(ctx, Command{Dir: dir, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/" + branch}})
 	if err != nil {

@@ -254,6 +254,81 @@ func TestRunCheckoutMissingRepoPath(t *testing.T) {
 	}
 }
 
+func TestSwitchBranchRunsGitSwitch(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{Stdout: "main\n", ExitCode: 0},
+		{ExitCode: 0},
+	}}
+
+	result, err := SwitchBranch(context.Background(), SwitchBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err != nil {
+		t.Fatalf("SwitchBranch: %v", err)
+	}
+	if result.RepoPath != repo || result.Branch != "feature/local-ops" {
+		t.Fatalf("result = %+v", result)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"branch", "--show-current"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "feature/local-ops"}},
+	})
+}
+
+func TestSwitchBranchRefusesCurrentBranch(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{{Stdout: "feature/local-ops\n", ExitCode: 0}}}
+
+	_, err := SwitchBranch(context.Background(), SwitchBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already current") {
+		t.Fatalf("SwitchBranch current error = %v", err)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"branch", "--show-current"}},
+	})
+}
+
+func TestSwitchBranchDirtyTreeFailureIsActionable(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{Stdout: "main\n", ExitCode: 0},
+		{ExitCode: 1, Stderr: "error: Your local changes to the following files would be overwritten by checkout:\n\tREADME.md\n"},
+	}}
+
+	_, err := SwitchBranch(context.Background(), SwitchBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "commit, stash, or discard") {
+		t.Fatalf("SwitchBranch dirty-tree error = %v", err)
+	}
+}
+
+func TestSwitchBranchWorktreeConflictFailureIsActionable(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{Stdout: "main\n", ExitCode: 0},
+		{ExitCode: 128, Stderr: "fatal: 'feature/local-ops' is already checked out at '/tmp/other'"},
+	}}
+
+	_, err := SwitchBranch(context.Background(), SwitchBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "another worktree") {
+		t.Fatalf("SwitchBranch worktree-conflict error = %v", err)
+	}
+}
+
 func makeGitDir(t *testing.T, remoteURL string) string {
 	t.Helper()
 	dir := t.TempDir()
