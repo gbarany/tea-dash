@@ -103,7 +103,7 @@ branchSections:
     limit: 25
 localRepos:
   - name: tea-dash
-    path: /Users/gaborbarany/dev/sandbox/tea-dash
+    path: /path/to/tea-dash
 `
 	var c Config
 	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
@@ -139,7 +139,7 @@ localRepos:
 		t.Fatalf("branchSections = %+v", c.BranchSections)
 	}
 	if len(c.LocalRepos) != 1 || c.LocalRepos[0].Name != "tea-dash" ||
-		c.LocalRepos[0].Path != "/Users/gaborbarany/dev/sandbox/tea-dash" {
+		c.LocalRepos[0].Path != "/path/to/tea-dash" {
 		t.Fatalf("localRepos = %+v", c.LocalRepos)
 	}
 }
@@ -149,8 +149,8 @@ func TestUnmarshalPagerRepoPathsAndGit(t *testing.T) {
 pager:
   diff: delta --paging=always
 repoPaths:
-  fcmb/api: ~/src/fcmb-api
-  fcmb/*: ~/src/fcmb/{{.Repo}}
+  acme/api: ~/src/acme-api
+  acme/*: ~/src/acme/{{.Repo}}
 git:
   remote: upstream
   prBranchTemplate: review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}
@@ -162,7 +162,7 @@ git:
 	if c.Pager.Diff != "delta --paging=always" {
 		t.Fatalf("pager.diff = %q", c.Pager.Diff)
 	}
-	if c.RepoPaths["fcmb/api"] != "~/src/fcmb-api" || c.RepoPaths["fcmb/*"] != "~/src/fcmb/{{.Repo}}" {
+	if c.RepoPaths["acme/api"] != "~/src/acme-api" || c.RepoPaths["acme/*"] != "~/src/acme/{{.Repo}}" {
 		t.Fatalf("repoPaths = %+v", c.RepoPaths)
 	}
 	if c.Git.Remote != "upstream" || c.Git.PRBranchTemplate != "review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}" {
@@ -300,10 +300,10 @@ func TestMatchRepoPathExactBeforeWildcardAndExpandsHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	paths := map[string]string{
-		"fcmb/*":   "~/src/fcmb/{{.Repo}}",
-		"fcmb/api": "~/src/exact",
+		"acme/*":   "~/src/acme/{{.Repo}}",
+		"acme/api": "~/src/exact",
 	}
-	got, ok, err := MatchRepoPath("fcmb/api", paths)
+	got, ok, err := MatchRepoPath("acme/api", paths)
 	if err != nil {
 		t.Fatalf("MatchRepoPath exact: %v", err)
 	}
@@ -314,21 +314,21 @@ func TestMatchRepoPathExactBeforeWildcardAndExpandsHome(t *testing.T) {
 		t.Fatalf("MatchRepoPath exact = %q, want %q", got, want)
 	}
 
-	got, ok, err = MatchRepoPath("fcmb/web", paths)
+	got, ok, err = MatchRepoPath("acme/web", paths)
 	if err != nil {
 		t.Fatalf("MatchRepoPath wildcard: %v", err)
 	}
 	if !ok {
 		t.Fatal("MatchRepoPath wildcard did not match")
 	}
-	if want := filepath.Join(home, "src", "fcmb", "web"); got != want {
+	if want := filepath.Join(home, "src", "acme", "web"); got != want {
 		t.Fatalf("MatchRepoPath wildcard = %q, want %q", got, want)
 	}
 }
 
 func TestMatchRepoPathRejectsBadWildcard(t *testing.T) {
-	_, _, err := MatchRepoPath("fcmb/api", map[string]string{"fcmb/[": "/tmp/repo"})
-	if err == nil || !strings.Contains(err.Error(), "fcmb/[") {
+	_, _, err := MatchRepoPath("acme/api", map[string]string{"acme/[": "/tmp/repo"})
+	if err == nil || !strings.Contains(err.Error(), "acme/[") {
 		t.Fatalf("MatchRepoPath bad wildcard error = %v", err)
 	}
 }

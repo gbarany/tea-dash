@@ -115,7 +115,7 @@ instance:
   # tokenCommand: op read "op://Private/tea-dash/credential"   # e.g. 1Password, pass, gopass
   # tokenEnv:     TEA_DASH_TOKEN                        # name of an env var holding the token
   # Example for 1Password:
-  # tokenCommand: op read "op://Appic/tea-dash PAT/credential"
+  # tokenCommand: op read "op://Private/tea-dash/credential"
 
 defaults:
   view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
@@ -127,13 +127,13 @@ defaults:
 
 localRepos:
   - name: tea-dash
-    path: /Users/gaborbarany/dev/sandbox/tea-dash
+    path: ~/src/tea-dash
 
 pager:
   diff: diffnav     # command that receives PR diff bytes on stdin (falls back to $PAGER, then less -R)
 
 repoPaths:
-  "gbarany/*": "~/dev/sandbox/{{.Repo}}"  # used by C checkout; exact repo names and wildcards both work
+  "gbarany/*": "~/src/{{.Repo}}"  # used by C checkout; exact repo names and wildcards both work
 
 git:
   remote: origin
