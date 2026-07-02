@@ -435,6 +435,34 @@ func TestMarkPullDraftAddsWIPPrefix(t *testing.T) {
 	}
 }
 
+func TestIssueSubscriptionMutations(t *testing.T) {
+	var calls []string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/issues/42/subscriptions/me" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		calls = append(calls, r.Method)
+		switch r.Method {
+		case http.MethodPut:
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("method = %s", r.Method)
+		}
+	})
+
+	if err := c.SubscribeIssue("acme", "widgets", 42); err != nil {
+		t.Fatalf("SubscribeIssue: %v", err)
+	}
+	if err := c.UnsubscribeIssue("acme", "widgets", 42); err != nil {
+		t.Fatalf("UnsubscribeIssue: %v", err)
+	}
+	if strings.Join(calls, ",") != "PUT,DELETE" {
+		t.Fatalf("subscription calls = %v, want [PUT DELETE]", calls)
+	}
+}
+
 func TestSubmitPullReviewPostsEventAndMapsResponse(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

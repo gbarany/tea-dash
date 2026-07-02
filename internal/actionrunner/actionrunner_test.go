@@ -126,6 +126,41 @@ func TestDispatchAssignAndUnassign(t *testing.T) {
 	}
 }
 
+func TestDispatchIssueSubscribeAndUnsubscribe(t *testing.T) {
+	client := &fakeClient{}
+	r := New(Options{Client: client})
+
+	got := runDispatch(t, r, issueIntent(uiactions.KindSubscribe))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("subscribe issue result = %+v", got)
+	}
+	if client.subscribeIssue != 7 {
+		t.Fatalf("subscribeIssue = %d, want 7", client.subscribeIssue)
+	}
+	if !strings.Contains(got.Message, "Subscribed to acme/widgets#7") {
+		t.Fatalf("subscribe message = %q", got.Message)
+	}
+
+	got = runDispatch(t, r, issueIntent(uiactions.KindUnsubscribe))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("unsubscribe issue result = %+v", got)
+	}
+	if client.unsubscribeIssue != 7 {
+		t.Fatalf("unsubscribeIssue = %d, want 7", client.unsubscribeIssue)
+	}
+	if !strings.Contains(got.Message, "Unsubscribed from acme/widgets#7") {
+		t.Fatalf("unsubscribe message = %q", got.Message)
+	}
+}
+
+func TestDispatchIssueSubscriptionRejectsUnsupportedRows(t *testing.T) {
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), pullIntent(uiactions.KindSubscribe))
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "only available for issues") {
+		t.Fatalf("subscribe pull result = %+v", got)
+	}
+}
+
 func TestDispatchAssignRejectsUnsupportedRows(t *testing.T) {
 	intent := branchIntent(uiactions.KindAssign)
 	intent.Target.Repo = "acme/widgets"
@@ -493,6 +528,8 @@ type fakeClient struct {
 	removeLabels     []string
 	milestoneIndex   int64
 	milestoneTitle   string
+	subscribeIssue   int64
+	unsubscribeIssue int64
 	markReadyChanged bool
 	markDraftChanged bool
 }
@@ -529,6 +566,16 @@ func (f *fakeClient) AssignIssueToMe(_, _ string, index int64) error {
 
 func (f *fakeClient) UnassignIssueFromMe(_, _ string, index int64) error {
 	f.unassignIssue = index
+	return f.err
+}
+
+func (f *fakeClient) SubscribeIssue(_, _ string, index int64) error {
+	f.subscribeIssue = index
+	return f.err
+}
+
+func (f *fakeClient) UnsubscribeIssue(_, _ string, index int64) error {
+	f.unsubscribeIssue = index
 	return f.err
 }
 

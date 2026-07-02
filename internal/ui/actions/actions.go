@@ -12,6 +12,8 @@ const (
 	KindAddLabel      Kind = "add_label"
 	KindRemoveLabel   Kind = "remove_label"
 	KindSetMilestone  Kind = "set_milestone"
+	KindSubscribe     Kind = "subscribe"
+	KindUnsubscribe   Kind = "unsubscribe"
 	KindMerge         Kind = "merge"
 	KindUpdateBranch  Kind = "update_branch"
 	KindMarkReady     Kind = "mark_ready"

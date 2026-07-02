@@ -235,6 +235,10 @@ keybindings:
       builtin: setMilestone
     - key: C
       builtin: checkout
+    - key: b
+      builtin: subscribe
+    - key: B
+      builtin: unsubscribe
   notifications:
     - key: b
       builtin: togglePin
@@ -261,9 +265,12 @@ keybindings:
 		!strings.Contains(c.Keybindings.PRs[1].Command, "lazygit") {
 		t.Fatalf("prs keybindings = %+v", c.Keybindings.PRs)
 	}
-	if len(c.Keybindings.Issues) != 3 ||
+	if len(c.Keybindings.Issues) != 5 ||
+		c.Keybindings.Issues[0].Command != "echo {{.IssueNumber}}" ||
 		c.Keybindings.Issues[1].Builtin != "setMilestone" ||
-		c.Keybindings.Issues[2].Builtin != "checkout" {
+		c.Keybindings.Issues[2].Builtin != "checkout" ||
+		c.Keybindings.Issues[3].Builtin != "subscribe" ||
+		c.Keybindings.Issues[4].Builtin != "unsubscribe" {
 		t.Fatalf("issues keybindings = %+v", c.Keybindings.Issues)
 	}
 	if len(c.Keybindings.Notifications) != 3 ||

@@ -1751,6 +1751,51 @@ func TestIssueMilestoneKeyDispatchesExpectedIntent(t *testing.T) {
 	}
 }
 
+func TestIssueSubscriptionKeysDispatchExpectedIntents(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		kind actions.Kind
+	}{
+		{name: "subscribe", key: tea.KeyPressMsg{Code: 'b', Text: "b"}, kind: actions.KindSubscribe},
+		{name: "unsubscribe", key: tea.KeyPressMsg{Code: 'B', Text: "B"}, kind: actions.KindUnsubscribe},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+				Number: 42, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/issues/42",
+			}}))
+
+			m = update(t, m, tt.key)
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:   0,
+				SectionType: issuesection.SectionType,
+				RowKind:     actions.RowKindIssue,
+				Repo:        "gbarany/tea-dash",
+				Number:      42,
+				Title:       "Issue row",
+				URL:         "https://example.test/gbarany/tea-dash/issues/42",
+				Author:      "me",
+			}
+			if got[0].Kind != tt.kind || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want kind %q target %+v", got[0], tt.kind, wantTarget)
+			}
+		})
+	}
+}
+
 func TestIssueActionButtonsIncludeMilestone(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -1804,6 +1849,42 @@ func TestIssueCheckoutHotkeyDispatchesExpectedIntent(t *testing.T) {
 	}
 	if got[0].Kind != actions.KindCheckout || got[0].Target != wantTarget {
 		t.Fatalf("intent = %+v, want checkout target %+v", got[0], wantTarget)
+	}
+}
+
+func TestIssueActionButtonsIncludeSubscriptionActions(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 42, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/issues/42",
+	}}))
+
+	found := map[string]bool{}
+	for _, b := range m.actionButtons() {
+		found[b.Label] = true
+	}
+	for _, label := range []string{"Subscribe", "Unsubscribe"} {
+		if !found[label] {
+			t.Fatalf("issue action button %q not found in %+v", label, m.actionButtons())
+		}
+	}
+}
+
+func TestIssueHelpShowsIssueActionsOnly(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	help := m.helpLine()
+	for _, want := range []string{"M milestone", "b/B subscribe", "x/X close/reopen"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("issue help = %q, want %q", help, want)
+		}
+	}
+	for _, bad := range []string{"merge", "diff", "update"} {
+		if strings.Contains(help, bad) {
+			t.Fatalf("issue help = %q, should not advertise PR-only action %q", help, bad)
+		}
 	}
 }
 

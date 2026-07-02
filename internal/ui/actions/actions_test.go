@@ -8,6 +8,8 @@ func TestKindConstants(t *testing.T) {
 		KindAddLabel:     "add_label",
 		KindRemoveLabel:  "remove_label",
 		KindSetMilestone: "set_milestone",
+		KindSubscribe:    "subscribe",
+		KindUnsubscribe:  "unsubscribe",
 		KindMerge:        "merge",
 		KindUpdateBranch: "update_branch",
 		KindMarkReady:    "mark_ready",

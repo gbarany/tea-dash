@@ -454,6 +454,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindAssign)
 		case !m.scopedBuiltinOverridden("unassign") && key.Matches(msg, m.keys.Unassign):
 			return m, m.startAction(actions.KindUnassign)
+		case !m.scopedBuiltinOverridden("subscribe") && m.ctx.View == context.IssuesView && key.Matches(msg, m.keys.Subscribe):
+			return m, m.startAction(actions.KindSubscribe)
+		case !m.scopedBuiltinOverridden("unsubscribe") && m.ctx.View == context.IssuesView && key.Matches(msg, m.keys.Unsubscribe):
+			return m, m.startAction(actions.KindUnsubscribe)
 		case !m.scopedBuiltinOverridden("addlabel") && key.Matches(msg, m.keys.AddLabel):
 			return m, m.startAction(actions.KindAddLabel)
 		case !m.scopedBuiltinOverridden("removelabel") && key.Matches(msg, m.keys.RemoveLabel):
@@ -629,7 +633,7 @@ func (m Model) helpLine() string {
 		case context.BranchesView:
 			text += " · C/space switch"
 		case context.IssuesView:
-			text += " · c comment · a/A assign/unassign · L/U labels · M milestone · x/X close/reopen"
+			text += " · c comment · a/A assign/unassign · L/U labels · M milestone · b/B subscribe/unsubscribe · x/X close/reopen"
 		default:
 			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
@@ -650,7 +654,7 @@ func (m Model) helpLine() string {
 	case context.BranchesView:
 		text += " · C/space switch"
 	case context.IssuesView:
-		text += " · c comment · a/A assign · L/U labels · M milestone · x/X close/reopen"
+		text += " · c comment · a/A assign · L/U labels · M milestone · b/B subscribe · x/X close/reopen"
 	default:
 		text += " · c comment · a/A assign · L/U labels · m merge · u update · W ready · d/ctrl+t diff · C/space checkout"
 	}
@@ -703,6 +707,8 @@ func (m Model) actionButtons() []actionButton {
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
 			actionButton{Label: "Checkout", Builtin: "checkout"},
+			actionButton{Label: "Subscribe", Builtin: "subscribe"},
+			actionButton{Label: "Unsubscribe", Builtin: "unsubscribe"},
 			actionButton{Label: "Milestone", Builtin: "setMilestone"},
 		)
 		switch rowState(row) {
@@ -1482,6 +1488,10 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindAssign), true
 	case "unassign":
 		return m, m.startAction(actions.KindUnassign), true
+	case "subscribe":
+		return m, m.startAction(actions.KindSubscribe), true
+	case "unsubscribe":
+		return m, m.startAction(actions.KindUnsubscribe), true
 	case "addlabel":
 		return m, m.startAction(actions.KindAddLabel), true
 	case "removelabel":
@@ -1619,7 +1629,7 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 		if target.RowKind != actions.RowKindPullRequest && target.RowKind != actions.RowKindIssue {
 			return fmt.Errorf("%s is only available for pull requests and issues.", actionLabel(kind))
 		}
-	case actions.KindSetMilestone:
+	case actions.KindSetMilestone, actions.KindSubscribe, actions.KindUnsubscribe:
 		if target.RowKind != actions.RowKindIssue {
 			return fmt.Errorf("%s is only available for issues.", actionLabel(kind))
 		}
@@ -1634,7 +1644,7 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 }
 
 func actionDispatchesDirectly(kind actions.Kind) bool {
-	return kind == actions.KindRerunRun
+	return kind == actions.KindRerunRun || kind == actions.KindSubscribe || kind == actions.KindUnsubscribe
 }
 
 func promptModeForAction(kind actions.Kind) actions.PromptMode {
@@ -1732,6 +1742,10 @@ func actionLabel(kind actions.Kind) string {
 		return "Assign"
 	case actions.KindUnassign:
 		return "Unassign"
+	case actions.KindSubscribe:
+		return "Subscribe"
+	case actions.KindUnsubscribe:
+		return "Unsubscribe"
 	case actions.KindAddLabel:
 		return "Add label"
 	case actions.KindRemoveLabel:
