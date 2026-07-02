@@ -71,6 +71,7 @@ defaults:
   issuesLimit: 40
   notificationsLimit: 30
   actionsLimit: 20
+  branchesLimit: 100
 prSections:
   - title: My PRs
     filter:
@@ -97,13 +98,19 @@ actionsSections:
       event: push
       headSha: abc123
       actor: octo
+branchSections:
+  - title: Local Branches
+    limit: 25
+localRepos:
+  - name: tea-dash
+    path: /Users/gaborbarany/dev/sandbox/tea-dash
 `
 	var c Config
 	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if c.Defaults.View != "notifications" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 ||
-		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 {
+		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 || c.Defaults.BranchesLimit != 100 {
 		t.Fatalf("defaults = %+v", c.Defaults)
 	}
 	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
@@ -126,6 +133,14 @@ actionsSections:
 	if filter.Status != "in_progress" || filter.Branch != "main" || filter.Event != "push" ||
 		filter.HeadSHA != "abc123" || filter.Actor != "octo" {
 		t.Fatalf("actions filter = %+v", filter)
+	}
+	if len(c.BranchSections) != 1 || c.BranchSections[0].Title != "Local Branches" ||
+		c.BranchSections[0].Limit != 25 {
+		t.Fatalf("branchSections = %+v", c.BranchSections)
+	}
+	if len(c.LocalRepos) != 1 || c.LocalRepos[0].Name != "tea-dash" ||
+		c.LocalRepos[0].Path != "/Users/gaborbarany/dev/sandbox/tea-dash" {
+		t.Fatalf("localRepos = %+v", c.LocalRepos)
 	}
 }
 
@@ -236,10 +251,17 @@ func TestConfigValidateBadView(t *testing.T) {
 	if err := (&Config{Defaults: Defaults{View: "nope"}}).Validate(); err == nil {
 		t.Fatal("Validate() should reject an unknown defaults.view")
 	}
-	for _, view := range []string{"", "prs", "issues", "notifications", "actions"} {
+	for _, view := range []string{"", "prs", "issues", "notifications", "actions", "branches"} {
 		if err := (&Config{Defaults: Defaults{View: view}}).Validate(); err != nil {
 			t.Fatalf("Validate() rejected valid view %q: %v", view, err)
 		}
+	}
+}
+
+func TestConfigValidateRejectsLocalRepoWithoutPath(t *testing.T) {
+	cfg := &Config{LocalRepos: []LocalRepoConfig{{Name: "missing"}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() should reject a local repo without a path")
 	}
 }
 
