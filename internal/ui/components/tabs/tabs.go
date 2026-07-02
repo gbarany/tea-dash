@@ -42,20 +42,54 @@ func (m Model) CurrSectionId() int { return m.cursor }
 // UpdateProgramContext recaches the shared context.
 func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) { m.ctx = ctx }
 
+func (m Model) labelAt(i int) string {
+	s := m.sections[i]
+	return fmt.Sprintf("%s (%d)", s.GetTitle(), s.GetTotalCount())
+}
+
+func (m Model) renderedTabAt(i int) string {
+	label := m.labelAt(i)
+	if i == m.cursor {
+		return m.ctx.Styles.ActiveTab.Render(label)
+	}
+	return m.ctx.Styles.Tab.Render(label)
+}
+
+// TabWidth returns the rendered cell width of tab i. It returns 0 for out of
+// range tabs.
+func (m Model) TabWidth(i int) int {
+	if i < 0 || i >= len(m.sections) {
+		return 0
+	}
+	return lipgloss.Width(m.renderedTabAt(i))
+}
+
+// TabAt maps a cell offset relative to the tab bar's left edge to a section
+// index. It returns false when the tab bar is hidden or the offset is outside
+// all rendered tabs.
+func (m Model) TabAt(x int) (int, bool) {
+	if len(m.sections) < 2 || x < 0 {
+		return 0, false
+	}
+	pos := 0
+	for i := range m.sections {
+		w := m.TabWidth(i)
+		if x >= pos && x < pos+w {
+			return i, true
+		}
+		pos += w
+	}
+	return 0, false
+}
+
 // View renders the tab bar, or "" when there are fewer than two sections.
 func (m Model) View() string {
 	if len(m.sections) < 2 {
 		return ""
 	}
-	st := m.ctx.Styles
-	tabs := make([]string, len(m.sections))
-	for i, s := range m.sections {
-		label := fmt.Sprintf("%s (%d)", s.GetTitle(), s.GetTotalCount())
-		if i == m.cursor {
-			tabs[i] = st.ActiveTab.Render(label)
-		} else {
-			tabs[i] = st.Tab.Render(label)
-		}
+	rendered := make([]string, len(m.sections))
+	for i := range m.sections {
+		rendered[i] = m.renderedTabAt(i)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	return lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
 }

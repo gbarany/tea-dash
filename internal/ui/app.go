@@ -886,6 +886,26 @@ func (m Model) tableDataStartY() int {
 	return y
 }
 
+func (m Model) tabBarY() int {
+	if len(m.currentViewSections()) < 2 {
+		return -1
+	}
+	return 2 // appStyle top padding + title line
+}
+
+func (m Model) switchSectionTo(id int) (Model, tea.Cmd) {
+	if id < 0 || id >= len(m.currentViewSections()) || id == m.currSectionId {
+		return m, nil
+	}
+	m.currSectionId = id
+	m.tabs.SetCurrSectionId(id)
+	if m.ctx.PreviewOpen {
+		m.syncSidebar()
+		return m, m.enrichCurrRow()
+	}
+	return m, nil
+}
+
 func (m Model) inMainListPane(x, y int) bool {
 	if x < 2 || y < m.tableDataStartY() {
 		return false
@@ -931,6 +951,11 @@ func (m Model) selectRowFromMouse(x, y int) (Model, tea.Cmd) {
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
+	}
+	if msg.Y == m.tabBarY() {
+		if id, ok := m.tabs.TabAt(msg.X - 2); ok {
+			return m.switchSectionTo(id)
+		}
 	}
 	return m.selectRowFromMouse(msg.X, msg.Y)
 }
