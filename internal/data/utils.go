@@ -30,9 +30,10 @@ func (n Notification) GetNumber() int64             { return n.Number }
 func (n Notification) GetURL() string               { return n.HTMLURL }
 func (n Notification) GetUpdatedAt() time.Time      { return n.UpdatedAt }
 
-// Compile-time assertions that both domain row types satisfy RowData.
+// Compile-time assertions that domain row types satisfy RowData.
 var (
 	_ RowData = PullRequest{}
 	_ RowData = Issue{}
 	_ RowData = Notification{}
+	_ RowData = ActionRun{}
 )
