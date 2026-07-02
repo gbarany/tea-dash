@@ -13,6 +13,7 @@ const (
 	KindReview       Kind = "review"
 	KindExternalDiff Kind = "external_diff"
 	KindCheckout     Kind = "checkout"
+	KindSwitchBranch Kind = "switch_branch"
 )
 
 // RowKind identifies the selected row's domain type.
@@ -21,6 +22,7 @@ type RowKind string
 const (
 	RowKindPullRequest RowKind = "pull_request"
 	RowKindIssue       RowKind = "issue"
+	RowKindBranch      RowKind = "branch"
 )
 
 // PromptMode records which kind of prompt produced a submitted value.
@@ -34,13 +36,14 @@ const (
 
 // Target is the immutable row/section context for an action.
 type Target struct {
-	SectionID   int
-	SectionType string
-	RowKind     RowKind
-	Repo        string
-	Number      int64
-	Title       string
-	URL         string
+	SectionID      int
+	SectionType    string
+	RowKind        RowKind
+	Repo           string
+	RepositoryPath string
+	Number         int64
+	Title          string
+	URL            string
 }
 
 // Prompt carries the prompt payload that was submitted with the intent.

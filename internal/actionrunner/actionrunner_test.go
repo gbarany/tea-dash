@@ -48,6 +48,18 @@ func issueIntent(kind uiactions.Kind) uiactions.Intent {
 	return in
 }
 
+func branchIntent(kind uiactions.Kind) uiactions.Intent {
+	return uiactions.Intent{
+		Kind: kind,
+		Target: uiactions.Target{
+			RowKind:        uiactions.RowKindBranch,
+			Repo:           "tea-dash",
+			RepositoryPath: "/src/tea-dash",
+			Title:          "feature/local-ops",
+		},
+	}
+}
+
 func TestDispatchCommentAndClose(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})
@@ -158,6 +170,27 @@ func TestDispatchCheckoutPassesConfig(t *testing.T) {
 		gotOpts.InstanceURL != "https://git.example" || gotOpts.Remote != "upstream" ||
 		gotOpts.BranchTemplate != "review-{{.PrIndex}}" {
 		t.Fatalf("checkout opts = %+v", gotOpts)
+	}
+}
+
+func TestDispatchSwitchBranchDoesNotRequireClient(t *testing.T) {
+	var gotOpts localgit.SwitchBranchOptions
+	r := New(Options{
+		BranchSwitch: func(_ context.Context, opts localgit.SwitchBranchOptions) (localgit.SwitchBranchResult, error) {
+			gotOpts = opts
+			return localgit.SwitchBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch}, nil
+		},
+	})
+
+	got := runDispatch(t, r, branchIntent(uiactions.KindSwitchBranch))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("switch branch result = %+v", got)
+	}
+	if gotOpts.RepoPath != "/src/tea-dash" || gotOpts.Branch != "feature/local-ops" {
+		t.Fatalf("switch branch opts = %+v", gotOpts)
+	}
+	if !strings.Contains(got.Message, "Switched to feature/local-ops") {
+		t.Fatalf("switch branch message = %q", got.Message)
 	}
 }
 

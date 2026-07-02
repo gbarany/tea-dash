@@ -1320,6 +1320,81 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 	}
 }
 
+func TestBranchSwitchHotkeysDispatchExpectedIntent(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{name: "C", key: tea.KeyPressMsg{Code: 'C', Text: "C"}},
+		{name: "space", key: tea.KeyPressMsg{Code: ' ', Text: " "}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+				Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+				Name: "feature/local-ops", Current: false,
+			}}))
+
+			m = update(t, m, tt.key)
+			if !m.actionPrompt.Active() {
+				t.Fatalf("%s should open a branch switch prompt", tt.name)
+			}
+			m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:      0,
+				SectionType:    branchsection.SectionType,
+				RowKind:        actions.RowKindBranch,
+				Repo:           "tea-dash",
+				RepositoryPath: "/src/tea-dash",
+				Title:          "feature/local-ops",
+			}
+			if got[0].Kind != actions.KindSwitchBranch || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want switch branch target %+v", got[0], wantTarget)
+			}
+		})
+	}
+}
+
+func TestBranchSwitchCurrentBranchShowsNotice(t *testing.T) {
+	var dispatched bool
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m.actionDispatcher = func(actions.Intent) tea.Cmd {
+		dispatched = true
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+		Name: "main", Current: true,
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'C', Text: "C"})
+	if dispatched {
+		t.Fatal("current branch switch must not dispatch")
+	}
+	if m.actionPrompt.Active() {
+		t.Fatal("current branch switch must not open a prompt")
+	}
+	if !strings.Contains(m.notice, "already current") {
+		t.Fatalf("current branch notice = %q", m.notice)
+	}
+	if view := m.View().Content; !strings.Contains(view, "already current") {
+		t.Fatalf("current branch notice should render in the view:\n%s", view)
+	}
+}
+
 func TestHelpKeyTogglesFullHelp(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -1537,6 +1612,35 @@ func TestSuccessfulActionRefreshesRowsAndClearsPreviewCache(t *testing.T) {
 	view := m.View().Content
 	if strings.Contains(view, "staledetailtoken") || !strings.Contains(view, "Loading") {
 		t.Fatalf("successful action should replace stale preview with loading state:\n%s", view)
+	}
+}
+
+func TestSuccessfulBranchSwitchRefreshesBranches(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+		Name: "feature/local-ops",
+	}}))
+
+	next, cmd := m.Update(actions.ResultMsg{
+		Intent: actions.Intent{Kind: actions.KindSwitchBranch, Target: actions.Target{
+			SectionID:      0,
+			SectionType:    branchsection.SectionType,
+			RowKind:        actions.RowKindBranch,
+			Repo:           "tea-dash",
+			RepositoryPath: "/src/tea-dash",
+			Title:          "feature/local-ops",
+		}},
+		Status:  actions.ResultSucceeded,
+		Message: "Switched to feature/local-ops in /src/tea-dash.",
+	})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("successful branch switch should refresh the branch section")
+	}
+	if len(m.tasks) != 1 {
+		t.Fatalf("len(tasks) = %d, want branch refresh task registered", len(m.tasks))
 	}
 }
 

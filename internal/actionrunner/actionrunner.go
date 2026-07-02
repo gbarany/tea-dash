@@ -32,26 +32,31 @@ type Client interface {
 // CheckoutFunc runs or fakes a local PR checkout.
 type CheckoutFunc func(context.Context, localgit.CheckoutOptions) (localgit.CheckoutPlan, error)
 
+// BranchSwitchFunc runs or fakes a local branch switch.
+type BranchSwitchFunc func(context.Context, localgit.SwitchBranchOptions) (localgit.SwitchBranchResult, error)
+
 // Options configures a Runner.
 type Options struct {
-	Client      Client
-	Config      *config.Config
-	InstanceURL string
-	CWD         string
-	ShellRunner shell.Runner
-	GitRunner   localgit.Runner
-	Checkout    CheckoutFunc
+	Client       Client
+	Config       *config.Config
+	InstanceURL  string
+	CWD          string
+	ShellRunner  shell.Runner
+	GitRunner    localgit.Runner
+	Checkout     CheckoutFunc
+	BranchSwitch BranchSwitchFunc
 }
 
 // Runner executes actions and returns ResultMsg values for the UI.
 type Runner struct {
-	client      Client
-	cfg         *config.Config
-	instanceURL string
-	cwd         string
-	shellRunner shell.Runner
-	gitRunner   localgit.Runner
-	checkout    CheckoutFunc
+	client       Client
+	cfg          *config.Config
+	instanceURL  string
+	cwd          string
+	shellRunner  shell.Runner
+	gitRunner    localgit.Runner
+	checkout     CheckoutFunc
+	branchSwitch BranchSwitchFunc
 }
 
 // New constructs a Runner with production defaults for omitted runners.
@@ -68,14 +73,19 @@ func New(opts Options) Runner {
 	if checkout == nil {
 		checkout = localgit.RunCheckout
 	}
+	branchSwitch := opts.BranchSwitch
+	if branchSwitch == nil {
+		branchSwitch = localgit.SwitchBranch
+	}
 	return Runner{
-		client:      opts.Client,
-		cfg:         cfg,
-		instanceURL: opts.InstanceURL,
-		cwd:         opts.CWD,
-		shellRunner: shellRunner,
-		gitRunner:   opts.GitRunner,
-		checkout:    checkout,
+		client:       opts.Client,
+		cfg:          cfg,
+		instanceURL:  opts.InstanceURL,
+		cwd:          opts.CWD,
+		shellRunner:  shellRunner,
+		gitRunner:    opts.GitRunner,
+		checkout:     checkout,
+		branchSwitch: branchSwitch,
 	}
 }
 
@@ -95,6 +105,17 @@ func (r Runner) Dispatch(intent uiactions.Intent) tea.Cmd {
 }
 
 func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error) {
+	if intent.Kind == uiactions.KindSwitchBranch {
+		branch, err := r.branchSwitch(ctx, localgit.SwitchBranchOptions{
+			RepoPath: intent.Target.RepositoryPath,
+			Branch:   intent.Target.Title,
+			Runner:   r.gitRunner,
+		})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Switched to %s in %s.", branch.Branch, branch.RepoPath), nil
+	}
 	if r.client == nil {
 		return "", fmt.Errorf("%s is unavailable: no Gitea client", actionLabel(intent.Kind))
 	}
@@ -253,6 +274,8 @@ func actionLabel(kind uiactions.Kind) string {
 		return "external diff"
 	case uiactions.KindCheckout:
 		return "checkout"
+	case uiactions.KindSwitchBranch:
+		return "switch branch"
 	default:
 		return string(kind)
 	}

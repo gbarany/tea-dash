@@ -13,6 +13,7 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	localgit "github.com/gbarany/tea-dash/internal/git"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/actions"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionfeedback"
@@ -316,6 +317,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.ExternalDiff):
 			return m, m.startAction(actions.KindExternalDiff)
 		case key.Matches(msg, m.keys.Checkout):
+			if m.ctx.View == context.BranchesView {
+				return m, m.startAction(actions.KindSwitchBranch)
+			}
 			return m, m.startAction(actions.KindCheckout)
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -449,6 +453,8 @@ func (m Model) helpLine() string {
 		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
 		if m.ctx.View == context.NotificationsView {
 			text += " · m mark read · u mark unread · M mark all read"
+		} else if m.ctx.View == context.BranchesView {
+			text += " · C/space switch"
 		} else {
 			text += " · c comment · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
@@ -457,6 +463,8 @@ func (m Model) helpLine() string {
 	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh"
 	if m.ctx.View == context.NotificationsView {
 		text += " · m read · u unread · M all read"
+	} else if m.ctx.View == context.BranchesView {
+		text += " · C/space switch"
 	} else {
 		text += " · c comment · m merge · d/ctrl+t diff · C/space checkout"
 	}
@@ -907,6 +915,17 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 		m.notice = fmt.Sprintf("%s is only available for pull requests.", actionLabel(kind))
 		return nil
 	}
+	if kind == actions.KindSwitchBranch {
+		branch, ok := m.getCurrRowData().(localgit.Branch)
+		if !ok || target.RowKind != actions.RowKindBranch {
+			m.notice = "Switch branch is only available for local branches."
+			return nil
+		}
+		if branch.Current {
+			m.notice = fmt.Sprintf("%s is already current in %s.", branch.Name, branch.Repository)
+			return nil
+		}
+	}
 	intent := actions.Intent{
 		Kind:   kind,
 		Target: target,
@@ -960,8 +979,10 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 		rowKind = actions.RowKindPullRequest
 	case data.Issue:
 		rowKind = actions.RowKindIssue
+	case localgit.Branch:
+		rowKind = actions.RowKindBranch
 	}
-	return actions.Target{
+	target := actions.Target{
 		SectionID:   s.GetId(),
 		SectionType: s.GetType(),
 		RowKind:     rowKind,
@@ -969,7 +990,11 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 		Number:      row.GetNumber(),
 		Title:       row.GetTitle(),
 		URL:         row.GetURL(),
-	}, true
+	}
+	if branch, ok := row.(localgit.Branch); ok {
+		target.RepositoryPath = branch.RepositoryPath
+	}
+	return target, true
 }
 
 func actionRequiresPullRequest(kind actions.Kind) bool {
@@ -995,6 +1020,9 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 func promptConfigForAction(kind actions.Kind, target actions.Target) actionprompt.Config {
 	title := fmt.Sprintf("%s #%d", actionLabel(kind), target.Number)
 	message := fmt.Sprintf("%s - %s", target.Repo, target.Title)
+	if kind == actions.KindSwitchBranch {
+		title = actionLabel(kind)
+	}
 	switch kind {
 	case actions.KindComment:
 		return actionprompt.Config{
@@ -1052,12 +1080,17 @@ func actionLabel(kind actions.Kind) string {
 		return "External diff"
 	case actions.KindCheckout:
 		return "Checkout"
+	case actions.KindSwitchBranch:
+		return "Switch branch"
 	default:
 		return string(kind)
 	}
 }
 
 func actionStartText(intent actions.Intent) string {
+	if intent.Kind == actions.KindSwitchBranch {
+		return fmt.Sprintf("Starting %s for %s.", actionLabel(intent.Kind), intent.Target.Title)
+	}
 	return fmt.Sprintf("Starting %s for %s#%d.", actionLabel(intent.Kind), intent.Target.Repo, intent.Target.Number)
 }
 
