@@ -344,6 +344,7 @@ var prBuiltins = builtinSet(
 
 var issueBuiltins = builtinSet(
 	"comment", "assign", "unassign", "addLabel", "removeLabel", "close", "reopen",
+	"milestone", "setMilestone",
 )
 
 var notificationBuiltins = builtinSet(

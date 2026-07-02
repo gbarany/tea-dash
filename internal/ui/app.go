@@ -428,6 +428,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindAddLabel)
 		case !m.scopedBuiltinOverridden("removelabel") && key.Matches(msg, m.keys.RemoveLabel):
 			return m, m.startAction(actions.KindRemoveLabel)
+		case !m.scopedBuiltinOverridden("setMilestone") && m.ctx.View == context.IssuesView && key.Matches(msg, m.keys.Milestone):
+			return m, m.startAction(actions.KindSetMilestone)
 		case !m.scopedBuiltinOverridden("merge") && key.Matches(msg, m.keys.Merge):
 			return m, m.startAction(actions.KindMerge)
 		case !m.scopedBuiltinOverridden("update") && key.Matches(msg, m.keys.UpdateBranch):
@@ -596,6 +598,8 @@ func (m Model) helpLine() string {
 			text += " · m mark read · u mark unread · M mark all read"
 		case context.BranchesView:
 			text += " · C/space switch"
+		case context.IssuesView:
+			text += " · c comment · a/A assign/unassign · L/U labels · M milestone · x/X close/reopen"
 		default:
 			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
@@ -615,6 +619,8 @@ func (m Model) helpLine() string {
 		text += " · m read · u unread · M all read"
 	case context.BranchesView:
 		text += " · C/space switch"
+	case context.IssuesView:
+		text += " · c comment · a/A assign · L/U labels · M milestone · x/X close/reopen"
 	default:
 		text += " · c comment · a/A assign · L/U labels · m merge · u update · W ready · d/ctrl+t diff · C/space checkout"
 	}
@@ -659,7 +665,10 @@ func (m Model) actionButtons() []actionButton {
 			{Label: "Checkout", Builtin: "checkout"},
 		}
 	case context.IssuesView:
-		buttons = append(buttons, actionButton{Label: "Comment", Builtin: "comment"})
+		buttons = append(buttons,
+			actionButton{Label: "Comment", Builtin: "comment"},
+			actionButton{Label: "Milestone", Builtin: "setMilestone"},
+		)
 		switch rowState(row) {
 		case "closed":
 			buttons = append(buttons, actionButton{Label: "Reopen", Builtin: "reopen"})
@@ -1420,6 +1429,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindAddLabel), true
 	case "removelabel":
 		return m, m.startAction(actions.KindRemoveLabel), true
+	case "milestone", "setmilestone":
+		return m, m.startAction(actions.KindSetMilestone), true
 	case "merge":
 		return m, m.startAction(actions.KindMerge), true
 	case "update", "updatebranch":
@@ -1547,6 +1558,10 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 		if target.RowKind != actions.RowKindPullRequest && target.RowKind != actions.RowKindIssue {
 			return fmt.Errorf("%s is only available for pull requests and issues.", actionLabel(kind))
 		}
+	case actions.KindSetMilestone:
+		if target.RowKind != actions.RowKindIssue {
+			return fmt.Errorf("%s is only available for issues.", actionLabel(kind))
+		}
 	case actions.KindRerunRun, actions.KindCancelRun:
 		if target.RowKind != actions.RowKindActionRun {
 			return fmt.Errorf("%s is only available for action runs.", actionLabel(kind))
@@ -1565,7 +1580,7 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 	switch kind {
 	case actions.KindComment:
 		return actions.PromptText
-	case actions.KindAddLabel, actions.KindRemoveLabel:
+	case actions.KindAddLabel, actions.KindRemoveLabel, actions.KindSetMilestone:
 		return actions.PromptText
 	case actions.KindMerge, actions.KindReview:
 		return actions.PromptPicker
@@ -1601,6 +1616,13 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 			Title:       title,
 			Message:     message,
 			Placeholder: "Label names to remove, comma-separated",
+		}
+	case actions.KindSetMilestone:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       title,
+			Message:     message,
+			Placeholder: "Milestone title",
 		}
 	case actions.KindReview:
 		return actionprompt.Config{
@@ -1653,6 +1675,8 @@ func actionLabel(kind actions.Kind) string {
 		return "Add label"
 	case actions.KindRemoveLabel:
 		return "Remove label"
+	case actions.KindSetMilestone:
+		return "Set milestone"
 	case actions.KindMerge:
 		return "Merge"
 	case actions.KindUpdateBranch:

@@ -214,6 +214,8 @@ keybindings:
   issues:
     - key: i
       command: echo {{.IssueNumber}}
+    - key: M
+      builtin: setMilestone
   notifications:
     - key: D
       builtin: markAllRead
