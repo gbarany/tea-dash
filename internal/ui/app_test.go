@@ -1014,6 +1014,94 @@ func TestMarkSelectedNotificationUnreadRefreshesNotifications(t *testing.T) {
 	}
 }
 
+func TestToggleNotificationPinRefreshesNotifications(t *testing.T) {
+	tests := []struct {
+		name       string
+		pinned     bool
+		unread     bool
+		key        tea.KeyPressMsg
+		wantStatus string
+		wantNotice string
+	}{
+		{name: "pin", key: tea.KeyPressMsg{Code: 'b', Text: "b"}, pinned: false, unread: true, wantStatus: "pinned", wantNotice: "Pinned notification"},
+		{name: "toggle unpin unread", key: tea.KeyPressMsg{Code: 'b', Text: "b"}, pinned: true, unread: true, wantStatus: "unread", wantNotice: "Unpinned notification"},
+		{name: "explicit unpin read", key: tea.KeyPressMsg{Code: 'B', Text: "B"}, pinned: true, unread: false, wantStatus: "read", wantNotice: "Unpinned notification"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotStatus string
+			client := newNotificationActionClient(t,
+				func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/api/v1/notifications/threads/12" {
+						http.NotFound(w, r)
+						return
+					}
+					gotStatus = r.URL.Query().Get("to-status")
+					fmt.Fprint(w, `{"id":12}`)
+				},
+				nil,
+			)
+			m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, client)
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, notificationFetchedMsg([]data.Notification{{
+				ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",
+				SubjectType: "Pull", SubjectState: "open", RepoNameWithOwner: "gbarany/tea-dash",
+				Unread: tt.unread, Pinned: tt.pinned, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
+			}}))
+
+			next, cmd := m.Update(tt.key)
+			if cmd == nil {
+				t.Fatalf("%s should return a notification pin command", tt.name)
+			}
+			m = next.(Model)
+			msg := cmd()
+			if gotStatus != tt.wantStatus {
+				t.Fatalf("to-status = %q, want %q", gotStatus, tt.wantStatus)
+			}
+			next, refresh := m.Update(msg)
+			m = next.(Model)
+			if refresh == nil {
+				t.Fatal("successful pin action should refresh the notifications section")
+			}
+			if !strings.Contains(m.notice, tt.wantNotice) {
+				t.Fatalf("notice = %q, want %q", m.notice, tt.wantNotice)
+			}
+		})
+	}
+}
+
+func TestNotificationActionButtonsIncludePinStateAction(t *testing.T) {
+	tests := []struct {
+		name   string
+		pinned bool
+		want   string
+	}{
+		{name: "unpinned", pinned: false, want: "Pin"},
+		{name: "pinned", pinned: true, want: "Unpin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, notificationFetchedMsg([]data.Notification{{
+				ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",
+				SubjectType: "Pull", SubjectState: "open", RepoNameWithOwner: "gbarany/tea-dash",
+				Unread: true, Pinned: tt.pinned, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
+			}}))
+			found := false
+			for _, b := range m.actionButtons() {
+				if b.Label == tt.want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("%s notification buttons = %+v, want %q", tt.name, m.actionButtons(), tt.want)
+			}
+		})
+	}
+}
+
 func TestMarkAllNotificationsReadRefreshesNotifications(t *testing.T) {
 	var hit bool
 	client := newNotificationActionClient(t,
@@ -1928,9 +2016,15 @@ func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
 	if view := m.View().Content; !strings.Contains(view, "u unread") {
 		t.Fatalf("compact notifications help missing unread shortcut:\n%s", view)
 	}
+	if view := m.View().Content; !strings.Contains(view, "b pin") {
+		t.Fatalf("compact notifications help missing pin shortcut:\n%s", view)
+	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	if view := m.View().Content; !strings.Contains(view, "u mark unread") {
 		t.Fatalf("full notifications help missing mark-unread shortcut:\n%s", view)
+	}
+	if view := m.View().Content; !strings.Contains(view, "b pin") {
+		t.Fatalf("full notifications help missing pin shortcut:\n%s", view)
 	}
 }
 

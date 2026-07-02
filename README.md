@@ -94,6 +94,7 @@ tea-dash --help
 | `u`             | update PR branch from its base branch |
 | `W`             | mark draft PR ready for review |
 | `m` / `u` / `M` | mark notification read / unread / all read |
+| `b` / `B`       | pin / unpin notification |
 | `x` / `X`       | close / reopen          |
 | `v`             | submit PR review        |
 | `d` / `ctrl+t`  | open PR diff in external pager |
@@ -235,6 +236,10 @@ keybindings:
     - key: i
       command: echo issue {{.IssueNumber}} in {{.RepoName}}
   notifications:
+    - key: b
+      builtin: togglePin
+    - key: B
+      builtin: unpin
     - key: D
       builtin: markAllRead
   actions:

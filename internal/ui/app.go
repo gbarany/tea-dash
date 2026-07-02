@@ -107,6 +107,8 @@ type notificationActionMsg struct {
 	sectionID int
 	all       bool
 	unread    bool
+	pinned    bool
+	unpinned  bool
 	err       error
 }
 
@@ -438,6 +440,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.markSelectedNotificationUnread()
 		case !m.scopedBuiltinOverridden("markAllRead") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkAllRead):
 			return m.markAllNotificationsRead()
+		case !m.scopedBuiltinOverridden("togglePin") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.Pin):
+			return m.toggleSelectedNotificationPin()
+		case !m.scopedBuiltinOverridden("unpin") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.Unpin):
+			return m.unpinSelectedNotification()
 		case !m.scopedBuiltinOverridden("rerun") && m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.RerunRun):
 			return m, m.startAction(actions.KindRerunRun)
 		case !m.scopedBuiltinOverridden("cancel") && m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.CancelRun):
@@ -617,7 +623,7 @@ func (m Model) helpLine() string {
 				text += " · t current repo"
 			}
 		case context.NotificationsView:
-			text += " · m mark read · u mark unread · M mark all read"
+			text += " · m mark read · u mark unread · M mark all read · b pin/unpin · B unpin"
 		case context.BranchesView:
 			text += " · C/space switch"
 		default:
@@ -636,7 +642,7 @@ func (m Model) helpLine() string {
 			text += " · t current repo"
 		}
 	case context.NotificationsView:
-		text += " · m read · u unread · M all read"
+		text += " · m read · u unread · M all read · b pin · B unpin"
 	case context.BranchesView:
 		text += " · C/space switch"
 	default:
@@ -669,6 +675,11 @@ func (m Model) actionButtons() []actionButton {
 				buttons = append(buttons, actionButton{Label: "Mark read", Builtin: "markRead"})
 			} else {
 				buttons = append(buttons, actionButton{Label: "Mark unread", Builtin: "markUnread"})
+			}
+			if n.Pinned {
+				buttons = append(buttons, actionButton{Label: "Unpin", Builtin: "unpin"})
+			} else {
+				buttons = append(buttons, actionButton{Label: "Pin", Builtin: "togglePin"})
 			}
 		}
 		buttons = append(buttons, actionButton{Label: "All read", Builtin: "markAllRead"})
@@ -1449,6 +1460,12 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "markallasread", "markallread", "markallasdone", "markalldone":
 		next, cmd := m.markAllNotificationsRead()
 		return next, cmd, true
+	case "pin", "togglepin", "togglepinned":
+		next, cmd := m.toggleSelectedNotificationPin()
+		return next, cmd, true
+	case "unpin":
+		next, cmd := m.unpinSelectedNotification()
+		return next, cmd, true
 	case "comment":
 		return m, m.startAction(actions.KindComment), true
 	case "assign":
@@ -1791,6 +1808,51 @@ func (m Model) markSelectedNotificationUnread() (Model, tea.Cmd) {
 	return m, markNotificationUnreadCmd(m.ctx.Client, m.currSectionId, row.ID)
 }
 
+func (m Model) toggleSelectedNotificationPin() (Model, tea.Cmd) {
+	row, ok := m.getCurrRowData().(data.Notification)
+	if !ok {
+		m.notice = "Select a notification to pin."
+		return m, nil
+	}
+	if row.Pinned {
+		return m.unpinNotification(row)
+	}
+	return m.pinNotification(row)
+}
+
+func (m Model) unpinSelectedNotification() (Model, tea.Cmd) {
+	row, ok := m.getCurrRowData().(data.Notification)
+	if !ok {
+		m.notice = "Select a notification to unpin."
+		return m, nil
+	}
+	return m.unpinNotification(row)
+}
+
+func (m Model) pinNotification(row data.Notification) (Model, tea.Cmd) {
+	if row.ID == 0 {
+		m.notice = "Selected notification has no thread id."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to pin notifications."
+		return m, nil
+	}
+	return m, markNotificationPinnedCmd(m.ctx.Client, m.currSectionId, row.ID)
+}
+
+func (m Model) unpinNotification(row data.Notification) (Model, tea.Cmd) {
+	if row.ID == 0 {
+		m.notice = "Selected notification has no thread id."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to unpin notifications."
+		return m, nil
+	}
+	return m, markNotificationUnpinnedCmd(m.ctx.Client, m.currSectionId, row.ID, row.Unread)
+}
+
 func (m Model) markAllNotificationsRead() (Model, tea.Cmd) {
 	if m.ctx.View != context.NotificationsView {
 		m.notice = "Switch to notifications to mark all read."
@@ -1826,6 +1888,31 @@ func markNotificationUnreadCmd(client *gitea.Client, sectionID int, threadID int
 	}
 }
 
+func markNotificationPinnedCmd(client *gitea.Client, sectionID int, threadID int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			pinned:    true,
+			err:       client.PinNotification(ctx, threadID),
+		}
+	}
+}
+
+func markNotificationUnpinnedCmd(client *gitea.Client, sectionID int, threadID int64, unread bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			unread:    unread,
+			unpinned:  true,
+			err:       client.UnpinNotification(ctx, threadID, unread),
+		}
+	}
+}
+
 func markAllNotificationsReadCmd(client *gitea.Client, sectionID int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
@@ -1842,6 +1929,10 @@ func (m Model) handleNotificationAction(msg notificationActionMsg) (Model, tea.C
 	if msg.err != nil {
 		if msg.all {
 			m.notice = fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err)
+		} else if msg.pinned {
+			m.notice = fmt.Sprintf("Couldn't pin notification: %v", msg.err)
+		} else if msg.unpinned {
+			m.notice = fmt.Sprintf("Couldn't unpin notification: %v", msg.err)
 		} else if msg.unread {
 			m.notice = fmt.Sprintf("Couldn't mark notification unread: %v", msg.err)
 		} else {
@@ -1851,6 +1942,10 @@ func (m Model) handleNotificationAction(msg notificationActionMsg) (Model, tea.C
 	}
 	if msg.all {
 		m.notice = "Marked all notifications read."
+	} else if msg.pinned {
+		m.notice = "Pinned notification."
+	} else if msg.unpinned {
+		m.notice = "Unpinned notification."
 	} else if msg.unread {
 		m.notice = "Marked notification unread."
 	} else {

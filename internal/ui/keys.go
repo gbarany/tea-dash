@@ -45,6 +45,8 @@ type keyMap struct {
 	MarkRead      key.Binding
 	MarkUnread    key.Binding
 	MarkAllRead   key.Binding
+	Pin           key.Binding
+	Unpin         key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -185,6 +187,14 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("M"),
 			key.WithHelp("M", "mark all read"),
 		),
+		Pin: key.NewBinding(
+			key.WithKeys("b"),
+			key.WithHelp("b", "pin"),
+		),
+		Unpin: key.NewBinding(
+			key.WithKeys("B"),
+			key.WithHelp("B", "unpin"),
+		),
 	}
 }
 
@@ -274,6 +284,10 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.MarkUnread = binding(keyName, "mark unread")
 	case "markallasread", "markallread":
 		k.MarkAllRead = binding(keyName, "mark all read")
+	case "pin", "togglepin", "togglepinned":
+		k.Pin = binding(keyName, "pin")
+	case "unpin":
+		k.Unpin = binding(keyName, "unpin")
 	}
 }
 

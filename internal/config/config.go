@@ -399,7 +399,7 @@ var issueBuiltins = builtinSet(
 var notificationBuiltins = builtinSet(
 	"openGithub", "open", "markAsRead", "markRead", "markAsUnread",
 	"markUnread", "markAllAsRead", "markAllRead", "markAsDone", "markDone",
-	"markAllAsDone", "markAllDone",
+	"markAllAsDone", "markAllDone", "pin", "unpin", "togglePin", "togglePinned",
 )
 
 var actionBuiltins = builtinSet("rerun", "rerunRun", "cancel", "cancelRun")
