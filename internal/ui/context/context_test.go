@@ -1,7 +1,10 @@
 package context
 
 import (
+	"image/color"
 	"testing"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/gbarany/tea-dash/internal/config"
 )
@@ -12,6 +15,44 @@ func TestDefaultStylesNonZero(t *testing.T) {
 	_ = s.Spinner.Render("x")
 	_ = s.DimText.Render("x")
 	_ = s.ErrorText.Render("x")
+}
+
+func TestStylesForConfigAppliesThemeColors(t *testing.T) {
+	s := StylesForConfig(&config.Config{
+		Theme: config.Theme{
+			Colors: config.ThemeColors{
+				Text: config.ThemeTextColors{
+					Primary: "#CBE3E7",
+					Faint:   "#8A889D",
+					Warning: "#F48FB1",
+				},
+				Background: config.ThemeBackgroundColors{
+					Selected: "#3E3859",
+				},
+			},
+		},
+	})
+
+	assertColor(t, s.Title.GetForeground(), lipgloss.Color("#CBE3E7"), "title foreground")
+	assertColor(t, s.Spinner.GetForeground(), lipgloss.Color("#CBE3E7"), "spinner foreground")
+	assertColor(t, s.ActionButton.GetForeground(), lipgloss.Color("#CBE3E7"), "action button foreground")
+	assertColor(t, s.Table.Header.GetForeground(), lipgloss.Color("#CBE3E7"), "table header foreground")
+	assertColor(t, s.ActiveTab.GetForeground(), lipgloss.Color("#CBE3E7"), "active tab foreground")
+	assertColor(t, s.DimText.GetForeground(), lipgloss.Color("#8A889D"), "dim text foreground")
+	assertColor(t, s.HelpText.GetForeground(), lipgloss.Color("#8A889D"), "help foreground")
+	assertColor(t, s.Tab.GetForeground(), lipgloss.Color("#8A889D"), "tab foreground")
+	assertColor(t, s.TabSeparator.GetForeground(), lipgloss.Color("#8A889D"), "tab separator foreground")
+	assertColor(t, s.ErrorText.GetForeground(), lipgloss.Color("#F48FB1"), "error foreground")
+	assertColor(t, s.Table.Selected.GetBackground(), lipgloss.Color("#3E3859"), "selected row background")
+}
+
+func assertColor(t *testing.T, got, want color.Color, label string) {
+	t.Helper()
+	gr, gg, gb, ga := got.RGBA()
+	wr, wg, wb, wa := want.RGBA()
+	if gr != wr || gg != wg || gb != wb || ga != wa {
+		t.Fatalf("%s color = rgba(%d,%d,%d,%d), want rgba(%d,%d,%d,%d)", label, gr, gg, gb, ga, wr, wg, wb, wa)
+	}
 }
 
 func TestGetViewSectionsConfig(t *testing.T) {

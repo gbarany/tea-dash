@@ -50,6 +50,9 @@ type Config struct {
 	Git Git `yaml:"git"`
 	// Keybindings overrides built-in keys and adds custom shell commands.
 	Keybindings Keybindings `yaml:"keybindings"`
+	// Theme customizes core UI colors. The shape intentionally mirrors gh-dash's
+	// theme.colors block for portable terminal color schemes.
+	Theme Theme `yaml:"theme"`
 }
 
 // SmartFilteringEnabled reports whether cwd repository scoping is enabled at
@@ -76,6 +79,41 @@ type Defaults struct {
 // Pager configures external pager commands.
 type Pager struct {
 	Diff string `yaml:"diff"`
+}
+
+// Theme customizes tea-dash's visual styling.
+type Theme struct {
+	Colors ThemeColors `yaml:"colors"`
+}
+
+// ThemeColors groups text, background, and border color overrides.
+type ThemeColors struct {
+	Text       ThemeTextColors       `yaml:"text"`
+	Background ThemeBackgroundColors `yaml:"background"`
+	Border     ThemeBorderColors     `yaml:"border"`
+}
+
+// ThemeTextColors customizes foreground colors used by the TUI.
+type ThemeTextColors struct {
+	Primary   string `yaml:"primary"`
+	Secondary string `yaml:"secondary"`
+	Inverted  string `yaml:"inverted"`
+	Faint     string `yaml:"faint"`
+	Warning   string `yaml:"warning"`
+	Success   string `yaml:"success"`
+	Actor     string `yaml:"actor"`
+}
+
+// ThemeBackgroundColors customizes background colors used by the TUI.
+type ThemeBackgroundColors struct {
+	Selected string `yaml:"selected"`
+}
+
+// ThemeBorderColors customizes border colors used by the TUI.
+type ThemeBorderColors struct {
+	Primary   string `yaml:"primary"`
+	Secondary string `yaml:"secondary"`
+	Faint     string `yaml:"faint"`
 }
 
 // DiffCommand returns the configured diff pager command, then $PAGER, then the

@@ -147,6 +147,18 @@ git:
   remote: origin
   prBranchTemplate: "pr-{{.PrIndex}}"
 
+theme:
+  colors:
+    text:
+      primary: "#CBE3E7"   # title, active tab, spinner, table header, action buttons
+      secondary: "#A1EFD3" # selected-row text
+      faint: "#8A889D"     # dim text, inactive tabs, help
+      warning: "#F48FB1"   # notices and errors
+    background:
+      selected: "#3E3859"  # selected-row background
+    border:
+      primary: "#585273"   # parsed for gh-dash theme compatibility; deeper border theming is future work
+
 # Each section becomes a tab you page through with h/l. A section-level repo:
 # overrides global repos: for that tab. Omit prSections to get two
 # "@me"-authored PR defaults: open and closed pull requests. Omit issuesSections

@@ -145,7 +145,7 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		User:           user,
 		View:           view,
 		PreviewOpen:    true,
-		Styles:         context.DefaultStyles(),
+		Styles:         context.StylesForConfig(cfg),
 		CurrentRepo:    opts.CurrentRepo,
 		SmartFiltering: opts.SmartFiltering,
 	}
@@ -547,7 +547,7 @@ func (m Model) View() tea.View {
 	case context.BranchesView:
 		subtitle = "  local branches"
 	}
-	title := titleStyle.Render("tea-dash") + m.ctx.Styles.DimText.Render(subtitle)
+	title := m.ctx.Styles.Title.Render("tea-dash") + m.ctx.Styles.DimText.Render(subtitle)
 
 	parts := []string{title}
 	if tv := m.tabs.View(); tv != "" {
@@ -572,7 +572,7 @@ func (m Model) View() tea.View {
 	if bar := m.actionBarView(); bar != "" {
 		parts = append(parts, bar)
 	}
-	parts = append(parts, status, helpStyle.Render(m.helpLine()))
+	parts = append(parts, status, m.ctx.Styles.HelpText.Render(m.helpLine()))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
@@ -712,13 +712,13 @@ func (m Model) actionBarView() string {
 		if i > 0 {
 			rendered = append(rendered, " ")
 		}
-		rendered = append(rendered, renderActionButton(b))
+		rendered = append(rendered, m.renderActionButton(b))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, rendered...)
 }
 
-func renderActionButton(b actionButton) string {
-	return actionButtonStyle.Render("[" + b.Label + "]")
+func (m Model) renderActionButton(b actionButton) string {
+	return m.ctx.Styles.ActionButton.Render("[" + b.Label + "]")
 }
 
 func (m Model) actionBarY() int {
@@ -738,7 +738,7 @@ func (m Model) actionButtonAt(x int) (actionButton, bool) {
 	}
 	pos := 0
 	for _, b := range m.actionButtons() {
-		w := lipgloss.Width(renderActionButton(b))
+		w := lipgloss.Width(m.renderActionButton(b))
 		if rel >= pos && rel < pos+w {
 			return b, true
 		}
