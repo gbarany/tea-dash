@@ -23,6 +23,7 @@ const (
 	PullsView ViewType = iota
 	IssuesView
 	NotificationsView
+	ActionsView
 )
 
 // TaskState is the lifecycle of an async task.
@@ -61,7 +62,7 @@ type ProgramContext struct {
 	Config *config.Config
 	Client *gitea.Client // may be nil in tests
 	User   string        // client.Me(); "" when client is nil
-	View   ViewType      // PullsView | IssuesView | NotificationsView
+	View   ViewType      // PullsView | IssuesView | NotificationsView | ActionsView
 	Error  error
 	Styles Styles
 
@@ -74,6 +75,13 @@ type ProgramContext struct {
 // default section.
 func (c *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
 	switch c.View {
+	case ActionsView:
+		if c.Config != nil && len(c.Config.ActionsSections) > 0 {
+			return c.Config.ActionsSections
+		}
+		return []config.SectionConfig{{
+			Title: "Actions",
+		}}
 	case NotificationsView:
 		if c.Config != nil && len(c.Config.NotificationsSections) > 0 {
 			return c.Config.NotificationsSections
