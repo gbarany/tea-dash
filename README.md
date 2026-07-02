@@ -73,6 +73,8 @@ tea-dash --help
 | Key             | Action                  |
 | --------------- | ----------------------- |
 | `↑`/`↓`, `j`/`k`| move selection          |
+| mouse click      | select row              |
+| mouse wheel      | move selection          |
 | `g` / `G`       | first / last row        |
 | `s`             | switch view (PRs/issues/notifications/actions/branches)|
 | `h` / `l`       | prev / next section     |
