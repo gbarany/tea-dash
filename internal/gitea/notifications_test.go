@@ -130,6 +130,66 @@ func TestMarkNotificationUnreadUsesThreadEndpoint(t *testing.T) {
 	}
 }
 
+func TestPinNotificationUsesPinnedStatus(t *testing.T) {
+	var hit bool
+	srv := notificationServer(t, nil, notificationRoute{
+		pattern: "/api/v1/notifications/threads/12",
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			if r.Method != http.MethodPatch {
+				t.Fatalf("method = %s, want PATCH", r.Method)
+			}
+			if got := r.URL.Query().Get("to-status"); got != "pinned" {
+				t.Fatalf("to-status = %q, want pinned", got)
+			}
+			assertEmptyBody(t, r)
+			fmt.Fprint(w, `{"id":12,"pinned":true}`)
+		},
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if err := c.PinNotification(context.Background(), 12); err != nil {
+		t.Fatalf("PinNotification: %v", err)
+	}
+	if !hit {
+		t.Fatal("notification thread endpoint was not called")
+	}
+}
+
+func TestUnpinNotificationRestoresReadOrUnreadStatus(t *testing.T) {
+	var statuses []string
+	srv := notificationServer(t, nil, notificationRoute{
+		pattern: "/api/v1/notifications/threads/12",
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPatch {
+				t.Fatalf("method = %s, want PATCH", r.Method)
+			}
+			statuses = append(statuses, r.URL.Query().Get("to-status"))
+			assertEmptyBody(t, r)
+			fmt.Fprint(w, `{"id":12,"pinned":false}`)
+		},
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if err := c.UnpinNotification(context.Background(), 12, true); err != nil {
+		t.Fatalf("UnpinNotification unread: %v", err)
+	}
+	if err := c.UnpinNotification(context.Background(), 12, false); err != nil {
+		t.Fatalf("UnpinNotification read: %v", err)
+	}
+	if strings.Join(statuses, ",") != "unread,read" {
+		t.Fatalf("to-status values = %v, want [unread read]", statuses)
+	}
+}
+
 func TestMarkAllNotificationsReadUsesNotificationsEndpoint(t *testing.T) {
 	var hit bool
 	srv := notificationServer(t, func(w http.ResponseWriter, r *http.Request) {

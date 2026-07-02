@@ -215,6 +215,10 @@ keybindings:
     - key: i
       command: echo {{.IssueNumber}}
   notifications:
+    - key: b
+      builtin: togglePin
+    - key: B
+      builtin: unpin
     - key: D
       builtin: markAllRead
   actions:
@@ -236,7 +240,10 @@ keybindings:
 		!strings.Contains(c.Keybindings.PRs[1].Command, "lazygit") {
 		t.Fatalf("prs keybindings = %+v", c.Keybindings.PRs)
 	}
-	if c.Keybindings.Notifications[0].Builtin != "markAllRead" ||
+	if len(c.Keybindings.Notifications) != 3 ||
+		c.Keybindings.Notifications[0].Builtin != "togglePin" ||
+		c.Keybindings.Notifications[1].Builtin != "unpin" ||
+		c.Keybindings.Notifications[2].Builtin != "markAllRead" ||
 		c.Keybindings.Actions[0].Key != "a" ||
 		c.Keybindings.Branches[0].Command == "" {
 		t.Fatalf("keybindings = %+v", c.Keybindings)

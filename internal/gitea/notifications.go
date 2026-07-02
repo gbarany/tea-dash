@@ -48,6 +48,24 @@ func (c *Client) MarkNotificationUnread(_ context.Context, threadID int64) error
 	return c.markNotification(threadID, sdk.NotifyStatusUnread, "unread")
 }
 
+// PinNotification pins one notification thread.
+func (c *Client) PinNotification(_ context.Context, threadID int64) error {
+	return c.markNotification(threadID, sdk.NotifyStatusPinned, "pinned")
+}
+
+// UnpinNotification unpins one notification thread by restoring its normal
+// read/unread status. Gitea models pinned as a notification status rather than
+// a boolean patch, so the caller must pass the row's current unread state.
+func (c *Client) UnpinNotification(_ context.Context, threadID int64, unread bool) error {
+	status := sdk.NotifyStatusRead
+	label := "unpinned read"
+	if unread {
+		status = sdk.NotifyStatusUnread
+		label = "unpinned unread"
+	}
+	return c.markNotification(threadID, status, label)
+}
+
 // MarkAllNotificationsRead marks all unread notification threads as read.
 func (c *Client) MarkAllNotificationsRead(_ context.Context) error {
 	err := c.call(func() error {
