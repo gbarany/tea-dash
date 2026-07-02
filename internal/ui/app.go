@@ -238,6 +238,35 @@ func (m Model) activeKeybindings() []config.Keybinding {
 	return out
 }
 
+func (m Model) scopedBuiltinOverridden(name string) bool {
+	want := normalizeBuiltin(name)
+	for _, b := range m.scopedKeybindings() {
+		if b.Builtin != "" && normalizeBuiltin(b.Builtin) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) scopedKeybindings() []config.Keybinding {
+	if m.ctx == nil || m.ctx.Config == nil {
+		return nil
+	}
+	k := m.ctx.Config.Keybindings
+	switch m.ctx.View {
+	case context.IssuesView:
+		return k.Issues
+	case context.NotificationsView:
+		return k.Notifications
+	case context.ActionsView:
+		return k.Actions
+	case context.BranchesView:
+		return k.Branches
+	default:
+		return k.PRs
+	}
+}
+
 // Init starts the initial fetch for every section in the current view.
 func (m Model) Init() tea.Cmd {
 	var cmds []tea.Cmd
@@ -360,36 +389,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch {
-		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkRead):
+		case !m.scopedBuiltinOverridden("markRead") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkRead):
 			return m.markSelectedNotificationRead()
-		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkUnread):
+		case !m.scopedBuiltinOverridden("markUnread") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkUnread):
 			return m.markSelectedNotificationUnread()
-		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkAllRead):
+		case !m.scopedBuiltinOverridden("markAllRead") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkAllRead):
 			return m.markAllNotificationsRead()
-		case m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.RerunRun):
+		case !m.scopedBuiltinOverridden("rerun") && m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.RerunRun):
 			return m, m.startAction(actions.KindRerunRun)
-		case m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.CancelRun):
+		case !m.scopedBuiltinOverridden("cancel") && m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.CancelRun):
 			return m, m.startAction(actions.KindCancelRun)
-		case key.Matches(msg, m.keys.Comment):
+		case !m.scopedBuiltinOverridden("comment") && key.Matches(msg, m.keys.Comment):
 			return m, m.startAction(actions.KindComment)
-		case key.Matches(msg, m.keys.Merge):
+		case !m.scopedBuiltinOverridden("merge") && key.Matches(msg, m.keys.Merge):
 			return m, m.startAction(actions.KindMerge)
-		case key.Matches(msg, m.keys.Close):
+		case !m.scopedBuiltinOverridden("close") && key.Matches(msg, m.keys.Close):
 			return m, m.startAction(actions.KindClose)
-		case key.Matches(msg, m.keys.Reopen):
+		case !m.scopedBuiltinOverridden("reopen") && key.Matches(msg, m.keys.Reopen):
 			return m, m.startAction(actions.KindReopen)
-		case key.Matches(msg, m.keys.Review):
+		case !m.scopedBuiltinOverridden("review") && key.Matches(msg, m.keys.Review):
 			return m, m.startAction(actions.KindReview)
-		case key.Matches(msg, m.keys.ExternalDiff):
+		case !m.scopedBuiltinOverridden("diff") && key.Matches(msg, m.keys.ExternalDiff):
 			return m, m.startAction(actions.KindExternalDiff)
-		case key.Matches(msg, m.keys.Checkout):
+		case !m.scopedBuiltinOverridden("checkout") && key.Matches(msg, m.keys.Checkout):
 			if m.ctx.View == context.BranchesView {
 				return m, m.startAction(actions.KindSwitchBranch)
 			}
 			return m, m.startAction(actions.KindCheckout)
-		case key.Matches(msg, m.keys.Quit):
+		case !m.scopedBuiltinOverridden("quit") && key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
-		case key.Matches(msg, m.keys.Refresh):
+		case !m.scopedBuiltinOverridden("refresh") && key.Matches(msg, m.keys.Refresh):
 			if s := m.getCurrSection(); s != nil && !s.GetIsLoading() {
 				if m.ctx.PreviewOpen {
 					m.clearSelectedPreviewCache()
@@ -398,18 +427,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, s.FetchRows()
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.RefreshAll):
+		case !m.scopedBuiltinOverridden("refreshAll") && key.Matches(msg, m.keys.RefreshAll):
 			return m, m.refreshAllSections()
-		case key.Matches(msg, m.keys.Open):
+		case !m.scopedBuiltinOverridden("open") && key.Matches(msg, m.keys.Open):
 			return m, m.openSelected()
-		case key.Matches(msg, m.keys.CopyNumber):
+		case !m.scopedBuiltinOverridden("copyNumber") && key.Matches(msg, m.keys.CopyNumber):
 			return m, m.copySelectedNumber()
-		case key.Matches(msg, m.keys.CopyURL):
+		case !m.scopedBuiltinOverridden("copyurl") && key.Matches(msg, m.keys.CopyURL):
 			return m, m.copySelectedURL()
-		case key.Matches(msg, m.keys.Help):
+		case !m.scopedBuiltinOverridden("help") && key.Matches(msg, m.keys.Help):
 			m.showHelp = !m.showHelp
 			return m, nil
-		case key.Matches(msg, m.keys.NextSection):
+		case !m.scopedBuiltinOverridden("nextSection") && key.Matches(msg, m.keys.NextSection):
 			if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 				m.currSectionId++
 			}
@@ -419,7 +448,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enrichCurrRow()
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.PrevSection):
+		case !m.scopedBuiltinOverridden("prevSection") && key.Matches(msg, m.keys.PrevSection):
 			if m.currSectionId > 0 {
 				m.currSectionId--
 			}
@@ -429,15 +458,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enrichCurrRow()
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.SwitchView):
+		case !m.scopedBuiltinOverridden("switchView") && key.Matches(msg, m.keys.SwitchView):
 			cmd := m.switchView()
 			return m, cmd
-		case key.Matches(msg, m.keys.Search):
+		case !m.scopedBuiltinOverridden("search") && key.Matches(msg, m.keys.Search):
 			if s := m.getCurrSection(); s != nil {
 				return m, s.SetIsSearching(true)
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.TogglePreview):
+		case !m.scopedBuiltinOverridden("togglePreview") && key.Matches(msg, m.keys.TogglePreview):
 			m.ctx.PreviewOpen = !m.ctx.PreviewOpen
 			m.syncMainContentDimensions()
 			m.syncProgramContext()
@@ -447,13 +476,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enrichCurrRow()
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.Expand):
+		case !m.scopedBuiltinOverridden("expand") && key.Matches(msg, m.keys.Expand):
 			if m.ctx.PreviewOpen {
 				m.expanded = !m.expanded
 				m.syncSidebar()
 			}
 			return m, nil
-		case (key.Matches(msg, m.keys.ScrollUp) || key.Matches(msg, m.keys.ScrollDown)) && m.ctx.PreviewOpen:
+		case (!m.scopedBuiltinOverridden("scrollUp") && key.Matches(msg, m.keys.ScrollUp) ||
+			!m.scopedBuiltinOverridden("scrollDown") && key.Matches(msg, m.keys.ScrollDown)) && m.ctx.PreviewOpen:
 			var cmd tea.Cmd
 			m.sidebar, cmd = m.sidebar.Update(msg)
 			return m, cmd
@@ -540,7 +570,18 @@ func (m Model) helpLine() string {
 	default:
 		text += " · c comment · m merge · d/ctrl+t diff · C/space checkout"
 	}
-	return text + " · ? help · q quit"
+	return text + fmt.Sprintf(" · %s help · %s quit", keyHelp(m.keys.Help, "?"), keyHelp(m.keys.Quit, "q"))
+}
+
+func keyHelp(binding key.Binding, fallback string) string {
+	if h := binding.Help(); h.Key != "" {
+		return h.Key
+	}
+	keys := binding.Keys()
+	if len(keys) > 0 {
+		return keys[0]
+	}
+	return fallback
 }
 
 // currentViewSections returns the section slice for the active view.

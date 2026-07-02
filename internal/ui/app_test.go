@@ -1511,6 +1511,11 @@ func TestConfigKeybindingRebindsBuiltin(t *testing.T) {
 	if !strings.Contains(m.View().Content, "R refresh all") {
 		t.Fatal("configured 'H' key should toggle full help")
 	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'H', Text: "H"})
+	view := m.View().Content
+	if !strings.Contains(view, "H help") || strings.Contains(view, "? help") {
+		t.Fatalf("compact help should show configured help key and hide the old key:\n%s", view)
+	}
 }
 
 func TestConfigCustomKeybindingDispatchesSelectedRowCommand(t *testing.T) {
@@ -1578,6 +1583,29 @@ func TestScopedBuiltinKeybindingRunsInActiveView(t *testing.T) {
 	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got.Kind != actions.KindClose {
 		t.Fatalf("scoped issue builtin dispatched %+v, want close", got)
+	}
+}
+
+func TestScopedBuiltinKeybindingReplacesDefaultInActiveView(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			PRs: []config.Keybinding{{Key: "M", Builtin: "merge"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 8, Title: "PR row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if m.actionPrompt.Active() {
+		t.Fatal("old PR merge key should be replaced by the scoped keybinding, not kept as an alias")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'M', Text: "M"})
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Merge") {
+		t.Fatalf("configured 'M' key should open the merge prompt, got:\n%s", m.actionPrompt.View(120))
 	}
 }
 
