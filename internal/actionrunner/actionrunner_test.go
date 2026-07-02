@@ -105,6 +105,37 @@ func TestDispatchCommentAndClose(t *testing.T) {
 	}
 }
 
+func TestDispatchAssignAndUnassign(t *testing.T) {
+	client := &fakeClient{}
+	r := New(Options{Client: client})
+
+	got := runDispatch(t, r, pullIntent(uiactions.KindAssign))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("assign pull result = %+v", got)
+	}
+	if client.assignPull != 7 {
+		t.Fatalf("assignPull = %d, want 7", client.assignPull)
+	}
+
+	got = runDispatch(t, r, issueIntent(uiactions.KindUnassign))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("unassign issue result = %+v", got)
+	}
+	if client.unassignIssue != 7 {
+		t.Fatalf("unassignIssue = %d, want 7", client.unassignIssue)
+	}
+}
+
+func TestDispatchAssignRejectsUnsupportedRows(t *testing.T) {
+	intent := branchIntent(uiactions.KindAssign)
+	intent.Target.Repo = "acme/widgets"
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), intent)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "only available for pull requests and issues") {
+		t.Fatalf("assign branch result = %+v", got)
+	}
+}
+
 func TestDispatchMergeAndReview(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})
@@ -291,15 +322,19 @@ func TestDispatchReturnsErrorResult(t *testing.T) {
 }
 
 type fakeClient struct {
-	err         error
-	commentBody string
-	issueState  data.ItemState
-	pullState   data.ItemState
-	merge       data.MergeOptions
-	review      data.PullReviewOptions
-	diff        []byte
-	rerunRunID  int64
-	cancelRunID int64
+	err           error
+	commentBody   string
+	issueState    data.ItemState
+	pullState     data.ItemState
+	merge         data.MergeOptions
+	review        data.PullReviewOptions
+	diff          []byte
+	rerunRunID    int64
+	cancelRunID   int64
+	assignPull    int64
+	assignIssue   int64
+	unassignPull  int64
+	unassignIssue int64
 }
 
 func (f *fakeClient) AddComment(_, _ string, _ int64, body string) (data.Comment, error) {
@@ -314,6 +349,26 @@ func (f *fakeClient) SetIssueState(_, _ string, _ int64, state data.ItemState) e
 
 func (f *fakeClient) SetPullState(_, _ string, _ int64, state data.ItemState) error {
 	f.pullState = state
+	return f.err
+}
+
+func (f *fakeClient) AssignPullToMe(_, _ string, index int64) error {
+	f.assignPull = index
+	return f.err
+}
+
+func (f *fakeClient) UnassignPullFromMe(_, _ string, index int64) error {
+	f.unassignPull = index
+	return f.err
+}
+
+func (f *fakeClient) AssignIssueToMe(_, _ string, index int64) error {
+	f.assignIssue = index
+	return f.err
+}
+
+func (f *fakeClient) UnassignIssueFromMe(_, _ string, index int64) error {
+	f.unassignIssue = index
 	return f.err
 }
 

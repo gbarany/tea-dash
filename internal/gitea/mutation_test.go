@@ -122,6 +122,73 @@ func TestSetPullStatePatchesPullState(t *testing.T) {
 	}
 }
 
+func TestAssignAndUnassignIssuePreservesOtherAssignees(t *testing.T) {
+	var patched [][]string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/issues/42" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"number":42,"assignees":[{"login":"alice"}]}`)
+		case http.MethodPatch:
+			body := decodeMutationBody(t, r)
+			raw, ok := body["assignees"].([]any)
+			if !ok {
+				t.Fatalf("assignees body = %#v", body)
+			}
+			got := make([]string, 0, len(raw))
+			for _, v := range raw {
+				got = append(got, v.(string))
+			}
+			patched = append(patched, got)
+			fmt.Fprint(w, `{"number":42}`)
+		default:
+			t.Fatalf("method = %s", r.Method)
+		}
+	})
+
+	if err := c.AssignIssueToMe("acme", "widgets", 42); err != nil {
+		t.Fatalf("AssignIssueToMe: %v", err)
+	}
+	if len(patched) != 1 || strings.Join(patched[0], ",") != "alice,me" {
+		t.Fatalf("assign patch = %#v, want alice,me", patched)
+	}
+}
+
+func TestUnassignPullPreservesOtherAssignees(t *testing.T) {
+	var patched []string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/43" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"number":43,"assignees":[{"login":"me"},{"login":"alice"}]}`)
+		case http.MethodPatch:
+			body := decodeMutationBody(t, r)
+			raw, ok := body["assignees"].([]any)
+			if !ok {
+				t.Fatalf("assignees body = %#v", body)
+			}
+			patched = patched[:0]
+			for _, v := range raw {
+				patched = append(patched, v.(string))
+			}
+			fmt.Fprint(w, `{"number":43}`)
+		default:
+			t.Fatalf("method = %s", r.Method)
+		}
+	})
+
+	if err := c.UnassignPullFromMe("acme", "widgets", 43); err != nil {
+		t.Fatalf("UnassignPullFromMe: %v", err)
+	}
+	if len(patched) != 1 || patched[0] != "alice" {
+		t.Fatalf("unassign patch = %#v, want alice only", patched)
+	}
+}
+
 func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

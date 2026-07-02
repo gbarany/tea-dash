@@ -27,6 +27,10 @@ type Client interface {
 	AddComment(owner, repo string, index int64, body string) (data.Comment, error)
 	SetIssueState(owner, repo string, index int64, state data.ItemState) error
 	SetPullState(owner, repo string, index int64, state data.ItemState) error
+	AssignPullToMe(owner, repo string, index int64) error
+	UnassignPullFromMe(owner, repo string, index int64) error
+	AssignIssueToMe(owner, repo string, index int64) error
+	UnassignIssueFromMe(owner, repo string, index int64) error
 	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error)
 	SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error)
 	GetPullDiff(owner, repo string, index int64) ([]byte, error)
@@ -199,6 +203,18 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		}
 		return fmt.Sprintf("Reopened %s#%d.", intent.Target.Repo, index), nil
 
+	case uiactions.KindAssign:
+		if err := r.setAssignment(owner, repo, index, intent.Target.RowKind, true); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Assigned %s#%d to you.", intent.Target.Repo, index), nil
+
+	case uiactions.KindUnassign:
+		if err := r.setAssignment(owner, repo, index, intent.Target.RowKind, false); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Unassigned you from %s#%d.", intent.Target.Repo, index), nil
+
 	case uiactions.KindMerge:
 		style, err := mergeStyle(intent.Prompt.Value)
 		if err != nil {
@@ -344,6 +360,23 @@ func (r Runner) setState(owner, repo string, index int64, kind uiactions.RowKind
 	}
 }
 
+func (r Runner) setAssignment(owner, repo string, index int64, kind uiactions.RowKind, assign bool) error {
+	switch kind {
+	case uiactions.RowKindPullRequest:
+		if assign {
+			return r.client.AssignPullToMe(owner, repo, index)
+		}
+		return r.client.UnassignPullFromMe(owner, repo, index)
+	case uiactions.RowKindIssue:
+		if assign {
+			return r.client.AssignIssueToMe(owner, repo, index)
+		}
+		return r.client.UnassignIssueFromMe(owner, repo, index)
+	default:
+		return fmt.Errorf("assign is only available for pull requests and issues")
+	}
+}
+
 func splitRepo(repoName string) (string, string, error) {
 	owner, repo, ok := data.SplitOwnerRepo(repoName)
 	if !ok {
@@ -386,6 +419,10 @@ func actionLabel(kind uiactions.Kind) string {
 	switch kind {
 	case uiactions.KindComment:
 		return "comment"
+	case uiactions.KindAssign:
+		return "assign"
+	case uiactions.KindUnassign:
+		return "unassign"
 	case uiactions.KindMerge:
 		return "merge"
 	case uiactions.KindClose:

@@ -86,6 +86,7 @@ tea-dash --help
 | `o` / `enter`   | open in browser         |
 | `y` / `Y`       | copy row number / URL   |
 | `c`             | add comment             |
+| `a` / `A`       | assign / unassign yourself |
 | `m`             | merge PR                |
 | `m` / `u` / `M` | mark notification read / unread / all read |
 | `x` / `X`       | close / reopen          |
@@ -179,10 +180,18 @@ keybindings:
   prs:
     - key: O
       builtin: checkout
+    - key: a
+      builtin: assign
+    - key: A
+      builtin: unassign
     - key: g
       name: lazygit
       command: cd {{.RepoPath}} && lazygit
   issues:
+    - key: a
+      builtin: assign
+    - key: A
+      builtin: unassign
     - key: i
       command: echo issue {{.IssueNumber}} in {{.RepoName}}
   notifications:

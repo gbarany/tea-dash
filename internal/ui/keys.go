@@ -24,6 +24,8 @@ type keyMap struct {
 	ScrollDown    key.Binding
 	Expand        key.Binding
 	Comment       key.Binding
+	Assign        key.Binding
+	Unassign      key.Binding
 	Merge         key.Binding
 	Close         key.Binding
 	Reopen        key.Binding
@@ -93,6 +95,14 @@ func defaultKeyMap() keyMap {
 		Comment: key.NewBinding(
 			key.WithKeys("c"),
 			key.WithHelp("c", "comment"),
+		),
+		Assign: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "assign"),
+		),
+		Unassign: key.NewBinding(
+			key.WithKeys("A"),
+			key.WithHelp("A", "unassign"),
 		),
 		Merge: key.NewBinding(
 			key.WithKeys("m"),
@@ -197,6 +207,10 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Expand = binding(keyName, "expand")
 	case "comment":
 		k.Comment = binding(keyName, "comment")
+	case "assign":
+		k.Assign = binding(keyName, "assign")
+	case "unassign":
+		k.Unassign = binding(keyName, "unassign")
 	case "merge":
 		k.Merge = binding(keyName, "merge")
 	case "close":

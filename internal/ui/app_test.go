@@ -1259,6 +1259,8 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 				Label: "Squash",
 			},
 		},
+		{name: "assign", key: tea.KeyPressMsg{Code: 'a', Text: "a"}, kind: actions.KindAssign},
+		{name: "unassign", key: tea.KeyPressMsg{Code: 'A', Text: "A"}, kind: actions.KindUnassign},
 		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
 		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
