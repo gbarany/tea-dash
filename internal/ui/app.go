@@ -118,6 +118,12 @@ type Options struct {
 	SmartFiltering bool
 }
 
+type watchChecksMsg struct {
+	row    data.PullRequest
+	detail data.PullDetail
+	err    error
+}
+
 // New builds the root model. client may be nil in tests (only FetchRows uses it).
 func New(cfg *config.Config, client *gitea.Client) Model {
 	return NewWithOptions(cfg, client, Options{SmartFiltering: cfg.SmartFilteringEnabled()})
@@ -405,6 +411,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case autoRefreshMsg:
 		return m.handleAutoRefresh()
 
+	case watchChecksMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("Couldn't load PR checks: %v", msg.err)
+			return m, nil
+		}
+		return m.switchToPullChecks(msg.row, msg.detail.HeadRef, msg.detail.HeadSHA)
+
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
 
@@ -466,6 +479,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindUpdateBranch)
 		case !m.scopedBuiltinOverridden("ready") && key.Matches(msg, m.keys.MarkReady):
 			return m, m.startAction(actions.KindMarkReady)
+		case !m.scopedBuiltinOverridden("watch") && !m.scopedBuiltinOverridden("watchChecks") &&
+			!m.scopedBuiltinOverridden("checks") && key.Matches(msg, m.keys.WatchChecks):
+			return m.watchSelectedPullChecks()
 		case !m.scopedBuiltinOverridden("close") && key.Matches(msg, m.keys.Close):
 			return m, m.startAction(actions.KindClose)
 		case !m.scopedBuiltinOverridden("reopen") && key.Matches(msg, m.keys.Reopen):
@@ -631,7 +647,7 @@ func (m Model) helpLine() string {
 		case context.IssuesView:
 			text += " · c comment · a/A assign/unassign · L/U labels · M milestone · x/X close/reopen"
 		default:
-			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
+			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · w checks · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
 		return text + " · q quit"
 	}
@@ -652,7 +668,7 @@ func (m Model) helpLine() string {
 	case context.IssuesView:
 		text += " · c comment · a/A assign · L/U labels · M milestone · x/X close/reopen"
 	default:
-		text += " · c comment · a/A assign · L/U labels · m merge · u update · W ready · d/ctrl+t diff · C/space checkout"
+		text += " · c comment · a/A assign · L/U labels · m merge · u update · W ready · w checks · d/ctrl+t diff · C/space checkout"
 	}
 	return text + fmt.Sprintf(" · %s help · %s quit", keyHelp(m.keys.Help, "?"), keyHelp(m.keys.Quit, "q"))
 }
@@ -716,6 +732,7 @@ func (m Model) actionButtons() []actionButton {
 		}
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
+			actionButton{Label: "Checks", Builtin: "watchChecks"},
 			actionButton{Label: "Diff", Builtin: "diff"},
 			actionButton{Label: "Checkout", Builtin: "checkout"},
 		)
@@ -1040,6 +1057,79 @@ func (m *Model) clearPreviewCacheForAction(target actions.Target) {
 		delete(m.actionDetails, key)
 		delete(m.actionEnrichErr, key)
 	}
+}
+
+func (m Model) watchSelectedPullChecks() (Model, tea.Cmd) {
+	row, ok := m.getCurrRowData().(data.PullRequest)
+	if !ok {
+		m.notice = "Select a pull request to watch checks."
+		return m, nil
+	}
+	branch, sha := pullCheckHead(row, m.pullDetails[m.selKey()])
+	if branch != "" || sha != "" {
+		return m.switchToPullChecks(row, branch, sha)
+	}
+	if m.ctx.Client == nil {
+		return m.switchToPullChecks(row, "", "")
+	}
+	owner, repo, ok := data.SplitOwnerRepo(row.RepoNameWithOwner)
+	if !ok {
+		m.notice = fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner)
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		detail, err := m.ctx.Client.GetPullDetail(owner, repo, row.Number)
+		return watchChecksMsg{row: row, detail: detail, err: err}
+	}
+}
+
+func pullCheckHead(row data.PullRequest, detail *data.PullDetail) (branch, sha string) {
+	branch = row.HeadRef
+	sha = row.HeadSHA
+	if detail != nil {
+		if branch == "" {
+			branch = detail.HeadRef
+		}
+		if sha == "" {
+			sha = detail.HeadSHA
+		}
+	}
+	return branch, sha
+}
+
+func (m Model) switchToPullChecks(row data.PullRequest, branch, sha string) (Model, tea.Cmd) {
+	if _, _, ok := data.SplitOwnerRepo(row.RepoNameWithOwner); !ok {
+		m.notice = fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner)
+		return m, nil
+	}
+	m.ctx.View = context.ActionsView
+	m.currSectionId = 0
+	m.syncMainContentDimensions()
+	cfg := config.SectionConfig{
+		Title: fmt.Sprintf("Checks for #%d", row.Number),
+		Repo:  row.RepoNameWithOwner,
+		Filter: config.PrIssueFilter{
+			Branch:  branch,
+			HeadSHA: sha,
+		},
+	}
+	m.actionDetails = map[string]*data.ActionRunDetail{}
+	m.actionEnrichErr = map[string]error{}
+	m.setCurrentViewSections([]section.Section{actionsection.NewModel(0, m.ctx, cfg)})
+	m.tabs.SetCurrSectionId(0)
+	m.syncProgramContext()
+	if branch == "" && sha == "" {
+		m.notice = fmt.Sprintf("Showing Actions for %s; PR head was not available to narrow checks.", row.RepoNameWithOwner)
+	} else {
+		m.notice = fmt.Sprintf("Watching checks for %s#%d.", row.RepoNameWithOwner, row.Number)
+	}
+	if m.ctx.PreviewOpen {
+		m.syncSidebar()
+	}
+	if s := m.getCurrSection(); s != nil {
+		return m, s.FetchRows()
+	}
+	return m, nil
 }
 
 // switchView cycles pulls -> issues -> notifications -> actions -> branches, lazily
@@ -1495,6 +1585,9 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindMarkReady), true
 	case "draft", "markdraft":
 		return m, m.startAction(actions.KindMarkDraft), true
+	case "watch", "watchchecks", "checks":
+		next, cmd := m.watchSelectedPullChecks()
+		return next, cmd, true
 	case "close":
 		return m, m.startAction(actions.KindClose), true
 	case "reopen":

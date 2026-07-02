@@ -94,6 +94,7 @@ tea-dash --help
 | `m`             | merge PR                |
 | `u`             | update PR branch from its base branch |
 | `W`             | mark draft PR ready for review |
+| `w`             | show/watch PR checks in the Actions view |
 | `m` / `u` / `M` | mark notification read / unread / all read |
 | `b` / `B`       | pin / unpin notification |
 | `x` / `X`       | close / reopen          |
@@ -222,6 +223,8 @@ keybindings:
       builtin: update
     - key: W
       builtin: ready
+    - key: w
+      builtin: watchChecks
     - key: g
       name: lazygit
       command: cd {{.RepoPath}} && lazygit

@@ -20,7 +20,7 @@ const searchJSON = `[
    "labels":[{"name":"bug","color":"ff0000"}],
    "created_at":"2026-06-01T00:00:00Z","updated_at":"2026-06-02T00:00:00Z",
    "repository":{"full_name":"acme/widgets"},
-   "pull_request":{"merged":false}}
+   "pull_request":{"merged":false,"head":{"ref":"feature/checks","sha":"abc123"}}}
 ]`
 
 const issueJSON = `[
@@ -130,6 +130,9 @@ func TestSearchPulls(t *testing.T) {
 	pr := prs[0]
 	if pr.Number != 7 || pr.RepoNameWithOwner != "acme/widgets" || pr.Author != "me" {
 		t.Fatalf("mapped PR = %+v", pr)
+	}
+	if pr.HeadRef != "feature/checks" || pr.HeadSHA != "abc123" {
+		t.Fatalf("mapped PR head = %q/%q, want feature/checks/abc123", pr.HeadRef, pr.HeadSHA)
 	}
 
 	// The me-scope MUST be the boolean `created=true` on the search endpoint,
