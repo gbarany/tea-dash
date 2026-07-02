@@ -1306,6 +1306,7 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 				Number:      42,
 				Title:       "Action row",
 				URL:         "https://example.test/gbarany/tea-dash/pulls/42",
+				Author:      "me",
 			}
 			if got[0].Kind != tt.kind || got[0].Target != wantTarget {
 				t.Fatalf("intent = %+v, want kind %q target %+v", got[0], tt.kind, wantTarget)
@@ -1491,6 +1492,117 @@ func TestHelpKeyTogglesFullHelp(t *testing.T) {
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	if strings.Contains(m.View().Content, "R refresh all") {
 		t.Fatal("second '?' should hide full help")
+	}
+}
+
+func TestConfigKeybindingRebindsBuiltin(t *testing.T) {
+	m := New(&config.Config{
+		Keybindings: config.Keybindings{
+			Universal: []config.Keybinding{{Key: "H", Builtin: "help"}},
+		},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("default '?' help key should be replaced by the configured binding")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'H', Text: "H"})
+	if !strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("configured 'H' key should toggle full help")
+	}
+}
+
+func TestConfigCustomKeybindingDispatchesSelectedRowCommand(t *testing.T) {
+	cfg := &config.Config{
+		RepoPaths: map[string]string{"gbarany/tea-dash": "/src/tea-dash"},
+		Keybindings: config.Keybindings{
+			PRs: []config.Keybinding{{
+				Key:     "g",
+				Name:    "lazygit",
+				Command: "cd {{.RepoPath}} && echo {{.PrNumber}}",
+			}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 12, Title: "Custom command row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open", HTMLURL: "https://git.example/gbarany/tea-dash/pulls/12",
+	}}))
+
+	var got actions.Intent
+	m.SetActionDispatcher(func(intent actions.Intent) tea.Cmd {
+		got = intent
+		return func() tea.Msg {
+			return actions.ResultMsg{Intent: intent, Status: actions.ResultSucceeded, Message: "ran"}
+		}
+	})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("custom keybinding should dispatch a command")
+	}
+	if got.Kind != actions.KindCustomCommand || got.Command != "cd {{.RepoPath}} && echo {{.PrNumber}}" {
+		t.Fatalf("custom intent = %+v", got)
+	}
+	if got.Target.Number != 12 || got.Target.RepositoryPath != "/src/tea-dash" {
+		t.Fatalf("custom target = %+v", got.Target)
+	}
+}
+
+func TestScopedBuiltinKeybindingRunsInActiveView(t *testing.T) {
+	cfg := &config.Config{
+		Defaults: config.Defaults{View: "issues"},
+		Keybindings: config.Keybindings{
+			Issues: []config.Keybinding{{Key: "m", Builtin: "close"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 5, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	var got actions.Intent
+	m.SetActionDispatcher(func(intent actions.Intent) tea.Cmd {
+		got = intent
+		return nil
+	})
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	m = next.(Model)
+	if !m.actionPrompt.Active() {
+		t.Fatal("scoped issue close binding should open the confirm prompt")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got.Kind != actions.KindClose {
+		t.Fatalf("scoped issue builtin dispatched %+v, want close", got)
+	}
+}
+
+func TestScopedBuiltinKeybindingDoesNotLeakToOtherViews(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			Issues: []config.Keybinding{{Key: "m", Builtin: "close"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 8, Title: "PR row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Merge") {
+		t.Fatalf("PR view 'm' should keep the default merge prompt, got:\n%s", m.actionPrompt.View(120))
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Close") {
+		t.Fatalf("PR view 'x' should keep the default close prompt, got:\n%s", m.actionPrompt.View(120))
 	}
 }
 

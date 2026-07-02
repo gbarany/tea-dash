@@ -113,6 +113,8 @@ instance:
   # token:        ""                                   # a literal token (not recommended in plaintext)
   # tokenCommand: op read "op://Private/tea-dash/credential"   # e.g. 1Password, pass, gopass
   # tokenEnv:     TEA_DASH_TOKEN                        # name of an env var holding the token
+  # Example for 1Password:
+  # tokenCommand: op read "op://Appic/tea-dash PAT/credential"
 
 defaults:
   view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
@@ -167,6 +169,31 @@ notificationsSections:
 
 branchSections:
   - title: Local Branches
+
+keybindings:
+  universal:
+    - key: tab
+      builtin: nextSection
+    - key: H
+      builtin: help
+  prs:
+    - key: O
+      builtin: checkout
+    - key: g
+      name: lazygit
+      command: cd {{.RepoPath}} && lazygit
+  issues:
+    - key: i
+      command: echo issue {{.IssueNumber}} in {{.RepoName}}
+  notifications:
+    - key: D
+      builtin: markAllRead
+  actions:
+    - key: a
+      command: echo run {{.RunID}} in {{.RepoName}}
+  branches:
+    - key: B
+      command: git -C {{.RepoPath}} status
 ```
 
 `filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
@@ -174,6 +201,12 @@ branchSections:
 `sort`. PR and issue sections fetch one page at a time; reaching the loaded
 bottom automatically requests the next page until the server total is loaded.
 The page size follows section `limit` -> per-view default -> 50.
+
+`keybindings` follows gh-dash's shape: each entry has a `key`, optional `name`,
+and exactly one of `builtin` or `command`. Built-ins remap implemented tea-dash
+actions; commands run through your shell with row template fields such as
+`RepoName`, `RepoPath`, `PrIndex`/`PrNumber`, `IssueIndex`/`IssueNumber`,
+`RunID`, `Title`, `Author`, `Sha`, `InstanceURL`, and `Url`/`URL`.
 
 > **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
 > `reviewRequested`) support the sentinel `"@me"` only — a plain login is

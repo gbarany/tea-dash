@@ -3,9 +3,12 @@
 package actionrunner
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
+	"text/template"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -37,6 +40,10 @@ type CheckoutFunc func(context.Context, localgit.CheckoutOptions) (localgit.Chec
 // BranchSwitchFunc runs or fakes a local branch switch.
 type BranchSwitchFunc func(context.Context, localgit.SwitchBranchOptions) (localgit.SwitchBranchResult, error)
 
+// ExecProcessFunc wraps Bubble Tea's ExecProcess for interactive shell
+// commands. Tests replace it to avoid running a real process.
+type ExecProcessFunc func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+
 // Options configures a Runner.
 type Options struct {
 	Client       Client
@@ -47,6 +54,7 @@ type Options struct {
 	GitRunner    localgit.Runner
 	Checkout     CheckoutFunc
 	BranchSwitch BranchSwitchFunc
+	ExecProcess  ExecProcessFunc
 }
 
 // Runner executes actions and returns ResultMsg values for the UI.
@@ -59,6 +67,7 @@ type Runner struct {
 	gitRunner    localgit.Runner
 	checkout     CheckoutFunc
 	branchSwitch BranchSwitchFunc
+	execProcess  ExecProcessFunc
 }
 
 // New constructs a Runner with production defaults for omitted runners.
@@ -79,6 +88,10 @@ func New(opts Options) Runner {
 	if branchSwitch == nil {
 		branchSwitch = localgit.SwitchBranch
 	}
+	execProcess := opts.ExecProcess
+	if execProcess == nil {
+		execProcess = tea.ExecProcess
+	}
 	return Runner{
 		client:       opts.Client,
 		cfg:          cfg,
@@ -88,12 +101,16 @@ func New(opts Options) Runner {
 		gitRunner:    opts.GitRunner,
 		checkout:     checkout,
 		branchSwitch: branchSwitch,
+		execProcess:  execProcess,
 	}
 }
 
 // Dispatch returns a Bubble Tea command that executes intent off the update
 // path and reports the result back as actions.ResultMsg.
 func (r Runner) Dispatch(intent uiactions.Intent) tea.Cmd {
+	if intent.Kind == uiactions.KindCustomCommand {
+		return r.dispatchCustomCommand(intent)
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 		defer cancel()
@@ -103,6 +120,38 @@ func (r Runner) Dispatch(intent uiactions.Intent) tea.Cmd {
 			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: err}
 		}
 		return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultSucceeded, Message: message}
+	}
+}
+
+func (r Runner) dispatchCustomCommand(intent uiactions.Intent) tea.Cmd {
+	command := strings.TrimSpace(intent.Command)
+	if command == "" {
+		return actionResult(intent, uiactions.ResultErrored, "", fmt.Errorf("custom command is empty"))
+	}
+	rendered, err := r.renderCustomCommand(command, intent.Target)
+	if err != nil {
+		return actionResult(intent, uiactions.ResultErrored, "", err)
+	}
+	dir := intent.Target.RepositoryPath
+	if dir == "" {
+		dir = r.cwd
+	}
+	cmd := shell.BuildExecCommand(rendered, nil, dir)
+	name := strings.TrimSpace(intent.Name)
+	if name == "" {
+		name = "custom command"
+	}
+	return r.execProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: fmt.Errorf("run custom command %q: %w", command, err)}
+		}
+		return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultSucceeded, Message: fmt.Sprintf("Ran %s for %s.", name, intent.Target.Title)}
+	})
+}
+
+func actionResult(intent uiactions.Intent, status uiactions.ResultStatus, message string, err error) tea.Cmd {
+	return func() tea.Msg {
+		return uiactions.ResultMsg{Intent: intent, Status: status, Message: message, Err: err}
 	}
 }
 
@@ -223,6 +272,58 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 	default:
 		return "", fmt.Errorf("unsupported action %q", intent.Kind)
 	}
+}
+
+type customCommandContext struct {
+	RepoName    string
+	RepoPath    string
+	Number      int64
+	PrIndex     int64
+	PrNumber    int64
+	IssueIndex  int64
+	IssueNumber int64
+	RunID       int64
+	Title       string
+	IssueTitle  string
+	BranchName  string
+	Author      string
+	Sha         string
+	SHA         string
+	InstanceURL string
+	URL         string
+	Url         string
+}
+
+func (r Runner) renderCustomCommand(command string, target uiactions.Target) (string, error) {
+	tmpl, err := template.New("custom-command").Option("missingkey=error").Parse(command)
+	if err != nil {
+		return "", fmt.Errorf("parse custom command template: %w", err)
+	}
+	url := target.URL
+	ctx := customCommandContext{
+		RepoName:    target.Repo,
+		RepoPath:    target.RepositoryPath,
+		Number:      target.Number,
+		PrIndex:     target.Number,
+		PrNumber:    target.Number,
+		IssueIndex:  target.Number,
+		IssueNumber: target.Number,
+		RunID:       targetRunID(target),
+		Title:       target.Title,
+		IssueTitle:  target.Title,
+		BranchName:  target.Title,
+		Author:      target.Author,
+		Sha:         target.SHA,
+		SHA:         target.SHA,
+		InstanceURL: r.instanceURL,
+		URL:         url,
+		Url:         url,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctx); err != nil {
+		return "", fmt.Errorf("render custom command template: %w", err)
+	}
+	return buf.String(), nil
 }
 
 func targetRunID(target uiactions.Target) int64 {

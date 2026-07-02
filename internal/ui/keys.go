@@ -1,6 +1,12 @@
 package ui
 
-import "charm.land/bubbles/v2/key"
+import (
+	"strings"
+
+	"charm.land/bubbles/v2/key"
+
+	"github.com/gbarany/tea-dash/internal/config"
+)
 
 // keyMap defines the app-level key bindings. Row navigation (↑/↓, j/k, page
 // keys) is handled by the underlying table widget.
@@ -145,4 +151,90 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("M", "mark all read"),
 		),
 	}
+}
+
+func (k *keyMap) applyConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	for _, b := range cfg.Keybindings.Universal {
+		if strings.TrimSpace(b.Builtin) == "" {
+			continue
+		}
+		k.rebindBuiltin(b.Builtin, b.Key)
+	}
+}
+
+func (k *keyMap) rebindBuiltin(name, keyName string) {
+	keyName = strings.TrimSpace(keyName)
+	if keyName == "" {
+		return
+	}
+	switch normalizeBuiltin(name) {
+	case "refresh":
+		k.Refresh = binding(keyName, "refresh")
+	case "refreshall":
+		k.RefreshAll = binding(keyName, "refresh all")
+	case "opengithub", "open", "openbrowser":
+		k.Open = binding(keyName, "open in browser")
+	case "quit":
+		k.Quit = binding(keyName, "quit")
+	case "nextsection":
+		k.NextSection = binding(keyName, "next section")
+	case "prevsection", "previoussection":
+		k.PrevSection = binding(keyName, "prev section")
+	case "viewissues", "viewprs", "switchview":
+		k.SwitchView = binding(keyName, "switch view")
+	case "search":
+		k.Search = binding(keyName, "search")
+	case "togglepreview":
+		k.TogglePreview = binding(keyName, "preview")
+	case "pageup", "scrollup":
+		k.ScrollUp = binding(keyName, "scroll preview up")
+	case "pagedown", "scrolldown":
+		k.ScrollDown = binding(keyName, "scroll preview down")
+	case "summaryviewmore", "expand":
+		k.Expand = binding(keyName, "expand")
+	case "comment":
+		k.Comment = binding(keyName, "comment")
+	case "merge":
+		k.Merge = binding(keyName, "merge")
+	case "close":
+		k.Close = binding(keyName, "close")
+	case "reopen":
+		k.Reopen = binding(keyName, "reopen")
+	case "approve", "review":
+		k.Review = binding(keyName, "review")
+	case "diff":
+		k.ExternalDiff = binding(keyName, "external diff")
+	case "checkout":
+		k.Checkout = binding(keyName, "checkout")
+	case "rerun", "rerunrun":
+		k.RerunRun = binding(keyName, "rerun")
+	case "cancel", "cancelrun":
+		k.CancelRun = binding(keyName, "cancel run")
+	case "copyurl":
+		k.CopyURL = binding(keyName, "copy URL")
+	case "copynumber":
+		k.CopyNumber = binding(keyName, "copy number")
+	case "help":
+		k.Help = binding(keyName, "help")
+	case "markasread", "markread":
+		k.MarkRead = binding(keyName, "mark read")
+	case "markasunread", "markunread":
+		k.MarkUnread = binding(keyName, "mark unread")
+	case "markallasread", "markallread":
+		k.MarkAllRead = binding(keyName, "mark all read")
+	}
+}
+
+func binding(keyName, help string) key.Binding {
+	return key.NewBinding(key.WithKeys(keyName), key.WithHelp(keyName, help))
+}
+
+func normalizeBuiltin(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "-", "")
+	name = strings.ReplaceAll(name, "_", "")
+	return strings.ToLower(name)
 }

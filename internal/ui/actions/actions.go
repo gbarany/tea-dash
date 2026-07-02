@@ -6,16 +6,17 @@ package actions
 type Kind string
 
 const (
-	KindComment      Kind = "comment"
-	KindMerge        Kind = "merge"
-	KindClose        Kind = "close"
-	KindReopen       Kind = "reopen"
-	KindReview       Kind = "review"
-	KindExternalDiff Kind = "external_diff"
-	KindCheckout     Kind = "checkout"
-	KindSwitchBranch Kind = "switch_branch"
-	KindRerunRun     Kind = "rerun_run"
-	KindCancelRun    Kind = "cancel_run"
+	KindComment       Kind = "comment"
+	KindMerge         Kind = "merge"
+	KindClose         Kind = "close"
+	KindReopen        Kind = "reopen"
+	KindReview        Kind = "review"
+	KindExternalDiff  Kind = "external_diff"
+	KindCheckout      Kind = "checkout"
+	KindSwitchBranch  Kind = "switch_branch"
+	KindRerunRun      Kind = "rerun_run"
+	KindCancelRun     Kind = "cancel_run"
+	KindCustomCommand Kind = "custom_command"
 )
 
 // RowKind identifies the selected row's domain type.
@@ -48,6 +49,8 @@ type Target struct {
 	RunID          int64
 	Title          string
 	URL            string
+	Author         string
+	SHA            string
 }
 
 // Prompt carries the prompt payload that was submitted with the intent.
@@ -59,9 +62,11 @@ type Prompt struct {
 
 // Intent is the value passed through the app-level dispatcher seam.
 type Intent struct {
-	Kind   Kind
-	Target Target
-	Prompt Prompt
+	Kind    Kind
+	Target  Target
+	Prompt  Prompt
+	Command string
+	Name    string
 }
 
 // ResultStatus describes feedback returned by a dispatcher command.

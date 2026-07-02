@@ -135,9 +135,11 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 		return nil
 	}
 
+	keys := defaultKeyMap()
+	keys.applyConfig(cfg)
 	m := Model{
 		ctx:             ctx,
-		keys:            defaultKeyMap(),
+		keys:            keys,
 		tabs:            tabs.New(ctx),
 		sidebar:         sidebar.New(ctx),
 		tasks:           tasks,
@@ -182,6 +184,58 @@ func buildSections(view context.ViewType, ctx *context.ProgramContext) []section
 		}
 	}
 	return sections
+}
+
+func (m Model) matchCustomKeybinding(msg tea.KeyPressMsg) (config.Keybinding, bool) {
+	if m.ctx == nil || m.ctx.Config == nil {
+		return config.Keybinding{}, false
+	}
+	for _, b := range m.activeKeybindings() {
+		if b.Command == "" {
+			continue
+		}
+		if key.Matches(msg, key.NewBinding(key.WithKeys(b.Key))) {
+			return b, true
+		}
+	}
+	return config.Keybinding{}, false
+}
+
+func (m Model) matchBuiltinKeybinding(msg tea.KeyPressMsg) (config.Keybinding, bool) {
+	if m.ctx == nil || m.ctx.Config == nil {
+		return config.Keybinding{}, false
+	}
+	for _, b := range m.activeKeybindings() {
+		if b.Builtin == "" {
+			continue
+		}
+		if key.Matches(msg, key.NewBinding(key.WithKeys(b.Key))) {
+			return b, true
+		}
+	}
+	return config.Keybinding{}, false
+}
+
+func (m Model) activeKeybindings() []config.Keybinding {
+	if m.ctx == nil || m.ctx.Config == nil {
+		return nil
+	}
+	k := m.ctx.Config.Keybindings
+	out := make([]config.Keybinding, 0, len(k.Universal)+4)
+	out = append(out, k.Universal...)
+	switch m.ctx.View {
+	case context.IssuesView:
+		out = append(out, k.Issues...)
+	case context.NotificationsView:
+		out = append(out, k.Notifications...)
+	case context.ActionsView:
+		out = append(out, k.Actions...)
+	case context.BranchesView:
+		out = append(out, k.Branches...)
+	default:
+		out = append(out, k.PRs...)
+	}
+	return out
 }
 
 // Init starts the initial fetch for every section in the current view.
@@ -297,6 +351,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		m.notice = "" // any key dismisses a transient notice
+		if b, ok := m.matchCustomKeybinding(msg); ok {
+			return m, m.startCustomCommand(b)
+		}
+		if b, ok := m.matchBuiltinKeybinding(msg); ok {
+			if next, cmd, handled := m.handleBuiltinKeybinding(b); handled {
+				return next, cmd
+			}
+		}
 		switch {
 		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkRead):
 			return m.markSelectedNotificationRead()
@@ -956,6 +1018,138 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 	return nil
 }
 
+func (m *Model) startCustomCommand(binding config.Keybinding) tea.Cmd {
+	target, ok := m.selectedActionTarget()
+	if !ok {
+		m.notice = "Select a row before running a custom command."
+		return nil
+	}
+	intent := actions.Intent{
+		Kind:    actions.KindCustomCommand,
+		Target:  target,
+		Command: binding.Command,
+		Name:    binding.Name,
+	}
+	return m.dispatchActionIntent(intent)
+}
+
+func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cmd, bool) {
+	switch normalizeBuiltin(binding.Builtin) {
+	case "refresh":
+		if s := m.getCurrSection(); s != nil && !s.GetIsLoading() {
+			if m.ctx.PreviewOpen {
+				m.clearSelectedPreviewCache()
+				m.syncSidebar()
+			}
+			return m, s.FetchRows(), true
+		}
+		return m, nil, true
+	case "refreshall":
+		return m, m.refreshAllSections(), true
+	case "opengithub", "open", "openbrowser":
+		return m, m.openSelected(), true
+	case "quit":
+		return m, tea.Quit, true
+	case "nextsection":
+		if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
+			m.currSectionId++
+		}
+		m.tabs.SetCurrSectionId(m.currSectionId)
+		if m.ctx.PreviewOpen {
+			m.syncSidebar()
+			return m, m.enrichCurrRow(), true
+		}
+		return m, nil, true
+	case "prevsection", "previoussection":
+		if m.currSectionId > 0 {
+			m.currSectionId--
+		}
+		m.tabs.SetCurrSectionId(m.currSectionId)
+		if m.ctx.PreviewOpen {
+			m.syncSidebar()
+			return m, m.enrichCurrRow(), true
+		}
+		return m, nil, true
+	case "viewissues", "viewprs", "switchview":
+		return m, m.switchView(), true
+	case "search":
+		if s := m.getCurrSection(); s != nil {
+			return m, s.SetIsSearching(true), true
+		}
+		return m, nil, true
+	case "togglepreview":
+		m.ctx.PreviewOpen = !m.ctx.PreviewOpen
+		m.syncMainContentDimensions()
+		m.syncProgramContext()
+		if m.ctx.PreviewOpen {
+			m.expanded = false
+			m.syncSidebar()
+			return m, m.enrichCurrRow(), true
+		}
+		return m, nil, true
+	case "summaryviewmore", "expand":
+		if m.ctx.PreviewOpen {
+			m.expanded = !m.expanded
+			m.syncSidebar()
+		}
+		return m, nil, true
+	case "pageup", "scrollup":
+		if m.ctx.PreviewOpen {
+			var cmd tea.Cmd
+			m.sidebar, cmd = m.sidebar.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+			return m, cmd, true
+		}
+		return m, nil, true
+	case "pagedown", "scrolldown":
+		if m.ctx.PreviewOpen {
+			var cmd tea.Cmd
+			m.sidebar, cmd = m.sidebar.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+			return m, cmd, true
+		}
+		return m, nil, true
+	case "copyurl":
+		return m, m.copySelectedURL(), true
+	case "copynumber":
+		return m, m.copySelectedNumber(), true
+	case "help":
+		m.showHelp = !m.showHelp
+		return m, nil, true
+	case "markasread", "markread", "markasdone", "markdone":
+		next, cmd := m.markSelectedNotificationRead()
+		return next, cmd, true
+	case "markasunread", "markunread":
+		next, cmd := m.markSelectedNotificationUnread()
+		return next, cmd, true
+	case "markallasread", "markallread", "markallasdone", "markalldone":
+		next, cmd := m.markAllNotificationsRead()
+		return next, cmd, true
+	case "comment":
+		return m, m.startAction(actions.KindComment), true
+	case "merge":
+		return m, m.startAction(actions.KindMerge), true
+	case "close":
+		return m, m.startAction(actions.KindClose), true
+	case "reopen":
+		return m, m.startAction(actions.KindReopen), true
+	case "approve", "review":
+		return m, m.startAction(actions.KindReview), true
+	case "diff":
+		return m, m.startAction(actions.KindExternalDiff), true
+	case "checkout":
+		if m.ctx.View == context.BranchesView {
+			return m, m.startAction(actions.KindSwitchBranch), true
+		}
+		return m, m.startAction(actions.KindCheckout), true
+	case "rerun", "rerunrun":
+		return m, m.startAction(actions.KindRerunRun), true
+	case "cancel", "cancelrun":
+		return m, m.startAction(actions.KindCancelRun), true
+	default:
+		m.notice = fmt.Sprintf("Unknown builtin keybinding %q.", binding.Builtin)
+		return m, nil, true
+	}
+}
+
 func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	var result actionprompt.Result
 	var cmd tea.Cmd
@@ -1003,16 +1197,22 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 	}
 	rowKind := actions.RowKind(s.GetType())
 	runID := int64(0)
+	author := ""
+	sha := ""
 	switch r := row.(type) {
 	case data.PullRequest:
 		rowKind = actions.RowKindPullRequest
+		author = r.Author
 	case data.Issue:
 		rowKind = actions.RowKindIssue
+		author = r.Author
 	case localgit.Branch:
 		rowKind = actions.RowKindBranch
 	case data.ActionRun:
 		rowKind = actions.RowKindActionRun
 		runID = r.ID
+		author = r.Actor
+		sha = r.HeadSHA
 	}
 	target := actions.Target{
 		SectionID:   s.GetId(),
@@ -1023,9 +1223,15 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 		RunID:       runID,
 		Title:       row.GetTitle(),
 		URL:         row.GetURL(),
+		Author:      author,
+		SHA:         sha,
 	}
 	if branch, ok := row.(localgit.Branch); ok {
 		target.RepositoryPath = branch.RepositoryPath
+	} else if m.ctx.Config != nil {
+		if repoPath, ok, err := config.MatchRepoPath(row.GetRepoNameWithOwner(), m.ctx.Config.RepoPaths); err == nil && ok {
+			target.RepositoryPath = repoPath
+		}
 	}
 	return target, true
 }
@@ -1140,12 +1346,21 @@ func actionLabel(kind actions.Kind) string {
 		return "Rerun"
 	case actions.KindCancelRun:
 		return "Cancel run"
+	case actions.KindCustomCommand:
+		return "Custom command"
 	default:
 		return string(kind)
 	}
 }
 
 func actionStartText(intent actions.Intent) string {
+	if intent.Kind == actions.KindCustomCommand {
+		label := intent.Name
+		if label == "" {
+			label = "custom command"
+		}
+		return fmt.Sprintf("Starting %s for %s.", label, intent.Target.Title)
+	}
 	if intent.Kind == actions.KindSwitchBranch {
 		return fmt.Sprintf("Starting %s for %s.", actionLabel(intent.Kind), intent.Target.Title)
 	}
