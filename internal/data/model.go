@@ -48,6 +48,23 @@ type Issue struct {
 	Labels            []Label
 }
 
+// Notification is the domain view of a Gitea notification thread. Notifications
+// can point at issues, pulls, commits, or repositories; Number is populated for
+// issue/pull subjects when the API URL exposes a per-repo index.
+type Notification struct {
+	ID                int64
+	Number            int64
+	SubjectTitle      string
+	SubjectType       string // "Issue" | "Pull" | "Commit" | "Repository"
+	SubjectState      string // "open" | "closed" | "merged" when available
+	RepoNameWithOwner string // "owner/repo"
+	Unread            bool
+	Pinned            bool
+	HTMLURL           string
+	LatestCommentURL  string
+	UpdatedAt         time.Time
+}
+
 // SplitOwnerRepo splits "owner/name" into its parts. ok is false for anything
 // that is not exactly one owner and one name.
 func SplitOwnerRepo(full string) (owner, name string, ok bool) {

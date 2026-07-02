@@ -13,6 +13,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/data"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
+	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
@@ -22,8 +23,8 @@ import (
 )
 
 // Model is the root tea-dash model: a set of sections rendered as tabs. Each
-// view (pulls, issues) owns its own section slice; the inactive view's slice is
-// nil until the first switch (lazy build).
+// view (pulls, issues, notifications) owns its own section slice; inactive
+// views stay nil until first switch (lazy build).
 type Model struct {
 	ctx           *context.ProgramContext
 	keys          keyMap
@@ -33,6 +34,7 @@ type Model struct {
 	currSectionId int
 	prs           []section.Section
 	issues        []section.Section
+	notifications []section.Section
 	notice        string // transient status message (e.g. browser-open failure)
 
 	// pullDetails and issueDetails memoize fetched detail views keyed by
@@ -78,8 +80,13 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 		user = client.Me()
 	}
 	view := context.PullsView
-	if cfg != nil && cfg.Defaults.View == "issues" {
-		view = context.IssuesView
+	if cfg != nil {
+		switch cfg.Defaults.View {
+		case "issues":
+			view = context.IssuesView
+		case "notifications":
+			view = context.NotificationsView
+		}
 	}
 	ctx := &context.ProgramContext{
 		Config:      cfg,
@@ -116,9 +123,12 @@ func buildSections(view context.ViewType, ctx *context.ProgramContext) []section
 	cfgs := ctx.GetViewSectionsConfig()
 	sections := make([]section.Section, len(cfgs))
 	for i, cfg := range cfgs {
-		if view == context.IssuesView {
+		switch view {
+		case context.IssuesView:
 			sections[i] = issuesection.NewModel(i, ctx, cfg)
-		} else {
+		case context.NotificationsView:
+			sections[i] = notificationsection.NewModel(i, ctx, cfg)
+		default:
 			sections[i] = pullsection.NewModel(i, ctx, cfg)
 		}
 	}
@@ -279,8 +289,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // status line, help.
 func (m Model) View() tea.View {
 	subtitle := "  my pull requests"
-	if m.ctx.View == context.IssuesView {
+	switch m.ctx.View {
+	case context.IssuesView:
 		subtitle = "  my issues"
+	case context.NotificationsView:
+		subtitle = "  notifications"
 	}
 	title := titleStyle.Render("tea-dash") + m.ctx.Styles.DimText.Render(subtitle)
 
@@ -309,6 +322,8 @@ func (m Model) View() tea.View {
 // currentViewSections returns the section slice for the active view.
 func (m *Model) currentViewSections() []section.Section {
 	switch m.ctx.View {
+	case context.NotificationsView:
+		return m.notifications
 	case context.IssuesView:
 		return m.issues
 	default:
@@ -319,6 +334,8 @@ func (m *Model) currentViewSections() []section.Section {
 // setCurrentViewSections stores s under the active view and rewires the tab bar.
 func (m *Model) setCurrentViewSections(s []section.Section) {
 	switch m.ctx.View {
+	case context.NotificationsView:
+		m.notifications = s
 	case context.IssuesView:
 		m.issues = s
 	default:
@@ -380,6 +397,8 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 			if _, ok := m.issueDetails[key]; ok {
 				return nil
 			}
+		default:
+			return nil
 		}
 	}
 	row := m.getCurrRowData()
@@ -437,6 +456,8 @@ func (m *Model) syncSidebar() {
 			return
 		}
 		rendered = prview.RenderIssue(r, m.issueDetails[key], w, m.expanded)
+	case data.Notification:
+		rendered = prview.RenderNotification(r, w)
 	}
 	m.sidebar.SetContent(rendered)
 }
@@ -471,13 +492,16 @@ func (m *Model) clearSelectedPreviewCache() {
 	}
 }
 
-// switchView toggles between the pulls and issues views, lazily building and
+// switchView cycles pulls -> issues -> notifications, lazily building and
 // fetching the target view's sections on first visit.
 func (m *Model) switchView() tea.Cmd {
-	if m.ctx.View == context.IssuesView {
-		m.ctx.View = context.PullsView
-	} else {
+	switch m.ctx.View {
+	case context.PullsView:
 		m.ctx.View = context.IssuesView
+	case context.IssuesView:
+		m.ctx.View = context.NotificationsView
+	default:
+		m.ctx.View = context.PullsView
 	}
 	m.syncMainContentDimensions()
 	var cmds []tea.Cmd
@@ -539,6 +563,10 @@ func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {
 		if id >= 0 && id < len(m.issues) {
 			m.issues[id], cmd = m.issues[id].Update(msg)
 		}
+	case notificationsection.SectionType:
+		if id >= 0 && id < len(m.notifications) {
+			m.notifications[id], cmd = m.notifications[id].Update(msg)
+		}
 	}
 	return cmd
 }
@@ -556,6 +584,9 @@ func (m *Model) syncProgramContext() {
 		s.UpdateProgramContext(m.ctx)
 	}
 	for _, s := range m.issues {
+		s.UpdateProgramContext(m.ctx)
+	}
+	for _, s := range m.notifications {
 		s.UpdateProgramContext(m.ctx)
 	}
 	m.tabs.UpdateProgramContext(m.ctx)

@@ -16,12 +16,13 @@ import (
 // Dimensions is a width/height pair.
 type Dimensions struct{ Width, Height int }
 
-// ViewType enumerates the top-level views. M1b adds IssuesView.
+// ViewType enumerates the top-level views.
 type ViewType int
 
 const (
 	PullsView ViewType = iota
 	IssuesView
+	NotificationsView
 )
 
 // TaskState is the lifecycle of an async task.
@@ -60,7 +61,7 @@ type ProgramContext struct {
 	Config *config.Config
 	Client *gitea.Client // may be nil in tests
 	User   string        // client.Me(); "" when client is nil
-	View   ViewType      // PullsView | IssuesView
+	View   ViewType      // PullsView | IssuesView | NotificationsView
 	Error  error
 	Styles Styles
 
@@ -73,6 +74,14 @@ type ProgramContext struct {
 // default section.
 func (c *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
 	switch c.View {
+	case NotificationsView:
+		if c.Config != nil && len(c.Config.NotificationsSections) > 0 {
+			return c.Config.NotificationsSections
+		}
+		return []config.SectionConfig{{
+			Title: "Notifications",
+			Limit: 50,
+		}}
 	case IssuesView:
 		if c.Config != nil && len(c.Config.IssuesSections) > 0 {
 			return c.Config.IssuesSections

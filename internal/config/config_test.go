@@ -65,9 +65,10 @@ instance:
 func TestUnmarshalSectionsAndDefaults(t *testing.T) {
 	const y = `
 defaults:
-  view: issues
+  view: notifications
   prsLimit: 25
   issuesLimit: 40
+  notificationsLimit: 30
 prSections:
   - title: My PRs
     filter:
@@ -81,12 +82,16 @@ issuesSections:
     filter:
       state: open
       createdBy: "@me"
+notificationsSections:
+  - title: Inbox
+    limit: 15
 `
 	var c Config
 	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if c.Defaults.View != "issues" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 {
+	if c.Defaults.View != "notifications" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 ||
+		c.Defaults.NotificationsLimit != 30 {
 		t.Fatalf("defaults = %+v", c.Defaults)
 	}
 	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
@@ -96,6 +101,10 @@ issuesSections:
 	if len(c.IssuesSections) != 1 || c.IssuesSections[0].Title != "My Issues" ||
 		c.IssuesSections[0].Filter.CreatedBy != "@me" {
 		t.Fatalf("issuesSections = %+v", c.IssuesSections)
+	}
+	if len(c.NotificationsSections) != 1 || c.NotificationsSections[0].Title != "Inbox" ||
+		c.NotificationsSections[0].Limit != 15 {
+		t.Fatalf("notificationsSections = %+v", c.NotificationsSections)
 	}
 }
 
@@ -112,7 +121,7 @@ func TestConfigValidateBadView(t *testing.T) {
 	if err := (&Config{Defaults: Defaults{View: "nope"}}).Validate(); err == nil {
 		t.Fatal("Validate() should reject an unknown defaults.view")
 	}
-	for _, view := range []string{"", "prs", "issues"} {
+	for _, view := range []string{"", "prs", "issues", "notifications"} {
 		if err := (&Config{Defaults: Defaults{View: view}}).Validate(); err != nil {
 			t.Fatalf("Validate() rejected valid view %q: %v", view, err)
 		}

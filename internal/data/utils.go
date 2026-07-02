@@ -24,8 +24,15 @@ func (i Issue) GetNumber() int64             { return i.Number }
 func (i Issue) GetURL() string               { return i.HTMLURL }
 func (i Issue) GetUpdatedAt() time.Time      { return i.UpdatedAt }
 
+func (n Notification) GetRepoNameWithOwner() string { return n.RepoNameWithOwner }
+func (n Notification) GetTitle() string             { return n.SubjectTitle }
+func (n Notification) GetNumber() int64             { return n.Number }
+func (n Notification) GetURL() string               { return n.HTMLURL }
+func (n Notification) GetUpdatedAt() time.Time      { return n.UpdatedAt }
+
 // Compile-time assertions that both domain row types satisfy RowData.
 var (
 	_ RowData = PullRequest{}
 	_ RowData = Issue{}
+	_ RowData = Notification{}
 )

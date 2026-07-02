@@ -99,6 +99,29 @@ func RenderIssue(row data.Issue, detail *data.IssueDetail, width int, expanded b
 	return compose(header, body, detail == nil, width, expanded, extras)
 }
 
+// RenderNotification renders a notification row into the preview. Notifications
+// are list records, not detail records; this view gives enough context and lets
+// open-in-browser handle the full thread.
+func RenderNotification(row data.Notification, width int) string {
+	number := fmt.Sprintf("#%d", row.Number)
+	if row.Number == 0 {
+		number = fmt.Sprintf("notification %d", row.ID)
+	}
+	header := []string{
+		row.RepoNameWithOwner + " · " + number,
+		titleLine(row.SubjectTitle, width),
+		pill(notificationStatus(row), notificationColor(row)),
+	}
+	if row.SubjectType != "" {
+		header = append(header, subtleRef.Render(row.SubjectType))
+	}
+	body := "Open this notification to read the full thread in Gitea."
+	if row.LatestCommentURL != "" {
+		body += "\nLatest comment available."
+	}
+	return compose(header, body, false, width, true, nil)
+}
+
 // compose joins the header block with the rendered body, then appends any
 // non-empty extra sections (CI / reviews / comments) below the fold, each
 // separated by a blank line so the viewport scrolls through them. When loading
@@ -177,6 +200,30 @@ func stateColor(state string) string {
 		return colMerged
 	default:
 		return colOpen
+	}
+}
+
+func notificationStatus(row data.Notification) string {
+	switch {
+	case row.Unread:
+		return "UNREAD"
+	case row.Pinned:
+		return "PINNED"
+	case row.SubjectState != "":
+		return strings.ToUpper(row.SubjectState)
+	default:
+		return "READ"
+	}
+}
+
+func notificationColor(row data.Notification) string {
+	switch {
+	case row.Unread:
+		return "#1f6feb"
+	case row.Pinned:
+		return "#d29922"
+	default:
+		return stateColor(row.SubjectState)
 	}
 }
 
