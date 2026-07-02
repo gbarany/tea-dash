@@ -39,6 +39,10 @@ fmt-check: ## Fail if the code is not gofmt-clean
 vet: ## Run go vet
 	go vet ./...
 
+.PHONY: public-hygiene
+public-hygiene: ## Fail on local/private examples that should not be in the public repo
+	bash scripts/check-public-hygiene.sh
+
 .PHONY: lint
 lint: ## Run golangci-lint (requires golangci-lint >= v2)
 	golangci-lint run
@@ -48,7 +52,7 @@ tidy: ## Tidy go.mod / go.sum
 	go mod tidy
 
 .PHONY: check
-check: fmt-check vet test ## Run the full local check suite
+check: fmt-check vet test public-hygiene ## Run the full local check suite
 
 .PHONY: clean
 clean: ## Remove build artefacts

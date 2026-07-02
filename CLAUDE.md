@@ -28,17 +28,17 @@ Requires **Go 1.26+** (the Gitea SDK's go.mod declares `go 1.26`).
 
 Order: `instance.token` > `instance.tokenCommand` (stdout) > `instance.tokenEnv` > `TEA_DASH_TOKEN` > the
 selected `tea` login's token. tea-dash reads `tea`'s config file (`os.UserConfigDir()/tea/config.yml`); if `tea`
-kept the token in the OS **keychain** (empty in the file), use `tokenCommand`, e.g. 1Password:
+kept the token in the OS **keychain** (empty in the file), use `tokenCommand` with a secret manager:
 
 ```yaml
 # ~/.config/tea-dash/config.yml
 instance:
-  tokenCommand: op read "op://<vault>/<item>/credential"
+  tokenCommand: "<command that prints the token>"
 ```
 
 ## Deployment / Release process
 
-Distribution is **Homebrew via a personal cask tap** (goreleaser). One command cuts a release.
+Distribution is **Homebrew via a cask tap** (goreleaser). One command cuts a release.
 
 ### To ship a new version
 
@@ -81,9 +81,8 @@ goreleaser release --snapshot --clean --skip=publish   # dry-run a full build lo
 ```bash
 brew install gbarany/tap/tea-dash     # macOS + Linux
 ```
-On this machine it's also declared in the chezmoi-managed Brewfile
-(`~/.local/share/chezmoi/home/dot_config/homebrew/Brewfile.tmpl`: `tap "gbarany/tap"` + `cask "gbarany/tap/tea-dash"`),
-installed on `chezmoi apply` / `brew bundle`.
+Do not commit private machine paths, secret-manager item routes, personal access tokens, or tenant-specific examples.
+Use placeholders such as `<repo-path>` and `<command that prints the token>` in committed docs and tests.
 
 ### homebrew-core (later, optional)
 

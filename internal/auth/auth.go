@@ -27,7 +27,7 @@ type Overrides struct {
 	Login        string // pick a named tea login
 	URL          string
 	Token        string // literal token (instance.token)
-	TokenCommand string // shell command whose stdout is the token (e.g. `op read op://...`)
+	TokenCommand string // shell command whose stdout is the token
 	TokenEnv     string // name of an env var to read the token from
 	Insecure     bool
 	CACertPath   string
@@ -214,7 +214,7 @@ func tokenError(login *teaLogin) error {
 	if login != nil {
 		return fmt.Errorf("found tea login %q but no usable token: its token is not in tea's config "+
 			"file (tea may keep it in your OS keychain, which tea-dash cannot read). Set instance.token, "+
-			"instance.tokenCommand (e.g. `op read \"op://vault/item/credential\"`), or TEA_DASH_TOKEN", login.Name)
+			"instance.tokenCommand (a command that prints a token), or TEA_DASH_TOKEN", login.Name)
 	}
 	return errors.New("no Gitea token: run `tea login add`, or set instance.token / instance.tokenCommand / TEA_DASH_TOKEN")
 }
