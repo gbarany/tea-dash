@@ -25,6 +25,10 @@ type Config struct {
 	// explicit Repo fans out across this list; with no Repos, it falls back to
 	// the instance-wide cross-repo search endpoint.
 	Repos []string `yaml:"repos"`
+	// SmartFilteringAtLaunch scopes PR/issue sections with no explicit repo to
+	// the git repository tea-dash was launched from, when that checkout's remote
+	// host matches the configured Gitea instance. Nil means enabled.
+	SmartFilteringAtLaunch *bool `yaml:"smartFilteringAtLaunch"`
 	// LocalRepos lists local git repository paths for read-only branch status.
 	LocalRepos []LocalRepoConfig `yaml:"localRepos"`
 	// PRSections, IssuesSections, NotificationsSections, ActionsSections, and BranchSections
@@ -46,6 +50,15 @@ type Config struct {
 	Git Git `yaml:"git"`
 	// Keybindings overrides built-in keys and adds custom shell commands.
 	Keybindings Keybindings `yaml:"keybindings"`
+}
+
+// SmartFilteringEnabled reports whether cwd repository scoping is enabled at
+// startup. It defaults on, matching gh-dash's repo-aware launch behavior.
+func (c *Config) SmartFilteringEnabled() bool {
+	if c == nil || c.SmartFilteringAtLaunch == nil {
+		return true
+	}
+	return *c.SmartFilteringAtLaunch
 }
 
 // Defaults holds startup and limit defaults. Per-view limits set the row-fetch
@@ -317,6 +330,7 @@ func (k Keybindings) Validate() error {
 
 var universalBuiltins = builtinSet(
 	"refresh", "refreshAll", "openGithub", "open", "search", "togglePreview",
+	"toggleSmartFiltering", "toggleSmartFilter", "currentRepo",
 	"pageUp", "pageDown", "scrollUp", "scrollDown", "prevSection",
 	"previousSection", "nextSection", "switchView", "copyurl", "copyNumber",
 	"help", "quit", "expand", "summaryViewMore",

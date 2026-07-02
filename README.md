@@ -81,6 +81,7 @@ tea-dash --help
 | `s`             | switch view (PRs/issues/notifications/actions/branches)|
 | `h` / `l`       | prev / next section     |
 | `/`             | search by keyword       |
+| `t`             | toggle current-repo smart filtering (when launched from a matching git checkout) |
 | `p`             | show / hide preview panel |
 | `e`             | expand / fold preview body |
 | `ctrl+u` / `ctrl+d` | scroll preview       |
@@ -117,6 +118,8 @@ instance:
   # token:        ""                                      # a literal token (not recommended in plaintext)
   # tokenCommand: "<command that prints the token>"        # e.g. pass, gopass, 1Password CLI, etc.
   # tokenEnv:     TEA_DASH_TOKEN                           # name of an env var holding the token
+
+smartFilteringAtLaunch: true # when launched inside a matching git checkout, blank PR/issue sections scope to that repo
 
 defaults:
   view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
@@ -237,6 +240,13 @@ tea-dash uses the instance-wide cross-repo search endpoint. `reviewRequested`
 is the one exception: Gitea exposes it only on instance-wide PR search, so those
 sections ignore `repos:` and stay cross-repo. The page size follows section
 `limit` -> per-view default -> 50.
+
+If `smartFilteringAtLaunch` is enabled (the default) and you start `tea-dash`
+from a local git checkout whose configured remote host matches the selected
+Gitea/Forgejo instance, PR and issue sections without an explicit `repo:` are
+scoped to that current repository. Press `t` to toggle between current-repo and
+all-repositories mode. Sections with explicit `repo:` always keep their
+configured repository.
 
 `keybindings` follows gh-dash's shape: each entry has a `key`, optional `name`,
 and exactly one of `builtin` or `command`. Built-ins remap implemented tea-dash

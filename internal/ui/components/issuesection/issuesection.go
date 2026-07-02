@@ -41,8 +41,8 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		Limit:        func(c *config.Config) int { return c.Defaults.IssuesLimit },
 		Pageable:     true,
 		Fetch: func(fetchCtx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.Issue, int, error) {
-			if cfg.Repo != "" {
-				return c.ListRepoIssuesPage(fetchCtx, cfg.Repo, f, limit, page)
+			if repo := effectiveRepo(ctx, cfg); repo != "" {
+				return c.ListRepoIssuesPage(fetchCtx, repo, f, limit, page)
 			}
 			if programCtx != nil && programCtx.Config != nil && len(programCtx.Config.Repos) > 0 {
 				return c.ListReposIssuesPage(fetchCtx, programCtx.Config.Repos, f, limit, page)
@@ -51,6 +51,16 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		},
 		BuildRow: issueBuildRow,
 	})
+}
+
+func effectiveRepo(ctx *appctx.ProgramContext, cfg config.SectionConfig) string {
+	if cfg.Repo != "" {
+		return cfg.Repo
+	}
+	if ctx == nil || !ctx.SmartFiltering {
+		return ""
+	}
+	return ctx.CurrentRepo
 }
 
 // issueBuildRow maps an issue into the table's 6-cell row.
