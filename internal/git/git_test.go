@@ -74,7 +74,7 @@ func TestParseRemoteURL(t *testing.T) {
 }
 
 func TestRemoteMatchesInstanceURL(t *testing.T) {
-	remote, err := ParseRemoteURL("git@gitea.example.com:fcmb/api.git")
+	remote, err := ParseRemoteURL("git@gitea.example.com:acme/api.git")
 	if err != nil {
 		t.Fatalf("ParseRemoteURL: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRemoteMatchesInstanceURL(t *testing.T) {
 		t.Fatal("remote should not match a different instance host")
 	}
 
-	withPort, err := ParseRemoteURL("ssh://git@gitea.example.com:2222/fcmb/api.git")
+	withPort, err := ParseRemoteURL("ssh://git@gitea.example.com:2222/acme/api.git")
 	if err != nil {
 		t.Fatalf("ParseRemoteURL with port: %v", err)
 	}
@@ -101,11 +101,11 @@ func TestResolveRepoPathExactWildcardAndCWD(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	paths := map[string]string{
-		"fcmb/*":   "~/work/fcmb/{{.Repo}}",
-		"fcmb/api": "~/work/exact-api",
+		"acme/*":   "~/work/acme/{{.Repo}}",
+		"acme/api": "~/work/exact-api",
 	}
 
-	got, err := ResolveRepoPath("fcmb/api", "/not/used", "https://gitea.example.com", paths)
+	got, err := ResolveRepoPath("acme/api", "/not/used", "https://gitea.example.com", paths)
 	if err != nil {
 		t.Fatalf("ResolveRepoPath exact: %v", err)
 	}
@@ -113,16 +113,16 @@ func TestResolveRepoPathExactWildcardAndCWD(t *testing.T) {
 		t.Fatalf("ResolveRepoPath exact = %q, want %q", got, want)
 	}
 
-	got, err = ResolveRepoPath("fcmb/web", "/not/used", "https://gitea.example.com", paths)
+	got, err = ResolveRepoPath("acme/web", "/not/used", "https://gitea.example.com", paths)
 	if err != nil {
 		t.Fatalf("ResolveRepoPath wildcard: %v", err)
 	}
-	if want := filepath.Join(home, "work", "fcmb", "web"); got != want {
+	if want := filepath.Join(home, "work", "acme", "web"); got != want {
 		t.Fatalf("ResolveRepoPath wildcard = %q, want %q", got, want)
 	}
 
-	cwd := makeGitDir(t, "https://gitea.example.com/fcmb/api.git")
-	got, err = ResolveRepoPath("fcmb/api", cwd, "https://gitea.example.com", nil)
+	cwd := makeGitDir(t, "https://gitea.example.com/acme/api.git")
+	got, err = ResolveRepoPath("acme/api", cwd, "https://gitea.example.com", nil)
 	if err != nil {
 		t.Fatalf("ResolveRepoPath cwd: %v", err)
 	}
@@ -132,23 +132,23 @@ func TestResolveRepoPathExactWildcardAndCWD(t *testing.T) {
 }
 
 func TestResolveRepoPathRejectsCWDHostMismatch(t *testing.T) {
-	cwd := makeGitDir(t, "https://other.example.com/fcmb/api.git")
-	_, err := ResolveRepoPath("fcmb/api", cwd, "https://gitea.example.com", nil)
+	cwd := makeGitDir(t, "https://other.example.com/acme/api.git")
+	_, err := ResolveRepoPath("acme/api", cwd, "https://gitea.example.com", nil)
 	if err == nil || !strings.Contains(err.Error(), "no local checkout") {
 		t.Fatalf("ResolveRepoPath host mismatch error = %v", err)
 	}
 }
 
 func TestBranchNameFromTemplate(t *testing.T) {
-	got, err := BranchNameFromTemplate("review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}", "fcmb/api", 42)
+	got, err := BranchNameFromTemplate("review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}", "acme/api", 42)
 	if err != nil {
 		t.Fatalf("BranchNameFromTemplate: %v", err)
 	}
-	if got != "review/fcmb-api-42" {
+	if got != "review/acme-api-42" {
 		t.Fatalf("BranchNameFromTemplate = %q", got)
 	}
 
-	got, err = BranchNameFromTemplate("", "fcmb/api", 42)
+	got, err = BranchNameFromTemplate("", "acme/api", 42)
 	if err != nil {
 		t.Fatalf("BranchNameFromTemplate default: %v", err)
 	}
@@ -162,8 +162,8 @@ func TestRunCheckoutDirtyTreeRefusal(t *testing.T) {
 	runner := &fakeRunner{results: []Result{{Stdout: " M file.txt\n", ExitCode: 0}}}
 
 	_, err := RunCheckout(context.Background(), CheckoutOptions{
-		RepoName:  "fcmb/api",
-		RepoPaths: map[string]string{"fcmb/api": repo},
+		RepoName:  "acme/api",
+		RepoPaths: map[string]string{"acme/api": repo},
 		PrIndex:   42,
 		Runner:    runner,
 	})
@@ -185,8 +185,8 @@ func TestRunCheckoutFetchesAndCreatesMissingBranch(t *testing.T) {
 	}}
 
 	plan, err := RunCheckout(context.Background(), CheckoutOptions{
-		RepoName:       "fcmb/api",
-		RepoPaths:      map[string]string{"fcmb/api": repo},
+		RepoName:       "acme/api",
+		RepoPaths:      map[string]string{"acme/api": repo},
 		Remote:         "upstream",
 		BranchTemplate: "review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}",
 		PrIndex:        42,
@@ -195,7 +195,7 @@ func TestRunCheckoutFetchesAndCreatesMissingBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunCheckout: %v", err)
 	}
-	if plan.Branch != "review/fcmb-api-42" {
+	if plan.Branch != "review/acme-api-42" {
 		t.Fatalf("Branch = %q", plan.Branch)
 	}
 	if plan.FetchRefspec != "+refs/pull/42/head:refs/remotes/upstream/pull/42/head" {
@@ -204,8 +204,8 @@ func TestRunCheckoutFetchesAndCreatesMissingBranch(t *testing.T) {
 	assertCommands(t, runner.commands, []Command{
 		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
 		{Dir: repo, Name: "git", Args: []string{"fetch", "upstream", "+refs/pull/42/head:refs/remotes/upstream/pull/42/head"}},
-		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/review/fcmb-api-42"}},
-		{Dir: repo, Name: "git", Args: []string{"switch", "-c", "review/fcmb-api-42", "refs/remotes/upstream/pull/42/head"}},
+		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/review/acme-api-42"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "-c", "review/acme-api-42", "refs/remotes/upstream/pull/42/head"}},
 	})
 }
 
@@ -220,8 +220,8 @@ func TestRunCheckoutExistingBranchFastForwardOnly(t *testing.T) {
 	}}
 
 	_, err := RunCheckout(context.Background(), CheckoutOptions{
-		RepoName:  "fcmb/api",
-		RepoPaths: map[string]string{"fcmb/api": repo},
+		RepoName:  "acme/api",
+		RepoPaths: map[string]string{"acme/api": repo},
 		PrIndex:   7,
 		Runner:    runner,
 	})
@@ -240,7 +240,7 @@ func TestRunCheckoutExistingBranchFastForwardOnly(t *testing.T) {
 func TestRunCheckoutMissingRepoPath(t *testing.T) {
 	runner := &fakeRunner{}
 	_, err := RunCheckout(context.Background(), CheckoutOptions{
-		RepoName:    "fcmb/api",
+		RepoName:    "acme/api",
 		CWD:         t.TempDir(),
 		InstanceURL: "https://gitea.example.com",
 		PrIndex:     7,

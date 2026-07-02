@@ -52,7 +52,7 @@
 
 Run:
 ```bash
-cd /Users/gaborbarany/dev/sandbox/tea-dash
+cd /path/to/tea-dash
 go get code.gitea.io/sdk/gitea@latest
 ```
 Expected: `go.mod` gains `require code.gitea.io/sdk/gitea v0.25.1` (or newer). The `NewClient`/`SetToken`/`GetMyUserInfo`/`ServerVersion` API used here is verified against v0.25.1. If `@latest` ever regresses, pin it: `go get code.gitea.io/sdk/gitea@v0.25.1`.

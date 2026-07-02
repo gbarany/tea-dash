@@ -38,7 +38,7 @@ type Config struct {
 	Defaults Defaults `yaml:"defaults"`
 	// Pager configures external pager commands.
 	Pager Pager `yaml:"pager"`
-	// RepoPaths maps repo names or wildcard patterns (for example "fcmb/*")
+	// RepoPaths maps repo names or wildcard patterns (for example "acme/*")
 	// to local checkout paths.
 	RepoPaths map[string]string `yaml:"repoPaths"`
 	// Git configures local git checkout behavior.
@@ -362,7 +362,7 @@ func ExpandPath(p string) (string, error) {
 }
 
 // MatchRepoPath returns the path mapped for repoName, preferring an exact key
-// before evaluating wildcard patterns such as "fcmb/*". Mapped paths may use
+// before evaluating wildcard patterns such as "acme/*". Mapped paths may use
 // {{.Owner}}, {{.Repo}}, and {{.RepoName}} template variables, and are expanded
 // through ExpandPath before being returned.
 func MatchRepoPath(repoName string, repoPaths map[string]string) (string, bool, error) {
