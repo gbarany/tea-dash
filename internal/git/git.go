@@ -127,7 +127,34 @@ func ResolveRepoPath(repoName, cwd, instanceURL string, repoPaths map[string]str
 	return "", fmt.Errorf("no local checkout for %s; configure repoPaths", repoName)
 }
 
+// ResolveCurrentRepo returns the owner/repo identity for cwd's configured git
+// remote when that remote points at the selected Gitea/Forgejo instance. It is
+// intentionally best-effort: non-git directories, missing remotes, unparsable
+// remotes, and host mismatches return ok=false with no error so startup can fall
+// back to the global dashboard.
+func ResolveCurrentRepo(cwd, instanceURL, remoteName string) (RemoteRef, bool, error) {
+	remoteURL, err := remoteURL(cwd, (config.Git{Remote: remoteName}).RemoteName())
+	if err != nil {
+		return RemoteRef{}, false, nil
+	}
+	remote, err := ParseRemoteURL(remoteURL)
+	if err != nil {
+		return RemoteRef{}, false, nil
+	}
+	if instanceURL != "" && !remote.MatchesInstanceURL(instanceURL) {
+		return RemoteRef{}, false, nil
+	}
+	if remote.FullName() == "" {
+		return RemoteRef{}, false, nil
+	}
+	return remote, true, nil
+}
+
 func originRemoteURL(cwd string) (string, error) {
+	return remoteURL(cwd, "origin")
+}
+
+func remoteURL(cwd, remoteName string) (string, error) {
 	configPath, err := gitConfigPath(cwd)
 	if err != nil {
 		return "", err
@@ -138,10 +165,11 @@ func originRemoteURL(cwd string) (string, error) {
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	inOrigin := false
+	remoteName = (config.Git{Remote: remoteName}).RemoteName()
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "[") {
-			inOrigin = strings.Contains(line, `remote "origin"`) || strings.Contains(line, `remote 'origin'`)
+			inOrigin = strings.Contains(line, `remote "`+remoteName+`"`) || strings.Contains(line, `remote '`+remoteName+`'`)
 			continue
 		}
 		if !inOrigin {
@@ -155,7 +183,7 @@ func originRemoteURL(cwd string) (string, error) {
 	if err := scanner.Err(); err != nil {
 		return "", err
 	}
-	return "", errors.New("origin remote URL not found")
+	return "", fmt.Errorf("%s remote URL not found", remoteName)
 }
 
 func gitConfigPath(cwd string) (string, error) {

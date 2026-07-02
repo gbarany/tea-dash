@@ -13,6 +13,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/build"
 	"github.com/gbarany/tea-dash/internal/config"
+	localgit "github.com/gbarany/tea-dash/internal/git"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui"
 )
@@ -64,8 +65,8 @@ func run() error {
 		return fmt.Errorf("connecting to %s: %w", authCfg.URL, err)
 	}
 
-	model := ui.New(cfg, client)
 	cwd, _ := os.Getwd()
+	model := ui.NewWithOptions(cfg, client, launchOptions(cfg, authCfg.URL, cwd))
 	runner := actionrunner.New(actionrunner.Options{
 		Client:      client,
 		Config:      cfg,
@@ -77,6 +78,21 @@ func run() error {
 	p := tea.NewProgram(model)
 	_, err = p.Run()
 	return err
+}
+
+func launchOptions(cfg *config.Config, instanceURL, cwd string) ui.Options {
+	opts := ui.Options{SmartFiltering: cfg.SmartFilteringEnabled()}
+	if !opts.SmartFiltering {
+		return opts
+	}
+	remote, ok, err := localgit.ResolveCurrentRepo(cwd, instanceURL, cfg.Git.Remote)
+	if err != nil || !ok {
+		opts.SmartFiltering = false
+		return opts
+	}
+	opts.CurrentRepo = remote.FullName()
+	opts.SmartFiltering = opts.CurrentRepo != ""
+	return opts
 }
 
 func firstNonEmpty(vals ...string) string {

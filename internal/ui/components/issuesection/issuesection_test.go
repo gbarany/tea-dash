@@ -178,6 +178,55 @@ func TestFetchRowsUsesConfiguredReposFanoutWhenSectionRepoBlank(t *testing.T) {
 	}
 }
 
+func TestFetchUsesSmartCurrentRepoWhenSectionRepoBlank(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := smartFetchServer(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			gotQuery = r.URL.RawQuery
+			fmt.Fprint(w, `[{
+				"number":42,"title":"Repo issue","state":"open",
+				"html_url":"https://git.example/acme/widgets/issues/42",
+				"user":{"login":"me"},
+				"updated_at":"2026-06-02T00:00:00Z"
+			}]`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("smart current-repo issue fetch should not call cross-repo search: %s?%s", r.URL.Path, r.URL.RawQuery)
+		},
+	)
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := &context.ProgramContext{
+		Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20,
+		Client: client, Config: &config.Config{}, CurrentRepo: "acme/widgets", SmartFiltering: true,
+	}
+	m := NewModel(0, ctx, config.SectionConfig{
+		Title:  "Current Repo Issues",
+		Limit:  20,
+		Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"},
+	})
+
+	msg := runIssueFetchCommand(t, m.FetchRows())
+	payload := msg.Msg.(SectionIssuesFetchedMsg)
+	if payload.Err != nil {
+		t.Fatalf("FetchRows payload error: %v", payload.Err)
+	}
+	if gotPath != "/api/v1/repos/acme/widgets/issues" {
+		t.Fatalf("path = %q, want repo issues endpoint", gotPath)
+	}
+	for _, want := range []string{"type=issues", "created_by=me", "limit=20", "page=1"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("query %q missing %q", gotQuery, want)
+		}
+	}
+	if payload.TotalCount != 1 || len(payload.Rows) != 1 || payload.Rows[0].RepoNameWithOwner != "acme/widgets" {
+		t.Fatalf("rows=%+v total=%d, want one acme/widgets issue", payload.Rows, payload.TotalCount)
+	}
+}
+
 func issueFanoutServer(t *testing.T, repoIssues http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -227,4 +276,20 @@ func containsFetchPathWith(paths []string, wantPath, wantQuery string) bool {
 		}
 	}
 	return false
+}
+
+func smartFetchServer(t *testing.T, repoIssues, search http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/acme/widgets/issues", repoIssues)
+	mux.HandleFunc("/api/v1/repos/issues/search", search)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
 }

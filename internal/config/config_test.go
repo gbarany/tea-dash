@@ -155,6 +155,24 @@ localRepos:
 	}
 }
 
+func TestSmartFilteringAtLaunchDefaultsToEnabled(t *testing.T) {
+	var c Config
+	if !c.SmartFilteringEnabled() {
+		t.Fatal("SmartFilteringEnabled should default to true when smartFilteringAtLaunch is omitted")
+	}
+}
+
+func TestSmartFilteringAtLaunchCanBeDisabled(t *testing.T) {
+	const y = `smartFilteringAtLaunch: false`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.SmartFilteringEnabled() {
+		t.Fatal("SmartFilteringEnabled should be false when smartFilteringAtLaunch is false")
+	}
+}
+
 func TestUnmarshalPagerRepoPathsAndGit(t *testing.T) {
 	const y = `
 pager:
@@ -265,6 +283,7 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 
 	ok := Config{Keybindings: Keybindings{Universal: []Keybinding{
 		{Key: "R", Builtin: "refreshAll"},
+		{Key: "t", Builtin: "toggleSmartFiltering"},
 		{Key: "g", Command: "lazygit"},
 	}, PRs: []Keybinding{
 		{Key: "a", Builtin: "assign"},

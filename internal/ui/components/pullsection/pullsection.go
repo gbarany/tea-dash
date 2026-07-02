@@ -41,8 +41,8 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		Limit:        func(c *config.Config) int { return c.Defaults.PRsLimit },
 		Pageable:     true,
 		Fetch: func(fetchCtx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
-			if cfg.Repo != "" {
-				return c.ListRepoPullsPage(fetchCtx, cfg.Repo, f, limit, page)
+			if repo := effectiveRepo(ctx, cfg, f); repo != "" {
+				return c.ListRepoPullsPage(fetchCtx, repo, f, limit, page)
 			}
 			if f.ReviewRequested == "" && programCtx != nil && programCtx.Config != nil && len(programCtx.Config.Repos) > 0 {
 				return c.ListReposPullsPage(fetchCtx, programCtx.Config.Repos, f, limit, page)
@@ -51,6 +51,19 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		},
 		BuildRow: prBuildRow,
 	})
+}
+
+func effectiveRepo(ctx *appctx.ProgramContext, cfg config.SectionConfig, f config.PrIssueFilter) string {
+	if cfg.Repo != "" {
+		return cfg.Repo
+	}
+	if f.ReviewRequested != "" {
+		return ""
+	}
+	if ctx == nil || !ctx.SmartFiltering {
+		return ""
+	}
+	return ctx.CurrentRepo
 }
 
 // prState renders a draft PR's state as "draft" and otherwise the raw state.

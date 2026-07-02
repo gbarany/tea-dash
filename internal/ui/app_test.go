@@ -116,6 +116,58 @@ func TestViewEnablesMouseCellMotion(t *testing.T) {
 	}
 }
 
+func TestNewWithOptionsSetsSmartFilteringContext(t *testing.T) {
+	m := NewWithOptions(&config.Config{}, nil, Options{CurrentRepo: "acme/widgets", SmartFiltering: true})
+	if m.ctx.CurrentRepo != "acme/widgets" {
+		t.Fatalf("CurrentRepo = %q, want acme/widgets", m.ctx.CurrentRepo)
+	}
+	if !m.ctx.SmartFiltering {
+		t.Fatal("SmartFiltering should be enabled from options")
+	}
+}
+
+func TestToggleSmartFilteringRefreshesCurrentView(t *testing.T) {
+	m := NewWithOptions(&config.Config{}, nil, Options{CurrentRepo: "acme/widgets", SmartFiltering: true})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "Current repo row", RepoNameWithOwner: "acme/widgets", Author: "me", State: "open",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 't', Text: "t"})
+	m = next.(Model)
+	if m.ctx.SmartFiltering {
+		t.Fatal("t should disable smart filtering when it starts enabled")
+	}
+	if cmd == nil {
+		t.Fatal("toggle should refetch the current view")
+	}
+	if s := m.getCurrSection(); s == nil || !s.GetIsLoading() {
+		t.Fatal("toggle should mark the rebuilt current section loading")
+	}
+	if !strings.Contains(m.notice, "all repositories") {
+		t.Fatalf("notice = %q, want all-repositories status", m.notice)
+	}
+}
+
+func TestToggleSmartFilteringWithoutDetectedRepoShowsNotice(t *testing.T) {
+	m := New(&config.Config{}, nil)
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 't', Text: "t"})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatalf("toggle without a detected repo should not refetch, got %v", cmd)
+	}
+	if !strings.Contains(m.notice, "No matching git remote") {
+		t.Fatalf("notice = %q, want missing-remote message", m.notice)
+	}
+}
+
+func TestHelpMentionsSmartFilteringWhenCurrentRepoDetected(t *testing.T) {
+	m := NewWithOptions(&config.Config{}, nil, Options{CurrentRepo: "acme/widgets", SmartFiltering: true})
+	if !strings.Contains(m.helpLine(), "t current repo") {
+		t.Fatalf("help line should mention the current-repo toggle:\n%s", m.helpLine())
+	}
+}
+
 func TestMouseClickSelectsVisibleRowAndRefreshesPreview(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})

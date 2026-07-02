@@ -139,6 +139,53 @@ func TestResolveRepoPathRejectsCWDHostMismatch(t *testing.T) {
 	}
 }
 
+func TestResolveCurrentRepoMatchesConfiguredInstance(t *testing.T) {
+	cwd := makeGitDir(t, "https://gitea.example.com/acme/api.git")
+	got, ok, err := ResolveCurrentRepo(cwd, "https://gitea.example.com", "origin")
+	if err != nil {
+		t.Fatalf("ResolveCurrentRepo: %v", err)
+	}
+	if !ok {
+		t.Fatal("ResolveCurrentRepo should find the matching cwd remote")
+	}
+	if got.FullName() != "acme/api" {
+		t.Fatalf("ResolveCurrentRepo = %+v, want acme/api", got)
+	}
+}
+
+func TestResolveCurrentRepoUsesConfiguredRemote(t *testing.T) {
+	cwd := makeGitDirWithRemote(t, "upstream", "git@gitea.example.com:acme/widgets.git")
+	got, ok, err := ResolveCurrentRepo(cwd, "https://gitea.example.com", "upstream")
+	if err != nil {
+		t.Fatalf("ResolveCurrentRepo: %v", err)
+	}
+	if !ok || got.FullName() != "acme/widgets" {
+		t.Fatalf("ResolveCurrentRepo = %+v, ok=%v, want acme/widgets", got, ok)
+	}
+}
+
+func TestResolveCurrentRepoIsBestEffort(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cwd  string
+		url  string
+	}{
+		{name: "not a git repository", cwd: t.TempDir(), url: "https://gitea.example.com"},
+		{name: "host mismatch", cwd: makeGitDir(t, "https://other.example.com/acme/api.git"), url: "https://gitea.example.com"},
+		{name: "unparseable remote", cwd: makeGitDir(t, "not-a-remote"), url: "https://gitea.example.com"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok, err := ResolveCurrentRepo(tt.cwd, tt.url, "origin")
+			if err != nil {
+				t.Fatalf("ResolveCurrentRepo should not fail startup: %v", err)
+			}
+			if ok || got.FullName() != "" {
+				t.Fatalf("ResolveCurrentRepo = %+v, ok=%v, want no detected repo", got, ok)
+			}
+		})
+	}
+}
+
 func TestBranchNameFromTemplate(t *testing.T) {
 	got, err := BranchNameFromTemplate("review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}", "acme/api", 42)
 	if err != nil {
@@ -330,13 +377,17 @@ func TestSwitchBranchWorktreeConflictFailureIsActionable(t *testing.T) {
 }
 
 func makeGitDir(t *testing.T, remoteURL string) string {
+	return makeGitDirWithRemote(t, "origin", remoteURL)
+}
+
+func makeGitDirWithRemote(t *testing.T, remoteName, remoteURL string) string {
 	t.Helper()
 	dir := t.TempDir()
 	gitDir := filepath.Join(dir, ".git")
 	if err := os.MkdirAll(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	config := "[remote \"origin\"]\n\turl = " + remoteURL + "\n"
+	config := "[remote \"" + remoteName + "\"]\n\turl = " + remoteURL + "\n"
 	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}

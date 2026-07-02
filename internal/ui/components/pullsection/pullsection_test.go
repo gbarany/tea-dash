@@ -276,6 +276,101 @@ func TestFetchRowsWithReviewRequestedUsesCrossRepoSearchEvenWithConfiguredRepos(
 	}
 }
 
+func TestFetchUsesSmartCurrentRepoWhenSectionRepoBlank(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := smartFetchServer(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			gotQuery = r.URL.RawQuery
+			fmt.Fprint(w, `[{
+				"number":8,"title":"Repo PR","state":"open",
+				"html_url":"https://git.example/acme/widgets/pulls/8",
+				"user":{"login":"me"},
+				"pull_request":{"merged":false},
+				"updated_at":"2026-06-02T00:00:00Z"
+			}]`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("smart current-repo PR fetch should not call cross-repo search: %s?%s", r.URL.Path, r.URL.RawQuery)
+		},
+	)
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := &context.ProgramContext{
+		Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20,
+		Client: client, Config: &config.Config{}, CurrentRepo: "acme/widgets", SmartFiltering: true,
+	}
+	m := NewModel(0, ctx, config.SectionConfig{
+		Title:  "Current Repo PRs",
+		Limit:  20,
+		Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"},
+	})
+
+	msg := runPullFetchCommand(t, m.FetchRows())
+	payload := msg.Msg.(SectionPullRequestsFetchedMsg)
+	if payload.Err != nil {
+		t.Fatalf("FetchRows payload error: %v", payload.Err)
+	}
+	if gotPath != "/api/v1/repos/acme/widgets/issues" {
+		t.Fatalf("path = %q, want repo issues endpoint", gotPath)
+	}
+	for _, want := range []string{"type=pulls", "created_by=me", "limit=20", "page=1"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("query %q missing %q", gotQuery, want)
+		}
+	}
+	if payload.TotalCount != 1 || len(payload.Rows) != 1 || payload.Rows[0].RepoNameWithOwner != "acme/widgets" {
+		t.Fatalf("rows=%+v total=%d, want one acme/widgets PR", payload.Rows, payload.TotalCount)
+	}
+}
+
+func TestFetchReviewRequestedIgnoresSmartCurrentRepo(t *testing.T) {
+	var searched bool
+	srv := smartFetchServer(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("review-requested PR sections must stay cross-repo, got repo endpoint: %s?%s", r.URL.Path, r.URL.RawQuery)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			searched = true
+			if !strings.Contains(r.URL.RawQuery, "review_requested=true") {
+				t.Fatalf("query %q missing review_requested=true", r.URL.RawQuery)
+			}
+			fmt.Fprint(w, `[{
+				"number":9,"title":"Needs review","state":"open",
+				"html_url":"https://git.example/acme/widgets/pulls/9",
+				"user":{"login":"alice"},
+				"repository":{"full_name":"acme/widgets"},
+				"pull_request":{"merged":false},
+				"updated_at":"2026-06-02T00:00:00Z"
+			}]`)
+		},
+	)
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := &context.ProgramContext{
+		Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20,
+		Client: client, Config: &config.Config{}, CurrentRepo: "acme/widgets", SmartFiltering: true,
+	}
+	m := NewModel(0, ctx, config.SectionConfig{
+		Title:  "Needs Review",
+		Limit:  20,
+		Filter: config.PrIssueFilter{State: "open", ReviewRequested: "@me"},
+	})
+
+	msg := runPullFetchCommand(t, m.FetchRows())
+	payload := msg.Msg.(SectionPullRequestsFetchedMsg)
+	if payload.Err != nil {
+		t.Fatalf("FetchRows payload error: %v", payload.Err)
+	}
+	if !searched {
+		t.Fatal("expected cross-repo search to be called")
+	}
+}
+
 func pullFanoutServer(t *testing.T, repoIssues http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -342,4 +437,20 @@ func containsFetchPathWith(paths []string, wantPath, wantQuery string) bool {
 		}
 	}
 	return false
+}
+
+func smartFetchServer(t *testing.T, repoIssues, search http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/acme/widgets/issues", repoIssues)
+	mux.HandleFunc("/api/v1/repos/issues/search", search)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
 }

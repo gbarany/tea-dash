@@ -67,6 +67,12 @@ type ProgramContext struct {
 	Error  error
 	Styles Styles
 
+	// CurrentRepo is the owner/repo detected from the cwd git remote when it
+	// matches the selected Gitea instance. SmartFiltering scopes blank PR/issue
+	// sections to CurrentRepo; explicit section repo config still wins.
+	CurrentRepo    string
+	SmartFiltering bool
+
 	// StartTask registers an async task; the root assigns it. Returns nil in M1a.
 	StartTask func(task Task) tea.Cmd
 }

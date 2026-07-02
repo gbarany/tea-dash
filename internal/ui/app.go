@@ -107,8 +107,20 @@ type notificationActionMsg struct {
 	err       error
 }
 
+// Options are runtime-only model settings resolved before the TUI starts.
+type Options struct {
+	CurrentRepo    string
+	SmartFiltering bool
+}
+
 // New builds the root model. client may be nil in tests (only FetchRows uses it).
 func New(cfg *config.Config, client *gitea.Client) Model {
+	return NewWithOptions(cfg, client, Options{SmartFiltering: cfg.SmartFilteringEnabled()})
+}
+
+// NewWithOptions builds the root model with runtime-only options such as the
+// current git repository detected from cwd.
+func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Model {
 	tasks := map[string]context.Task{}
 	user := ""
 	if client != nil {
@@ -128,12 +140,14 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 		}
 	}
 	ctx := &context.ProgramContext{
-		Config:      cfg,
-		Client:      client,
-		User:        user,
-		View:        view,
-		PreviewOpen: true,
-		Styles:      context.DefaultStyles(),
+		Config:         cfg,
+		Client:         client,
+		User:           user,
+		View:           view,
+		PreviewOpen:    true,
+		Styles:         context.DefaultStyles(),
+		CurrentRepo:    opts.CurrentRepo,
+		SmartFiltering: opts.SmartFiltering,
 	}
 	ctx.StartTask = func(t context.Task) tea.Cmd {
 		tasks[t.Id] = t
@@ -491,6 +505,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enrichCurrRow()
 			}
 			return m, nil
+		case !m.scopedBuiltinOverridden("toggleSmartFiltering") && key.Matches(msg, m.keys.ToggleSmart):
+			return m.toggleSmartFiltering()
 		case !m.scopedBuiltinOverridden("expand") && key.Matches(msg, m.keys.Expand):
 			if m.ctx.PreviewOpen {
 				m.expanded = !m.expanded
@@ -565,9 +581,15 @@ func (m Model) View() tea.View {
 func (m Model) helpLine() string {
 	if m.showHelp {
 		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
+		if m.ctx.CurrentRepo != "" {
+			text += " · t current repo"
+		}
 		switch m.ctx.View {
 		case context.ActionsView:
 			text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
+			if m.ctx.CurrentRepo != "" {
+				text += " · t current repo"
+			}
 		case context.NotificationsView:
 			text += " · m mark read · u mark unread · M mark all read"
 		case context.BranchesView:
@@ -578,9 +600,15 @@ func (m Model) helpLine() string {
 		return text + " · q quit"
 	}
 	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh"
+	if m.ctx.CurrentRepo != "" {
+		text += " · t current repo"
+	}
 	switch m.ctx.View {
 	case context.ActionsView:
 		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r refresh · R rerun · ! cancel"
+		if m.ctx.CurrentRepo != "" {
+			text += " · t current repo"
+		}
 	case context.NotificationsView:
 		text += " · m read · u unread · M all read"
 	case context.BranchesView:
@@ -1202,6 +1230,39 @@ func (m *Model) refreshAllSections() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (m Model) toggleSmartFiltering() (Model, tea.Cmd) {
+	if m.ctx.CurrentRepo == "" {
+		m.notice = "No matching git remote detected for this Gitea instance."
+		return m, nil
+	}
+	m.ctx.SmartFiltering = !m.ctx.SmartFiltering
+	if m.ctx.SmartFiltering {
+		m.notice = fmt.Sprintf("Showing current repository: %s.", m.ctx.CurrentRepo)
+	} else {
+		m.notice = "Showing all repositories."
+	}
+	m.pullDetails = map[string]*data.PullDetail{}
+	m.pullEnrichErr = map[string]error{}
+	m.issueDetails = map[string]*data.IssueDetail{}
+	m.issueEnrichErr = map[string]error{}
+	m.prs = nil
+	m.issues = nil
+	switch m.ctx.View {
+	case context.PullsView, context.IssuesView:
+		m.currSectionId = 0
+		m.setCurrentViewSections(buildSections(m.ctx.View, m.ctx))
+		m.tabs.SetCurrSectionId(0)
+		m.syncProgramContext()
+		if m.ctx.PreviewOpen {
+			m.syncSidebar()
+		}
+		return m, m.refreshAllSections()
+	default:
+		m.syncProgramContext()
+		return m, nil
+	}
+}
+
 func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 	target, ok := m.selectedActionTarget()
 	if !ok {
@@ -1305,6 +1366,9 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 			return m, m.enrichCurrRow(), true
 		}
 		return m, nil, true
+	case "togglesmartfiltering", "togglesmartfilter", "currentrepo":
+		next, cmd := m.toggleSmartFiltering()
+		return next, cmd, true
 	case "summaryviewmore", "expand":
 		if m.ctx.PreviewOpen {
 			m.expanded = !m.expanded

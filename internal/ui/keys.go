@@ -20,6 +20,7 @@ type keyMap struct {
 	SwitchView    key.Binding
 	Search        key.Binding
 	TogglePreview key.Binding
+	ToggleSmart   key.Binding
 	ScrollUp      key.Binding
 	ScrollDown    key.Binding
 	Expand        key.Binding
@@ -82,6 +83,10 @@ func defaultKeyMap() keyMap {
 		TogglePreview: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "preview"),
+		),
+		ToggleSmart: key.NewBinding(
+			key.WithKeys("t"),
+			key.WithHelp("t", "current repo"),
 		),
 		ScrollUp: key.NewBinding(
 			key.WithKeys("ctrl+u"),
@@ -214,6 +219,8 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Search = binding(keyName, "search")
 	case "togglepreview":
 		k.TogglePreview = binding(keyName, "preview")
+	case "togglesmartfiltering", "togglesmartfilter", "currentrepo":
+		k.ToggleSmart = binding(keyName, "current repo")
 	case "pageup", "scrollup":
 		k.ScrollUp = binding(keyName, "scroll preview up")
 	case "pagedown", "scrolldown":
