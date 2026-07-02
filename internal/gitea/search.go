@@ -220,6 +220,33 @@ func (c *Client) rawGet(ctx context.Context, path string, out any) (http.Header,
 	return resp.Header, nil
 }
 
+// rawPost issues an authenticated POST against {baseURL}/api/v1{path} using the
+// shared HTTP client and token. It accepts any 2xx response and ignores the
+// body, which matches control endpoints that often return 202 or 204.
+func (c *Client) rawPost(ctx context.Context, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1"+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "token "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("gitea POST %s: %s: %s", path, resp.Status, truncate(body, 500))
+	}
+	return nil
+}
+
 // truncate returns b as a string, clipped to max bytes with an ellipsis marker
 // appended when it was longer, so an HTML error page cannot flood the TUI.
 func truncate(b []byte, max int) string {

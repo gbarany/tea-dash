@@ -304,6 +304,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.markSelectedNotificationUnread()
 		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkAllRead):
 			return m.markAllNotificationsRead()
+		case m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.RerunRun):
+			return m, m.startAction(actions.KindRerunRun)
+		case m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.CancelRun):
+			return m, m.startAction(actions.KindCancelRun)
 		case key.Matches(msg, m.keys.Comment):
 			return m, m.startAction(actions.KindComment)
 		case key.Matches(msg, m.keys.Merge):
@@ -451,21 +455,27 @@ func (m Model) View() tea.View {
 func (m Model) helpLine() string {
 	if m.showHelp {
 		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
-		if m.ctx.View == context.NotificationsView {
+		switch m.ctx.View {
+		case context.ActionsView:
+			text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
+		case context.NotificationsView:
 			text += " · m mark read · u mark unread · M mark all read"
-		} else if m.ctx.View == context.BranchesView {
+		case context.BranchesView:
 			text += " · C/space switch"
-		} else {
+		default:
 			text += " · c comment · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
 		return text + " · q quit"
 	}
 	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh"
-	if m.ctx.View == context.NotificationsView {
+	switch m.ctx.View {
+	case context.ActionsView:
+		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r refresh · R rerun · ! cancel"
+	case context.NotificationsView:
 		text += " · m read · u unread · M all read"
-	} else if m.ctx.View == context.BranchesView {
+	case context.BranchesView:
 		text += " · C/space switch"
-	} else {
+	default:
 		text += " · c comment · m merge · d/ctrl+t diff · C/space checkout"
 	}
 	return text + " · ? help · q quit"
@@ -711,6 +721,9 @@ func (m *Model) clearPreviewCacheForAction(target actions.Target) {
 	case actions.RowKindIssue:
 		delete(m.issueDetails, key)
 		delete(m.issueEnrichErr, key)
+	case actions.RowKindActionRun:
+		delete(m.actionDetails, key)
+		delete(m.actionEnrichErr, key)
 	}
 }
 
@@ -892,6 +905,9 @@ func (m *Model) refreshAllSections() tea.Cmd {
 	case context.IssuesView:
 		m.issueDetails = map[string]*data.IssueDetail{}
 		m.issueEnrichErr = map[string]error{}
+	case context.ActionsView:
+		m.actionDetails = map[string]*data.ActionRunDetail{}
+		m.actionEnrichErr = map[string]error{}
 	default:
 		m.pullDetails = map[string]*data.PullDetail{}
 		m.pullEnrichErr = map[string]error{}
@@ -911,8 +927,8 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 		m.notice = "Select a row before running an action."
 		return nil
 	}
-	if actionRequiresPullRequest(kind) && target.RowKind != actions.RowKindPullRequest {
-		m.notice = fmt.Sprintf("%s is only available for pull requests.", actionLabel(kind))
+	if err := validateActionTarget(kind, target); err != nil {
+		m.notice = err.Error()
 		return nil
 	}
 	if kind == actions.KindSwitchBranch {
@@ -930,6 +946,9 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 		Kind:   kind,
 		Target: target,
 		Prompt: actions.Prompt{Mode: promptModeForAction(kind)},
+	}
+	if actionDispatchesDirectly(kind) {
+		return m.dispatchActionIntent(intent)
 	}
 	m.pendingAction = intent
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(kind, target))
@@ -956,8 +975,7 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 		m.notice = "Action not wired yet."
 		return cmd
 	}
-	m.actionFeedback = m.actionFeedback.Set(actionfeedback.Start(actionStartText(intent)))
-	dispatchCmd := m.actionDispatcher(intent)
+	dispatchCmd := m.dispatchActionIntent(intent)
 	if cmd == nil {
 		return dispatchCmd
 	}
@@ -967,6 +985,15 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmd, dispatchCmd)
 }
 
+func (m *Model) dispatchActionIntent(intent actions.Intent) tea.Cmd {
+	if m.actionDispatcher == nil {
+		m.notice = "Action not wired yet."
+		return nil
+	}
+	m.actionFeedback = m.actionFeedback.Set(actionfeedback.Start(actionStartText(intent)))
+	return m.actionDispatcher(intent)
+}
+
 func (m Model) selectedActionTarget() (actions.Target, bool) {
 	s := m.getCurrSection()
 	row := m.getCurrRowData()
@@ -974,13 +1001,17 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 		return actions.Target{}, false
 	}
 	rowKind := actions.RowKind(s.GetType())
-	switch row.(type) {
+	runID := int64(0)
+	switch r := row.(type) {
 	case data.PullRequest:
 		rowKind = actions.RowKindPullRequest
 	case data.Issue:
 		rowKind = actions.RowKindIssue
 	case localgit.Branch:
 		rowKind = actions.RowKindBranch
+	case data.ActionRun:
+		rowKind = actions.RowKindActionRun
+		runID = r.ID
 	}
 	target := actions.Target{
 		SectionID:   s.GetId(),
@@ -988,6 +1019,7 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 		RowKind:     rowKind,
 		Repo:        row.GetRepoNameWithOwner(),
 		Number:      row.GetNumber(),
+		RunID:       runID,
 		Title:       row.GetTitle(),
 		URL:         row.GetURL(),
 	}
@@ -997,13 +1029,28 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 	return target, true
 }
 
-func actionRequiresPullRequest(kind actions.Kind) bool {
+func validateActionTarget(kind actions.Kind, target actions.Target) error {
 	switch kind {
 	case actions.KindMerge, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
-		return true
+		if target.RowKind != actions.RowKindPullRequest {
+			return fmt.Errorf("%s is only available for pull requests.", actionLabel(kind))
+		}
+	case actions.KindComment, actions.KindClose, actions.KindReopen:
+		if target.RowKind != actions.RowKindPullRequest && target.RowKind != actions.RowKindIssue {
+			return fmt.Errorf("%s is only available for pull requests and issues.", actionLabel(kind))
+		}
+	case actions.KindRerunRun, actions.KindCancelRun:
+		if target.RowKind != actions.RowKindActionRun {
+			return fmt.Errorf("%s is only available for action runs.", actionLabel(kind))
+		}
 	default:
-		return false
+		return nil
 	}
+	return nil
+}
+
+func actionDispatchesDirectly(kind actions.Kind) bool {
+	return kind == actions.KindRerunRun
 }
 
 func promptModeForAction(kind actions.Kind) actions.PromptMode {
@@ -1055,6 +1102,12 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 				{Label: "Fast-forward only", Value: string(data.MergeStyleFastForwardOnly)},
 			},
 		}
+	case actions.KindCancelRun:
+		return actionprompt.Config{
+			Mode:    actionprompt.ModeConfirm,
+			Title:   title,
+			Message: fmt.Sprintf("Cancel %s run #%d - %s", target.Repo, target.Number, target.Title),
+		}
 	default:
 		return actionprompt.Config{
 			Mode:    actionprompt.ModeConfirm,
@@ -1082,6 +1135,10 @@ func actionLabel(kind actions.Kind) string {
 		return "Checkout"
 	case actions.KindSwitchBranch:
 		return "Switch branch"
+	case actions.KindRerunRun:
+		return "Rerun"
+	case actions.KindCancelRun:
+		return "Cancel run"
 	default:
 		return string(kind)
 	}

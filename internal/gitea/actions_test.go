@@ -211,6 +211,59 @@ func TestListActionJobsMapsWrappedResponse(t *testing.T) {
 	}
 }
 
+func TestRerunActionRunPostsRunControlEndpoint(t *testing.T) {
+	called := false
+	srv := actionServer(t, func(mux *http.ServeMux) {
+		mux.HandleFunc("/api/v1/repos/acme/widgets/actions/runs/101/rerun", func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if r.Header.Get("Authorization") != "token t" {
+				t.Fatalf("Authorization header = %q, want token auth", r.Header.Get("Authorization"))
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if err := c.RerunActionRun(context.Background(), "acme", "widgets", 101); err != nil {
+		t.Fatalf("RerunActionRun: %v", err)
+	}
+	if !called {
+		t.Fatal("rerun endpoint was not called")
+	}
+}
+
+func TestCancelActionRunPostsRunControlEndpoint(t *testing.T) {
+	called := false
+	srv := actionServer(t, func(mux *http.ServeMux) {
+		mux.HandleFunc("/api/v1/repos/acme/widgets/actions/runs/101/cancel", func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		})
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if err := c.CancelActionRun(context.Background(), "acme", "widgets", 101); err != nil {
+		t.Fatalf("CancelActionRun: %v", err)
+	}
+	if !called {
+		t.Fatal("cancel endpoint was not called")
+	}
+}
+
 func actionServer(t *testing.T, register func(*http.ServeMux)) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()

@@ -14,6 +14,8 @@ const (
 	KindExternalDiff Kind = "external_diff"
 	KindCheckout     Kind = "checkout"
 	KindSwitchBranch Kind = "switch_branch"
+	KindRerunRun     Kind = "rerun_run"
+	KindCancelRun    Kind = "cancel_run"
 )
 
 // RowKind identifies the selected row's domain type.
@@ -23,6 +25,7 @@ const (
 	RowKindPullRequest RowKind = "pull_request"
 	RowKindIssue       RowKind = "issue"
 	RowKindBranch      RowKind = "branch"
+	RowKindActionRun   RowKind = "action_run"
 )
 
 // PromptMode records which kind of prompt produced a submitted value.
@@ -42,6 +45,7 @@ type Target struct {
 	Repo           string
 	RepositoryPath string
 	Number         int64
+	RunID          int64
 	Title          string
 	URL            string
 }

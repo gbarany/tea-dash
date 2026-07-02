@@ -24,6 +24,8 @@ type keyMap struct {
 	Review        key.Binding
 	ExternalDiff  key.Binding
 	Checkout      key.Binding
+	RerunRun      key.Binding
+	CancelRun     key.Binding
 	CopyNumber    key.Binding
 	CopyURL       key.Binding
 	Help          key.Binding
@@ -39,7 +41,7 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("r", "refresh"),
 		),
 		RefreshAll: key.NewBinding(
-			key.WithKeys("R"),
+			key.WithKeys("R", "ctrl+r"),
 			key.WithHelp("R", "refresh all"),
 		),
 		Open: key.NewBinding(
@@ -109,6 +111,14 @@ func defaultKeyMap() keyMap {
 		Checkout: key.NewBinding(
 			key.WithKeys("C", " ", "space"),
 			key.WithHelp("C/space", "checkout"),
+		),
+		RerunRun: key.NewBinding(
+			key.WithKeys("R"),
+			key.WithHelp("R", "rerun"),
+		),
+		CancelRun: key.NewBinding(
+			key.WithKeys("!"),
+			key.WithHelp("!", "cancel run"),
 		),
 		CopyNumber: key.NewBinding(
 			key.WithKeys("y"),

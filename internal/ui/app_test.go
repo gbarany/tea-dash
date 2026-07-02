@@ -1367,6 +1367,85 @@ func TestBranchSwitchHotkeysDispatchExpectedIntent(t *testing.T) {
 	}
 }
 
+func TestActionsViewRunControlKeysDispatchExpectedIntents(t *testing.T) {
+	tests := []struct {
+		name       string
+		key        tea.KeyPressMsg
+		kind       actions.Kind
+		direct     bool
+		wantPrompt actions.Prompt
+	}{
+		{
+			name:   "rerun",
+			key:    tea.KeyPressMsg{Code: 'R', Text: "R"},
+			kind:   actions.KindRerunRun,
+			direct: true,
+		},
+		{
+			name: "cancel",
+			key:  tea.KeyPressMsg{Code: '!', Text: "!"},
+			kind: actions.KindCancelRun,
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptConfirm,
+				Value: "confirm",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{
+				Defaults: config.Defaults{View: "actions"},
+				ActionsSections: []config.SectionConfig{{
+					Title: "CI", Repo: "gbarany/tea-dash",
+				}},
+			}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, actionFetchedMsg([]data.ActionRun{{
+				ID: 101, RunNumber: 77, DisplayTitle: "Action row", WorkflowName: "CI",
+				RepoNameWithOwner: "gbarany/tea-dash", HTMLURL: "https://example.test/gbarany/tea-dash/actions/runs/101",
+			}}))
+
+			m = update(t, m, tt.key)
+			if tt.direct {
+				if m.actionPrompt.Active() {
+					t.Fatalf("%s key should dispatch directly without a prompt", tt.name)
+				}
+			} else {
+				if !m.actionPrompt.Active() {
+					t.Fatalf("%s key should open a confirmation prompt", tt.name)
+				}
+				m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			}
+
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:   0,
+				SectionType: actionsection.SectionType,
+				RowKind:     actions.RowKindActionRun,
+				Repo:        "gbarany/tea-dash",
+				Number:      77,
+				RunID:       101,
+				Title:       "Action row",
+				URL:         "https://example.test/gbarany/tea-dash/actions/runs/101",
+			}
+			if got[0].Kind != tt.kind || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want kind %q target %+v", got[0], tt.kind, wantTarget)
+			}
+			if tt.wantPrompt != (actions.Prompt{}) && got[0].Prompt != tt.wantPrompt {
+				t.Fatalf("prompt = %+v, want %+v", got[0].Prompt, tt.wantPrompt)
+			}
+		})
+	}
+}
+
 func TestBranchSwitchCurrentBranchShowsNotice(t *testing.T) {
 	var dispatched bool
 	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
@@ -1428,6 +1507,24 @@ func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
 	}
 }
 
+func TestActionsHelpShowsRunControlsAndRefreshAllFallback(t *testing.T) {
+	m := New(&config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{{
+			Title: "CI", Repo: "gbarany/tea-dash",
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	view := m.View().Content
+	for _, want := range []string{"R rerun", "! cancel run", "ctrl+r refresh all"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("actions full help missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {
 	cfg := &config.Config{
 		PRSections: []config.SectionConfig{
@@ -1465,6 +1562,45 @@ func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {
 	}
 	if len(m.tasks) != 2 {
 		t.Fatalf("len(tasks) = %d, want both sections to register refresh tasks", len(m.tasks))
+	}
+}
+
+func TestActionsViewRefreshAllUsesCtrlRBecauseRerunIsScopedToR(t *testing.T) {
+	cfg := &config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{
+			{Title: "CI", Repo: "gbarany/tea-dash"},
+			{Title: "Nightly", Repo: "gbarany/tea-dash"},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: actionsection.SectionType, TaskId: "a0",
+		Msg: actionsection.SectionActionsFetchedMsg{
+			Rows: []data.ActionRun{{
+				ID: 101, RunNumber: 77, DisplayTitle: "First row", RepoNameWithOwner: "gbarany/tea-dash",
+			}},
+			TotalCount: 1, TaskId: "a0",
+		},
+	})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 1, SectionType: actionsection.SectionType, TaskId: "a1",
+		Msg: actionsection.SectionActionsFetchedMsg{
+			Rows: []data.ActionRun{{
+				ID: 102, RunNumber: 78, DisplayTitle: "Second row", RepoNameWithOwner: "gbarany/tea-dash",
+			}},
+			TotalCount: 1, TaskId: "a1",
+		},
+	})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+r should batch refresh commands for all Actions sections")
+	}
+	if len(m.tasks) != 2 {
+		t.Fatalf("len(tasks) = %d, want both Actions sections to register refresh tasks", len(m.tasks))
 	}
 }
 
@@ -1641,6 +1777,44 @@ func TestSuccessfulBranchSwitchRefreshesBranches(t *testing.T) {
 	}
 	if len(m.tasks) != 1 {
 		t.Fatalf("len(tasks) = %d, want branch refresh task registered", len(m.tasks))
+	}
+}
+
+func TestSuccessfulActionRunControlRefreshesActionsAndClearsPreviewCache(t *testing.T) {
+	m := New(&config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{{
+			Title: "CI", Repo: "gbarany/tea-dash",
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, actionFetchedMsg([]data.ActionRun{{
+		ID: 101, RunNumber: 77, DisplayTitle: "Action row", WorkflowName: "CI",
+		RepoNameWithOwner: "gbarany/tea-dash",
+	}}))
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:    key,
+		action: &data.ActionRunDetail{Run: data.ActionRun{ID: 101, DisplayTitle: "staledetailtoken"}},
+	})
+	if _, ok := m.actionDetails[key]; !ok {
+		t.Fatalf("test setup: expected cached action detail for %q", key)
+	}
+
+	next, cmd := m.Update(actions.ResultMsg{
+		Intent: actions.Intent{Kind: actions.KindRerunRun, Target: actions.Target{
+			SectionID: 0, SectionType: actionsection.SectionType, RowKind: actions.RowKindActionRun,
+			Repo: "gbarany/tea-dash", Number: 77, RunID: 101,
+		}},
+		Status:  actions.ResultSucceeded,
+		Message: "Rerun requested for gbarany/tea-dash run #77.",
+	})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("successful action run control should refresh the affected Actions section")
+	}
+	if _, ok := m.actionDetails[key]; ok {
+		t.Fatalf("successful action run control should clear cached action detail for %q", key)
 	}
 }
 
