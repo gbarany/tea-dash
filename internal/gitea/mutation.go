@@ -268,6 +268,19 @@ func (c *Client) MergePullRequest(owner, repo string, index int64, opt data.Merg
 	return merged, nil
 }
 
+// UpdatePullRequest asks the server to update a PR branch with commits from its
+// base branch.
+func (c *Client) UpdatePullRequest(owner, repo string, index int64) error {
+	err := c.call(func() error {
+		_, e := c.sdk.UpdatePullRequest(owner, repo, index)
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("update pull request %s/%s#%d: %w", owner, repo, index, err)
+	}
+	return nil
+}
+
 // SubmitPullReview creates a submitted pull-request review.
 func (c *Client) SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error) {
 	event, err := mapPullReviewEvent(opt.Event)

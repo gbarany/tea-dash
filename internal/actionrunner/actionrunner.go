@@ -34,6 +34,7 @@ type Client interface {
 	AddLabels(owner, repo string, index int64, names []string) error
 	RemoveLabels(owner, repo string, index int64, names []string) error
 	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error)
+	UpdatePullRequest(owner, repo string, index int64) error
 	SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error)
 	GetPullDiff(owner, repo string, index int64) ([]byte, error)
 	RerunActionRun(ctx context.Context, owner, repo string, runID int64) error
@@ -261,6 +262,12 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		}
 		return fmt.Sprintf("Submitted review for %s#%d.", intent.Target.Repo, index), nil
 
+	case uiactions.KindUpdateBranch:
+		if err := r.client.UpdatePullRequest(owner, repo, index); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Updated %s#%d from its base branch.", intent.Target.Repo, index), nil
+
 	case uiactions.KindExternalDiff:
 		diff, err := r.client.GetPullDiff(owner, repo, index)
 		if err != nil {
@@ -481,6 +488,8 @@ func actionLabel(kind uiactions.Kind) string {
 		return "remove label"
 	case uiactions.KindMerge:
 		return "merge"
+	case uiactions.KindUpdateBranch:
+		return "update branch"
 	case uiactions.KindClose:
 		return "close"
 	case uiactions.KindReopen:

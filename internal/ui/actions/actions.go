@@ -12,6 +12,7 @@ const (
 	KindAddLabel      Kind = "add_label"
 	KindRemoveLabel   Kind = "remove_label"
 	KindMerge         Kind = "merge"
+	KindUpdateBranch  Kind = "update_branch"
 	KindClose         Kind = "close"
 	KindReopen        Kind = "reopen"
 	KindReview        Kind = "review"

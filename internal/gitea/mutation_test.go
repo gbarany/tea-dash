@@ -295,6 +295,22 @@ func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 	}
 }
 
+func TestUpdatePullRequestPostsUpdateEndpoint(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/44/update" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	if err := c.UpdatePullRequest("acme", "widgets", 44); err != nil {
+		t.Fatalf("UpdatePullRequest: %v", err)
+	}
+}
+
 func TestSubmitPullReviewPostsEventAndMapsResponse(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

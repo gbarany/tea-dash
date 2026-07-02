@@ -215,6 +215,20 @@ func TestDispatchMergeAndReview(t *testing.T) {
 	}
 }
 
+func TestDispatchUpdatePullRequest(t *testing.T) {
+	client := &fakeClient{}
+	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindUpdateBranch))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("update branch result = %+v", got)
+	}
+	if client.updatePull != 7 {
+		t.Fatalf("updatePull = %d, want 7", client.updatePull)
+	}
+	if !strings.Contains(got.Message, "Updated acme/widgets#7") {
+		t.Fatalf("message = %q, want update confirmation", got.Message)
+	}
+}
+
 func TestDispatchExternalDiffRunsConfiguredPager(t *testing.T) {
 	client := &fakeClient{diff: []byte("diff --git a/a b/a\n+hello\n")}
 	shellRunner := &fakeShellRunner{}
@@ -374,6 +388,7 @@ type fakeClient struct {
 	pullState     data.ItemState
 	merge         data.MergeOptions
 	review        data.PullReviewOptions
+	updatePull    int64
 	diff          []byte
 	rerunRunID    int64
 	cancelRunID   int64
@@ -441,6 +456,11 @@ func (f *fakeClient) MergePullRequest(_, _ string, _ int64, opt data.MergeOption
 func (f *fakeClient) SubmitPullReview(_, _ string, _ int64, opt data.PullReviewOptions) (data.Review, error) {
 	f.review = opt
 	return data.Review{State: data.ReviewState(opt.Event)}, f.err
+}
+
+func (f *fakeClient) UpdatePullRequest(_, _ string, index int64) error {
+	f.updatePull = index
+	return f.err
 }
 
 func (f *fakeClient) GetPullDiff(_, _ string, _ int64) ([]byte, error) {
