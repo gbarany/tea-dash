@@ -124,6 +124,10 @@ defaults:
   actionsLimit: 50       # rows fetched per Actions section (0 -> 50)
   branchesLimit: 0       # local branches shown (0 -> all)
 
+repos:
+  - acme/widgets         # PR/issue sections without repo: fan out across these repos
+  - acme/api             # omit repos to use the instance-wide cross-repo search endpoint
+
 localRepos:
   - name: tea-dash
     path: ~/src/tea-dash
@@ -138,9 +142,10 @@ git:
   remote: origin
   prBranchTemplate: "pr-{{.PrIndex}}"
 
-# Each section becomes a tab you page through with h/l. Omit prSections to get
-# two "@me"-authored PR defaults: open and closed pull requests. Omit
-# issuesSections to get one open "@me"-authored issues section.
+# Each section becomes a tab you page through with h/l. A section-level repo:
+# overrides global repos: for that tab. Omit prSections to get two
+# "@me"-authored PR defaults: open and closed pull requests. Omit issuesSections
+# to get one open "@me"-authored issues section.
 prSections:
   - title: Open PRs
     filter:
@@ -221,7 +226,13 @@ keybindings:
 `assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),
 `sort`. PR and issue sections fetch one page at a time; reaching the loaded
 bottom automatically requests the next page until the server total is loaded.
-The page size follows section `limit` -> per-view default -> 50.
+When `repos:` is configured, sections without their own `repo:` use the
+repo-scoped endpoint for each listed repo and merge the results by updated time;
+sections with `repo:` query only that repo. With neither `repos:` nor `repo:`,
+tea-dash uses the instance-wide cross-repo search endpoint. `reviewRequested`
+is the one exception: Gitea exposes it only on instance-wide PR search, so those
+sections ignore `repos:` and stay cross-repo. The page size follows section
+`limit` -> per-view default -> 50.
 
 `keybindings` follows gh-dash's shape: each entry has a `key`, optional `name`,
 and exactly one of `builtin` or `command`. Built-ins remap implemented tea-dash
@@ -231,8 +242,9 @@ actions; commands run through your shell with row template fields such as
 
 > **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
 > `reviewRequested`) support the sentinel `"@me"` on cross-repo sections.
-> Plain login filters such as `createdBy: alice` require `repo: owner/name`,
-> because Gitea's cross-repo search endpoint has no per-login author filter.
+> Plain login filters such as `createdBy: alice` require either global `repos:`
+> or section-level `repo: owner/name`, because Gitea's cross-repo search
+> endpoint has no per-login author filter.
 
 With or without a config file, tea-dash shows the pull requests and issues you
 authored, plus unread notifications, across every repo you can access on your

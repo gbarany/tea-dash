@@ -26,6 +26,7 @@ type SectionIssuesFetchedMsg = section.RowsFetchedMsg[data.Issue]
 
 // NewModel builds an issues section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
+	programCtx := ctx
 	return section.New(section.Options[data.Issue]{
 		Id:           id,
 		Ctx:          ctx,
@@ -39,11 +40,14 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		PluralForm:   "issues",
 		Limit:        func(c *config.Config) int { return c.Defaults.IssuesLimit },
 		Pageable:     true,
-		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.Issue, int, error) {
+		Fetch: func(fetchCtx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.Issue, int, error) {
 			if cfg.Repo != "" {
-				return c.ListRepoIssuesPage(ctx, cfg.Repo, f, limit, page)
+				return c.ListRepoIssuesPage(fetchCtx, cfg.Repo, f, limit, page)
 			}
-			return c.SearchIssuesPage(ctx, f, limit, page)
+			if programCtx != nil && programCtx.Config != nil && len(programCtx.Config.Repos) > 0 {
+				return c.ListReposIssuesPage(fetchCtx, programCtx.Config.Repos, f, limit, page)
+			}
+			return c.SearchIssuesPage(fetchCtx, f, limit, page)
 		},
 		BuildRow: issueBuildRow,
 	})

@@ -51,9 +51,13 @@ path is served by a small raw HTTP escape hatch (`rawGet`) calling
 `GET /repos/issues/search?type=pulls&created=true&state=…` and tolerantly
 decoding rows (unknown fields ignored). When a section declares
 `repo: owner/name`, tea-dash uses the typed repo issues endpoint instead, so
-plain login filters such as `createdBy: alice` can be honored. Results are
-mapped into the domain model, never leaking SDK/REST types past the transport
-boundary.
+plain login filters such as `createdBy: alice` can be honored. When global
+`repos:` is configured and a PR/issue section omits `repo:`, tea-dash fans out
+to that same repo-scoped endpoint for every listed repo, merges rows by updated
+time, and slices the requested global page for progressive loading. PR sections
+with `reviewRequested` stay on the cross-repo search endpoint because Gitea does
+not expose that filter on the repo issues endpoint. Results are mapped into the
+domain model, never leaking SDK/REST types past the transport boundary.
 
 ## Domain model
 
@@ -76,6 +80,6 @@ is denormalized — each row from the cross-repo search carries its own
 
 ## Roadmap (next steps)
 
-1. Multi-repo fan-out from `repos:` and smart cwd repo detection.
+1. Smart cwd repo detection to preselect or scaffold repo-scoped sections.
 2. Richer table columns / per-column layout configuration.
 3. Capability-probed fallbacks for version-sensitive Actions and review flows.
