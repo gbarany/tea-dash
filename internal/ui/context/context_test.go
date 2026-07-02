@@ -2,6 +2,8 @@ package context
 
 import (
 	"testing"
+
+	"github.com/gbarany/tea-dash/internal/config"
 )
 
 func TestDefaultStylesNonZero(t *testing.T) {
@@ -38,5 +40,28 @@ func TestGetViewSectionsConfigIssues(t *testing.T) {
 	}
 	if secs[0].Filter.CreatedBy != "@me" || secs[0].Filter.State != "open" {
 		t.Fatalf("default issues filter = %+v, want CreatedBy=@me State=open", secs[0].Filter)
+	}
+}
+
+func TestGetViewSectionsConfigActions(t *testing.T) {
+	ctx := &ProgramContext{View: ActionsView}
+	secs := ctx.GetViewSectionsConfig()
+	if len(secs) != 1 || secs[0].Title != "Actions" {
+		t.Fatalf("GetViewSectionsConfig(ActionsView) = %+v, want one empty-state section", secs)
+	}
+	if secs[0].Repo != "" {
+		t.Fatalf("default actions repo = %q, want blank repo for no-config empty state", secs[0].Repo)
+	}
+
+	ctx = &ProgramContext{
+		View: ActionsView,
+		Config: &config.Config{ActionsSections: []config.SectionConfig{{
+			Title: "CI",
+			Repo:  "acme/widgets",
+		}}},
+	}
+	secs = ctx.GetViewSectionsConfig()
+	if len(secs) != 1 || secs[0].Title != "CI" || secs[0].Repo != "acme/widgets" {
+		t.Fatalf("configured actions sections = %+v", secs)
 	}
 }
