@@ -432,6 +432,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindMerge)
 		case !m.scopedBuiltinOverridden("update") && key.Matches(msg, m.keys.UpdateBranch):
 			return m, m.startAction(actions.KindUpdateBranch)
+		case !m.scopedBuiltinOverridden("ready") && key.Matches(msg, m.keys.MarkReady):
+			return m, m.startAction(actions.KindMarkReady)
 		case !m.scopedBuiltinOverridden("close") && key.Matches(msg, m.keys.Close):
 			return m, m.startAction(actions.KindClose)
 		case !m.scopedBuiltinOverridden("reopen") && key.Matches(msg, m.keys.Reopen):
@@ -595,7 +597,7 @@ func (m Model) helpLine() string {
 		case context.BranchesView:
 			text += " · C/space switch"
 		default:
-			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
+			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 		}
 		return text + " · q quit"
 	}
@@ -614,7 +616,7 @@ func (m Model) helpLine() string {
 	case context.BranchesView:
 		text += " · C/space switch"
 	default:
-		text += " · c comment · a/A assign · L/U labels · m merge · u update · d/ctrl+t diff · C/space checkout"
+		text += " · c comment · a/A assign · L/U labels · m merge · u update · W ready · d/ctrl+t diff · C/space checkout"
 	}
 	return text + fmt.Sprintf(" · %s help · %s quit", keyHelp(m.keys.Help, "?"), keyHelp(m.keys.Quit, "q"))
 }
@@ -665,6 +667,9 @@ func (m Model) actionButtons() []actionButton {
 			buttons = append(buttons, actionButton{Label: "Close", Builtin: "close"})
 		}
 	default:
+		if pr, ok := row.(data.PullRequest); ok && pr.Draft {
+			buttons = append(buttons, actionButton{Label: "Ready", Builtin: "ready"})
+		}
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
 			actionButton{Label: "Diff", Builtin: "diff"},
@@ -1419,6 +1424,10 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindMerge), true
 	case "update", "updatebranch":
 		return m, m.startAction(actions.KindUpdateBranch), true
+	case "ready", "markready":
+		return m, m.startAction(actions.KindMarkReady), true
+	case "draft", "markdraft":
+		return m, m.startAction(actions.KindMarkDraft), true
 	case "close":
 		return m, m.startAction(actions.KindClose), true
 	case "reopen":
@@ -1530,7 +1539,7 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 
 func validateActionTarget(kind actions.Kind, target actions.Target) error {
 	switch kind {
-	case actions.KindMerge, actions.KindUpdateBranch, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
+	case actions.KindMerge, actions.KindUpdateBranch, actions.KindMarkReady, actions.KindMarkDraft, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
 		if target.RowKind != actions.RowKindPullRequest {
 			return fmt.Errorf("%s is only available for pull requests.", actionLabel(kind))
 		}
@@ -1648,6 +1657,10 @@ func actionLabel(kind actions.Kind) string {
 		return "Merge"
 	case actions.KindUpdateBranch:
 		return "Update branch"
+	case actions.KindMarkReady:
+		return "Mark ready"
+	case actions.KindMarkDraft:
+		return "Mark draft"
 	case actions.KindClose:
 		return "Close"
 	case actions.KindReopen:

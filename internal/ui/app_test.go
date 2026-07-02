@@ -229,6 +229,19 @@ func TestActionBarRendersCommonPullRequestButtons(t *testing.T) {
 	}
 }
 
+func TestActionBarRendersReadyButtonForDraftPullRequest(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true,
+	}}))
+
+	view := m.View().Content
+	if !strings.Contains(view, "[Ready]") {
+		t.Fatalf("draft PR action bar missing Ready button:\n%s", view)
+	}
+}
+
 func TestMouseClickActionButtonStartsPromptAction(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -244,6 +257,24 @@ func TestMouseClickActionButtonStartsPromptAction(t *testing.T) {
 	}
 	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindComment {
 		t.Fatalf("comment button prompt active=%v pending=%s, want comment prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
+	}
+}
+
+func TestMouseClickReadyActionButtonStartsPromptAction(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true,
+	}}))
+
+	x := actionButtonClickX(t, m, "Ready")
+	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatalf("ready button should open the prompt synchronously, got cmd %v", cmd)
+	}
+	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindMarkReady {
+		t.Fatalf("ready button prompt active=%v pending=%s, want mark-ready prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
 	}
 }
 
@@ -1466,6 +1497,7 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
 		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
 		{name: "update branch", key: tea.KeyPressMsg{Code: 'u', Text: "u"}, kind: actions.KindUpdateBranch},
+		{name: "mark ready", key: tea.KeyPressMsg{Code: 'W', Text: "W"}, kind: actions.KindMarkReady},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
 		{name: "external diff", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindExternalDiff},
 		{name: "external diff ctrl-t alias", key: tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, kind: actions.KindExternalDiff},
