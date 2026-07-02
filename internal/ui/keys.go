@@ -28,6 +28,7 @@ type keyMap struct {
 	CopyURL       key.Binding
 	Help          key.Binding
 	MarkRead      key.Binding
+	MarkUnread    key.Binding
 	MarkAllRead   key.Binding
 }
 
@@ -124,6 +125,10 @@ func defaultKeyMap() keyMap {
 		MarkRead: key.NewBinding(
 			key.WithKeys("m"),
 			key.WithHelp("m", "mark read"),
+		),
+		MarkUnread: key.NewBinding(
+			key.WithKeys("u"),
+			key.WithHelp("u", "mark unread"),
 		),
 		MarkAllRead: key.NewBinding(
 			key.WithKeys("M"),

@@ -709,6 +709,52 @@ func TestMarkSelectedNotificationReadRefreshesNotifications(t *testing.T) {
 	}
 }
 
+func TestMarkSelectedNotificationUnreadRefreshesNotifications(t *testing.T) {
+	var hit bool
+	client := newNotificationActionClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/notifications/threads/12" {
+				http.NotFound(w, r)
+				return
+			}
+			hit = true
+			if r.Method != http.MethodPatch {
+				t.Fatalf("method = %s, want PATCH", r.Method)
+			}
+			if got := r.URL.Query().Get("to-status"); got != "unread" {
+				t.Fatalf("to-status = %q, want unread", got)
+			}
+			fmt.Fprint(w, `{"id":12,"unread":true}`)
+		},
+		nil,
+	)
+	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, notificationFetchedMsg([]data.Notification{{
+		ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",
+		SubjectType: "Pull", SubjectState: "open", RepoNameWithOwner: "gbarany/tea-dash",
+		Unread: false, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	if cmd == nil {
+		t.Fatal("'u' on a notification should return a mark-unread command")
+	}
+	m = next.(Model)
+	msg := cmd()
+	if !hit {
+		t.Fatal("mark-unread command did not call the notification thread endpoint")
+	}
+	next, refresh := m.Update(msg)
+	m = next.(Model)
+	if refresh == nil {
+		t.Fatal("successful mark-unread should refresh the notifications section")
+	}
+	if !strings.Contains(m.notice, "Marked notification unread") {
+		t.Fatalf("notice = %q, want mark-unread confirmation", m.notice)
+	}
+}
+
 func TestMarkAllNotificationsReadRefreshesNotifications(t *testing.T) {
 	var hit bool
 	client := newNotificationActionClient(t,
@@ -1291,6 +1337,19 @@ func TestHelpKeyTogglesFullHelp(t *testing.T) {
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	if strings.Contains(m.View().Content, "R refresh all") {
 		t.Fatal("second '?' should hide full help")
+	}
+}
+
+func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	if view := m.View().Content; !strings.Contains(view, "u unread") {
+		t.Fatalf("compact notifications help missing unread shortcut:\n%s", view)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if view := m.View().Content; !strings.Contains(view, "u mark unread") {
+		t.Fatalf("full notifications help missing mark-unread shortcut:\n%s", view)
 	}
 }
 
