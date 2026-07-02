@@ -284,11 +284,11 @@ var universalBuiltins = builtinSet(
 )
 
 var prBuiltins = builtinSet(
-	"comment", "merge", "close", "reopen", "diff", "checkout", "approve",
-	"review", "summaryViewMore", "expand",
+	"comment", "assign", "unassign", "merge", "close", "reopen", "diff",
+	"checkout", "approve", "review", "summaryViewMore", "expand",
 )
 
-var issueBuiltins = builtinSet("comment", "close", "reopen")
+var issueBuiltins = builtinSet("comment", "assign", "unassign", "close", "reopen")
 
 var notificationBuiltins = builtinSet(
 	"openGithub", "open", "markAsRead", "markRead", "markAsUnread",

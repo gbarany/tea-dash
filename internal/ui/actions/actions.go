@@ -7,6 +7,8 @@ type Kind string
 
 const (
 	KindComment       Kind = "comment"
+	KindAssign        Kind = "assign"
+	KindUnassign      Kind = "unassign"
 	KindMerge         Kind = "merge"
 	KindClose         Kind = "close"
 	KindReopen        Kind = "reopen"

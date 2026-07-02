@@ -255,6 +255,10 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 	ok := Config{Keybindings: Keybindings{Universal: []Keybinding{
 		{Key: "R", Builtin: "refreshAll"},
 		{Key: "g", Command: "lazygit"},
+	}, PRs: []Keybinding{
+		{Key: "a", Builtin: "assign"},
+	}, Issues: []Keybinding{
+		{Key: "A", Builtin: "unassign"},
 	}}}
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("Validate() rejected valid keybindings: %v", err)
