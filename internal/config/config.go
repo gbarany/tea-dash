@@ -21,8 +21,8 @@ type Config struct {
 	Instance Instance `yaml:"instance"`
 	// Login is a deprecated alias for Instance.Login (tea login profile name).
 	Login string `yaml:"login"`
-	// Repos lists remote Gitea repositories to watch. Unused in M0; per-repo
-	// sections return in M1.
+	// Repos lists remote Gitea repositories to watch. Section-level Repo is the
+	// active per-repo path; multi-repo fan-out through Repos is still reserved.
 	Repos []string `yaml:"repos"`
 	// LocalRepos lists local git repository paths for read-only branch status.
 	LocalRepos []LocalRepoConfig `yaml:"localRepos"`
@@ -175,10 +175,21 @@ type PrIssueFilter struct {
 	Actor   string `yaml:"actor"`
 }
 
-// Validate rejects unsupported me-scoped author values. The cross-repo search
+// Validate rejects unsupported cross-repo author values. The cross-repo search
 // endpoint has no per-login author filter, so CreatedBy/AssignedBy/Mentioned/
 // ReviewRequested may only be empty or the "@me" sentinel.
 func (f PrIssueFilter) Validate() error {
+	return f.validate(false)
+}
+
+// ValidateForRepo validates a filter in the context of a section's optional
+// repo. Repo-scoped sections can use per-login CreatedBy/AssignedBy/Mentioned
+// filters because the repo issues endpoint supports them.
+func (f PrIssueFilter) ValidateForRepo(repo string) error {
+	return f.validate(strings.TrimSpace(repo) != "")
+}
+
+func (f PrIssueFilter) validate(repoScoped bool) error {
 	for _, field := range []struct {
 		name string
 		val  string
@@ -186,11 +197,28 @@ func (f PrIssueFilter) Validate() error {
 		{"createdBy", f.CreatedBy},
 		{"assignedBy", f.AssignedBy},
 		{"mentioned", f.Mentioned},
-		{"reviewRequested", f.ReviewRequested},
 	} {
-		if field.val != "" && field.val != "@me" {
+		if field.val != "" && field.val != "@me" && !repoScoped {
 			return fmt.Errorf("filter.%s = %q: only \"@me\" is supported (the cross-repo search endpoint has no per-login author filter)", field.name, field.val)
 		}
+	}
+	if repoScoped && f.ReviewRequested != "" {
+		return fmt.Errorf("filter.reviewRequested is only supported on cross-repo sections")
+	}
+	if !repoScoped && f.ReviewRequested != "" && f.ReviewRequested != "@me" {
+		return fmt.Errorf("filter.reviewRequested = %q: only \"@me\" is supported", f.ReviewRequested)
+	}
+	return nil
+}
+
+func validatePrIssueSection(kind string, s SectionConfig) error {
+	if strings.TrimSpace(s.Repo) != "" {
+		if _, err := ParseRepo(s.Repo); err != nil {
+			return fmt.Errorf("%s.repo: %w", kind, err)
+		}
+	}
+	if err := s.Filter.ValidateForRepo(s.Repo); err != nil {
+		return err
 	}
 	return nil
 }
@@ -199,12 +227,12 @@ func (f PrIssueFilter) Validate() error {
 // default view, returning the first error found.
 func (c *Config) Validate() error {
 	for _, s := range c.PRSections {
-		if err := s.Filter.Validate(); err != nil {
+		if err := validatePrIssueSection("prSections", s); err != nil {
 			return err
 		}
 	}
 	for _, s := range c.IssuesSections {
-		if err := s.Filter.Validate(); err != nil {
+		if err := validatePrIssueSection("issuesSections", s); err != nil {
 			return err
 		}
 	}

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	sdk "code.gitea.io/sdk/gitea"
+
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
 )
@@ -159,6 +161,113 @@ func (c *Client) SearchIssuesPage(ctx context.Context, f config.PrIssueFilter, l
 	return issues, total, nil
 }
 
+// ListRepoPullsPage returns pull requests from one repository using the repo
+// issues endpoint with type=pulls. That endpoint supports the richer issue-style
+// filters (labels, milestones, keyword, created_by/assigned_by/mentioned_by)
+// that the typed pull-list endpoint lacks.
+func (c *Client) ListRepoPullsPage(ctx context.Context, repoFull string, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
+	f = f.WithDefaults("pulls")
+	rows, total, err := c.listRepoIssueRowsPage(ctx, repoFull, f, sdk.IssueTypePull, limit, page)
+	if err != nil {
+		return nil, 0, err
+	}
+	prs := make([]data.PullRequest, 0, len(rows))
+	for _, it := range rows {
+		if it != nil {
+			prs = append(prs, mapSDKIssueToPull(repoFull, it))
+		}
+	}
+	return prs, total, nil
+}
+
+// ListRepoIssuesPage returns issues from one repository through the typed SDK,
+// preserving repo-scoped login filters that cross-repo search cannot express.
+func (c *Client) ListRepoIssuesPage(ctx context.Context, repoFull string, f config.PrIssueFilter, limit, page int) ([]data.Issue, int, error) {
+	f = f.WithDefaults("issues")
+	rows, total, err := c.listRepoIssueRowsPage(ctx, repoFull, f, sdk.IssueTypeIssue, limit, page)
+	if err != nil {
+		return nil, 0, err
+	}
+	issues := make([]data.Issue, 0, len(rows))
+	for _, it := range rows {
+		if it != nil {
+			issues = append(issues, mapSDKIssue(repoFull, it))
+		}
+	}
+	return issues, total, nil
+}
+
+func (c *Client) listRepoIssueRowsPage(ctx context.Context, repoFull string, f config.PrIssueFilter, typ sdk.IssueType, limit, page int) ([]*sdk.Issue, int, error) {
+	_ = ctx // The SDK context is pinned at client construction; raw calls use per-request contexts.
+	repo, err := config.ParseRepo(repoFull)
+	if err != nil {
+		return nil, 0, err
+	}
+	opt, err := c.repoIssueListOptions(f, typ, limit, page)
+	if err != nil {
+		return nil, 0, err
+	}
+	var rows []*sdk.Issue
+	var resp *sdk.Response
+	if err := c.call(func() error {
+		var e error
+		rows, resp, e = c.sdk.ListRepoIssues(repo.Owner, repo.Name, opt)
+		return e
+	}); err != nil {
+		return nil, 0, fmt.Errorf("list repo issues %s: %w", repoFull, err)
+	}
+	return rows, totalFromSDKResponse(resp, len(rows)), nil
+}
+
+func (c *Client) repoIssueListOptions(f config.PrIssueFilter, typ sdk.IssueType, limit, page int) (sdk.ListIssueOption, error) {
+	opt := sdk.ListIssueOption{
+		ListOptions: sdk.ListOptions{Page: page, PageSize: normalizeLimit(limit)},
+		State:       sdk.StateType(f.State),
+		Type:        typ,
+		Labels:      f.Labels,
+		KeyWord:     f.Q,
+		CreatedBy:   repoLoginFilter(f.CreatedBy, c.me),
+		AssignedBy:  repoLoginFilter(f.AssignedBy, c.me),
+		MentionedBy: repoLoginFilter(f.Mentioned, c.me),
+	}
+	if f.Milestone != "" {
+		opt.Milestones = []string{f.Milestone}
+	}
+	if f.Since != "" {
+		since, err := time.Parse(time.RFC3339, f.Since)
+		if err != nil {
+			return sdk.ListIssueOption{}, fmt.Errorf("parse filter.since %q: %w", f.Since, err)
+		}
+		opt.Since = since
+	}
+	return opt, nil
+}
+
+func repoLoginFilter(v, me string) string {
+	if v == "@me" {
+		return me
+	}
+	return v
+}
+
+func normalizeLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	return limit
+}
+
+func totalFromSDKResponse(resp *sdk.Response, fallback int) int {
+	if resp != nil && resp.Response != nil {
+		if v := resp.Header.Get("X-Total-Count"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				return n
+			}
+		}
+	}
+	return fallback
+}
+
 func mapSearchIssue(it searchIssue) data.PullRequest {
 	pr := data.PullRequest{
 		Number:    it.Number,
@@ -186,6 +295,29 @@ func mapSearchIssue(it searchIssue) data.PullRequest {
 	return pr
 }
 
+func mapSDKIssueToPull(repoFull string, it *sdk.Issue) data.PullRequest {
+	pr := data.PullRequest{
+		Number:            it.Index,
+		Title:             it.Title,
+		State:             string(it.State),
+		HTMLURL:           it.HTMLURL,
+		RepoNameWithOwner: repoFull,
+		CreatedAt:         it.Created,
+		UpdatedAt:         it.Updated,
+		Labels:            mapSDKLabels(it.Labels),
+	}
+	if it.Poster != nil {
+		pr.Author = it.Poster.UserName
+	}
+	if it.Repository != nil && it.Repository.FullName != "" {
+		pr.RepoNameWithOwner = it.Repository.FullName
+	}
+	if it.PullRequest != nil && it.PullRequest.HasMerged {
+		pr.State = "merged"
+	}
+	return pr
+}
+
 // mapSearchIssueToIssue maps a search row into the issue domain type. Unlike
 // mapSearchIssue it carries no Draft/Merged; State is used as returned.
 func mapSearchIssueToIssue(it searchIssue) data.Issue {
@@ -207,6 +339,36 @@ func mapSearchIssueToIssue(it searchIssue) data.Issue {
 		issue.Labels = append(issue.Labels, data.Label{Name: l.Name, Color: l.Color})
 	}
 	return issue
+}
+
+func mapSDKIssue(repoFull string, it *sdk.Issue) data.Issue {
+	issue := data.Issue{
+		Number:            it.Index,
+		Title:             it.Title,
+		State:             string(it.State),
+		HTMLURL:           it.HTMLURL,
+		RepoNameWithOwner: repoFull,
+		CreatedAt:         it.Created,
+		UpdatedAt:         it.Updated,
+		Labels:            mapSDKLabels(it.Labels),
+	}
+	if it.Poster != nil {
+		issue.Author = it.Poster.UserName
+	}
+	if it.Repository != nil && it.Repository.FullName != "" {
+		issue.RepoNameWithOwner = it.Repository.FullName
+	}
+	return issue
+}
+
+func mapSDKLabels(labels []*sdk.Label) []data.Label {
+	out := make([]data.Label, 0, len(labels))
+	for _, l := range labels {
+		if l != nil {
+			out = append(out, data.Label{Name: l.Name, Color: l.Color})
+		}
+	}
+	return out
 }
 
 // rawGet issues an authenticated GET against {baseURL}/api/v1{path} using the
