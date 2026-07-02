@@ -90,6 +90,7 @@ tea-dash --help
 | `c`             | add comment             |
 | `a` / `A`       | assign / unassign yourself |
 | `L` / `U`       | add / remove labels     |
+| `M`             | set issue milestone     |
 | `m`             | merge PR                |
 | `u`             | update PR branch from its base branch |
 | `W`             | mark draft PR ready for review |
@@ -233,6 +234,8 @@ keybindings:
       builtin: addLabel
     - key: U
       builtin: removeLabel
+    - key: M
+      builtin: setMilestone
     - key: i
       command: echo issue {{.IssueNumber}} in {{.RepoName}}
   notifications:

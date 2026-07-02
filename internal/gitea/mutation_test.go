@@ -254,6 +254,50 @@ func TestAddLabelsUnknownNameErrors(t *testing.T) {
 	}
 }
 
+func TestSetIssueMilestoneResolvesTitleAndPatchesID(t *testing.T) {
+	var patchedID float64
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/widgets/milestones":
+			if got := r.URL.Query().Get("name"); got != "v1.2" {
+				t.Fatalf("milestone name query = %q, want v1.2", got)
+			}
+			fmt.Fprint(w, `[{"id":17,"title":"v1.2","state":"open"}]`)
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/repos/acme/widgets/issues/42":
+			body := decodeMutationBody(t, r)
+			var ok bool
+			patchedID, ok = body["milestone"].(float64)
+			if !ok {
+				t.Fatalf("milestone body = %#v", body)
+			}
+			fmt.Fprint(w, `{"number":42,"milestone":{"id":17,"title":"v1.2"}}`)
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.String())
+		}
+	})
+
+	if err := c.SetIssueMilestone("acme", "widgets", 42, "v1.2"); err != nil {
+		t.Fatalf("SetIssueMilestone: %v", err)
+	}
+	if patchedID != 17 {
+		t.Fatalf("patched milestone = %v, want 17", patchedID)
+	}
+}
+
+func TestSetIssueMilestoneUnknownTitleErrors(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/repos/acme/widgets/milestones" {
+			t.Fatalf("%s %s", r.Method, r.URL.String())
+		}
+		fmt.Fprint(w, `[{"id":17,"title":"v1.2","state":"open"}]`)
+	})
+
+	err := c.SetIssueMilestone("acme", "widgets", 42, "missing")
+	if err == nil || !strings.Contains(err.Error(), `unknown milestone "missing"`) {
+		t.Fatalf("SetIssueMilestone unknown error = %v", err)
+	}
+}
+
 func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

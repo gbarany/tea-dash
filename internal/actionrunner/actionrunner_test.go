@@ -182,6 +182,41 @@ func TestDispatchLabelsRejectUnsupportedRows(t *testing.T) {
 	}
 }
 
+func TestDispatchSetIssueMilestone(t *testing.T) {
+	client := &fakeClient{}
+	intent := issueIntent(uiactions.KindSetMilestone)
+	intent.Prompt.Value = "v1.2"
+
+	got := runDispatch(t, New(Options{Client: client}), intent)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("set milestone result = %+v", got)
+	}
+	if client.milestoneIndex != 7 || client.milestoneTitle != "v1.2" {
+		t.Fatalf("milestone index=%d title=%q, want #7 v1.2", client.milestoneIndex, client.milestoneTitle)
+	}
+	if !strings.Contains(got.Message, `Set milestone "v1.2" on acme/widgets#7`) {
+		t.Fatalf("message = %q, want set milestone confirmation", got.Message)
+	}
+}
+
+func TestDispatchSetMilestoneRejectsEmptyAndUnsupportedRows(t *testing.T) {
+	empty := issueIntent(uiactions.KindSetMilestone)
+	empty.Prompt.Value = "  "
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), empty)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "milestone title cannot be empty") {
+		t.Fatalf("empty milestone result = %+v", got)
+	}
+
+	pull := pullIntent(uiactions.KindSetMilestone)
+	pull.Prompt.Value = "v1.2"
+	got = runDispatch(t, New(Options{Client: &fakeClient{}}), pull)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "only available for issues") {
+		t.Fatalf("pull milestone result = %+v", got)
+	}
+}
+
 func TestDispatchMergeAndReview(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})
@@ -429,6 +464,8 @@ type fakeClient struct {
 	labelIndex       int64
 	addLabels        []string
 	removeLabels     []string
+	milestoneIndex   int64
+	milestoneTitle   string
 	markReadyChanged bool
 	markDraftChanged bool
 }
@@ -477,6 +514,12 @@ func (f *fakeClient) AddLabels(_, _ string, index int64, names []string) error {
 func (f *fakeClient) RemoveLabels(_, _ string, index int64, names []string) error {
 	f.labelIndex = index
 	f.removeLabels = append([]string(nil), names...)
+	return f.err
+}
+
+func (f *fakeClient) SetIssueMilestone(_, _ string, index int64, title string) error {
+	f.milestoneIndex = index
+	f.milestoneTitle = title
 	return f.err
 }
 

@@ -1696,6 +1696,65 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 	}
 }
 
+func TestIssueMilestoneKeyDispatchesExpectedIntent(t *testing.T) {
+	var got []actions.Intent
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+		got = append(got, intent)
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 42, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/issues/42",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'M', Text: "M"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("'M' in Issues should open a milestone prompt")
+	}
+	for _, key := range []tea.KeyPressMsg{{Code: 'v', Text: "v"}, {Code: '1', Text: "1"}} {
+		m = update(t, m, key)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(got) != 1 {
+		t.Fatalf("dispatcher calls = %d, want 1", len(got))
+	}
+	wantTarget := actions.Target{
+		SectionID:   0,
+		SectionType: issuesection.SectionType,
+		RowKind:     actions.RowKindIssue,
+		Repo:        "gbarany/tea-dash",
+		Number:      42,
+		Title:       "Issue row",
+		URL:         "https://example.test/gbarany/tea-dash/issues/42",
+		Author:      "me",
+	}
+	if got[0].Kind != actions.KindSetMilestone || got[0].Target != wantTarget ||
+		got[0].Prompt.Mode != actions.PromptText || got[0].Prompt.Value != "v1" {
+		t.Fatalf("intent = %+v, want set-milestone target %+v value v1", got[0], wantTarget)
+	}
+}
+
+func TestIssueActionButtonsIncludeMilestone(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 42, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/issues/42",
+	}}))
+
+	found := false
+	for _, b := range m.actionButtons() {
+		if b.Label == "Milestone" && b.Builtin == "setMilestone" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("milestone action button not found in %+v", m.actionButtons())
+	}
+}
+
 func TestBranchSwitchHotkeysDispatchExpectedIntent(t *testing.T) {
 	tests := []struct {
 		name string

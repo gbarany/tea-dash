@@ -33,6 +33,7 @@ type Client interface {
 	UnassignIssueFromMe(owner, repo string, index int64) error
 	AddLabels(owner, repo string, index int64, names []string) error
 	RemoveLabels(owner, repo string, index int64, names []string) error
+	SetIssueMilestone(owner, repo string, index int64, title string) error
 	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error)
 	UpdatePullRequest(owner, repo string, index int64) error
 	MarkPullReady(owner, repo string, index int64) (bool, error)
@@ -239,6 +240,19 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			return "", err
 		}
 		return fmt.Sprintf("Removed labels from %s#%d.", intent.Target.Repo, index), nil
+
+	case uiactions.KindSetMilestone:
+		title := strings.TrimSpace(intent.Prompt.Value)
+		if title == "" {
+			return "", fmt.Errorf("milestone title cannot be empty")
+		}
+		if intent.Target.RowKind != uiactions.RowKindIssue {
+			return "", fmt.Errorf("set milestone is only available for issues")
+		}
+		if err := r.client.SetIssueMilestone(owner, repo, index, title); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Set milestone %q on %s#%d.", title, intent.Target.Repo, index), nil
 
 	case uiactions.KindMerge:
 		style, err := mergeStyle(intent.Prompt.Value)
@@ -508,6 +522,8 @@ func actionLabel(kind uiactions.Kind) string {
 		return "add label"
 	case uiactions.KindRemoveLabel:
 		return "remove label"
+	case uiactions.KindSetMilestone:
+		return "set milestone"
 	case uiactions.KindMerge:
 		return "merge"
 	case uiactions.KindUpdateBranch:

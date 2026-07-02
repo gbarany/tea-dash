@@ -246,6 +246,48 @@ func (c *Client) resolveLabelIDs(owner, repo string, names []string) ([]int64, e
 	return ids, nil
 }
 
+// SetIssueMilestone sets an issue milestone by exact milestone title.
+func (c *Client) SetIssueMilestone(owner, repo string, index int64, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return fmt.Errorf("milestone title cannot be empty")
+	}
+
+	var milestones []*sdk.Milestone
+	err := c.call(func() error {
+		var e error
+		milestones, _, e = c.sdk.ListRepoMilestones(owner, repo, sdk.ListMilestoneOption{
+			ListOptions: sdk.ListOptions{Page: -1},
+			State:       sdk.StateAll,
+			Name:        title,
+		})
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("list milestones for %s/%s: %w", owner, repo, err)
+	}
+
+	var id int64
+	for _, milestone := range milestones {
+		if milestone != nil && milestone.Title == title {
+			id = milestone.ID
+			break
+		}
+	}
+	if id == 0 {
+		return fmt.Errorf("unknown milestone %q in %s/%s", title, owner, repo)
+	}
+
+	err = c.call(func() error {
+		_, _, e := c.sdk.EditIssue(owner, repo, index, sdk.EditIssueOption{Milestone: &id})
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("set milestone %q on %s/%s#%d: %w", title, owner, repo, index, err)
+	}
+	return nil
+}
+
 // MergePullRequest merges a pull request with the requested strategy and
 // optional server-side controls.
 func (c *Client) MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error) {
