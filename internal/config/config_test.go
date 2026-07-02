@@ -499,3 +499,111 @@ func TestLoadMalformedFileErrors(t *testing.T) {
 		t.Fatal("expected a parse error for malformed config YAML")
 	}
 }
+
+func TestResolvePathExplicitWins(t *testing.T) {
+	t.Setenv("TEA_DASH_CONFIG", filepath.Join(t.TempDir(), "env.yml"))
+	explicit := filepath.Join(t.TempDir(), "explicit.yml")
+
+	got, err := ResolvePathFrom(explicit, t.TempDir())
+	if err != nil {
+		t.Fatalf("ResolvePathFrom: %v", err)
+	}
+	if got != explicit {
+		t.Fatalf("ResolvePathFrom explicit = %q, want %q", got, explicit)
+	}
+}
+
+func TestResolvePathUsesEnv(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), "env.yml")
+	t.Setenv("TEA_DASH_CONFIG", envPath)
+
+	got, err := ResolvePathFrom("", t.TempDir())
+	if err != nil {
+		t.Fatalf("ResolvePathFrom: %v", err)
+	}
+	if got != envPath {
+		t.Fatalf("ResolvePathFrom env = %q, want %q", got, envPath)
+	}
+}
+
+func TestResolvePathFindsRepoRootConfig(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: /tmp/worktree\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(repo, ".tea-dash.yml")
+	if err := os.WriteFile(want, []byte("defaults:\n  view: issues\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwd := filepath.Join(repo, "nested", "pkg")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolvePathFrom("", cwd)
+	if err != nil {
+		t.Fatalf("ResolvePathFrom: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolvePathFrom repo config = %q, want %q", got, want)
+	}
+}
+
+func TestResolvePathFindsRepoRootYamlFallback(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(repo, ".tea-dash.yaml")
+	if err := os.WriteFile(want, []byte("defaults:\n  view: branches\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolvePathFrom("", repo)
+	if err != nil {
+		t.Fatalf("ResolvePathFrom: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolvePathFrom repo config = %q, want %q", got, want)
+	}
+}
+
+func TestResolvePathFallsBackToXDGConfig(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	cwd := t.TempDir()
+
+	got, err := ResolvePathFrom("", cwd)
+	if err != nil {
+		t.Fatalf("ResolvePathFrom: %v", err)
+	}
+	want := filepath.Join(configHome, "tea-dash", "config.yml")
+	if got != want {
+		t.Fatalf("ResolvePathFrom default = %q, want %q", got, want)
+	}
+}
+
+func TestLoadUsesRepoRootConfig(t *testing.T) {
+	t.Setenv("TEA_DASH_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".tea-dash.yml"), []byte("defaults:\n  view: issues\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwd := filepath.Join(repo, "nested")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Defaults.View != "issues" {
+		t.Fatalf("Defaults.View = %q, want issues from repo-local config", cfg.Defaults.View)
+	}
+}

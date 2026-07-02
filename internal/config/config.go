@@ -492,7 +492,9 @@ func (c *Config) ParsedRepos() ([]Repo, error) {
 	return repos, nil
 }
 
-// Path returns the config file path:
+const envConfigPath = "TEA_DASH_CONFIG"
+
+// Path returns the default config file path:
 // $XDG_CONFIG_HOME/tea-dash/config.yml (falling back to ~/.config).
 func Path() (string, error) {
 	dir := os.Getenv("XDG_CONFIG_HOME")
@@ -506,10 +508,63 @@ func Path() (string, error) {
 	return filepath.Join(dir, "tea-dash", "config.yml"), nil
 }
 
+// ResolvePath returns the config path tea-dash should read, following the same
+// precedence as the CLI:
+//
+//	explicit path -> TEA_DASH_CONFIG -> repo-root .tea-dash.yml/.tea-dash.yaml -> XDG default
+func ResolvePath(explicit string) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return ResolvePathFrom(explicit, cwd)
+}
+
+// ResolvePathFrom is ResolvePath with an injected cwd for tests.
+func ResolvePathFrom(explicit, cwd string) (string, error) {
+	if p := strings.TrimSpace(explicit); p != "" {
+		return ExpandPath(p)
+	}
+	if p := strings.TrimSpace(os.Getenv(envConfigPath)); p != "" {
+		return ExpandPath(p)
+	}
+	if p, ok := findRepoConfig(cwd); ok {
+		return p, nil
+	}
+	return Path()
+}
+
+func findRepoConfig(cwd string) (string, bool) {
+	dir, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", false
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			for _, name := range []string{".tea-dash.yml", ".tea-dash.yaml"} {
+				p := filepath.Join(dir, name)
+				if _, err := os.Stat(p); err == nil {
+					return p, true
+				}
+			}
+			return "", false
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
 // Load reads the config file. A missing file is not an error: it returns an
 // empty Config so tea-dash can fall back to the repository in $PWD.
-func Load() (*Config, error) {
-	path, err := Path()
+func Load(configPath ...string) (*Config, error) {
+	explicit := ""
+	if len(configPath) > 0 {
+		explicit = configPath[0]
+	}
+	path, err := ResolvePath(explicit)
 	if err != nil {
 		return nil, err
 	}

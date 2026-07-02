@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -19,25 +20,63 @@ import (
 )
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		switch arg {
-		case "-v", "--version", "version":
-			fmt.Println("tea-dash", build.String())
-			return
-		case "-h", "--help", "help":
-			fmt.Println(usage)
-			return
-		}
+	opts, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tea-dash:", err)
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
+	if opts.showVersion {
+		fmt.Println("tea-dash", build.String())
+		return
+	}
+	if opts.showHelp {
+		fmt.Println(usage)
+		return
 	}
 
-	if err := run(); err != nil {
+	if err := run(opts); err != nil {
 		fmt.Fprintln(os.Stderr, "tea-dash:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	cfg, err := config.Load()
+type cliOptions struct {
+	configPath  string
+	showVersion bool
+	showHelp    bool
+}
+
+func parseArgs(args []string) (cliOptions, error) {
+	var opts cliOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-v" || arg == "--version" || arg == "version":
+			opts.showVersion = true
+		case arg == "-h" || arg == "--help" || arg == "help":
+			opts.showHelp = true
+		case arg == "-c" || arg == "--config":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return cliOptions{}, fmt.Errorf("%s requires a path", arg)
+			}
+			i++
+			opts.configPath = args[i]
+		case strings.HasPrefix(arg, "--config="):
+			path := strings.TrimSpace(strings.TrimPrefix(arg, "--config="))
+			if path == "" {
+				return cliOptions{}, fmt.Errorf("--config requires a path")
+			}
+			opts.configPath = path
+		default:
+			return cliOptions{}, fmt.Errorf("unknown argument %q", arg)
+		}
+	}
+	return opts, nil
+}
+
+func run(opts cliOptions) error {
+	cfg, err := config.Load(opts.configPath)
 	if err != nil {
 		return err
 	}
@@ -119,9 +158,11 @@ func expandHome(path string) string {
 const usage = `tea-dash — a terminal dashboard for Gitea
 
 Usage:
-  tea-dash            start the dashboard (your open pull requests)
-  tea-dash --version  print version information
-  tea-dash --help     show this help
+  tea-dash                 start the dashboard
+  tea-dash --config <path> use a specific config file
+  tea-dash --version       print version information
+  tea-dash --help          show this help
 
-tea-dash reuses your ` + "`tea`" + ` login (run ` + "`tea login add`" + ` once), or set
-instance.url + instance.token in ~/.config/tea-dash/config.yml.`
+Config lookup order:
+  --config/-c, TEA_DASH_CONFIG, repo-local .tea-dash.yml/.tea-dash.yaml,
+  then $XDG_CONFIG_HOME/tea-dash/config.yml.`
