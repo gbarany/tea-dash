@@ -2,11 +2,15 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+	"text/template"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,26 +21,79 @@ type Config struct {
 	Instance Instance `yaml:"instance"`
 	// Login is a deprecated alias for Instance.Login (tea login profile name).
 	Login string `yaml:"login"`
-	// Repos lists repositories to watch. Unused in M0; per-repo sections
-	// return in M1.
+	// Repos lists remote Gitea repositories to watch. Unused in M0; per-repo
+	// sections return in M1.
 	Repos []string `yaml:"repos"`
-	// PRSections, IssuesSections, and NotificationsSections configure the tabs
-	// for their respective views. Empty falls back to a default section.
+	// LocalRepos lists local git repository paths for read-only branch status.
+	LocalRepos []LocalRepoConfig `yaml:"localRepos"`
+	// PRSections, IssuesSections, NotificationsSections, ActionsSections, and BranchSections
+	// configure tabs for their respective views. Empty falls back to a default
+	// section.
 	PRSections            []SectionConfig `yaml:"prSections"`
 	IssuesSections        []SectionConfig `yaml:"issuesSections"`
 	NotificationsSections []SectionConfig `yaml:"notificationsSections"`
+	ActionsSections       []SectionConfig `yaml:"actionsSections"`
+	BranchSections        []SectionConfig `yaml:"branchSections"`
 	// Defaults sets the startup view and per-view row limits.
 	Defaults Defaults `yaml:"defaults"`
+	// Pager configures external pager commands.
+	Pager Pager `yaml:"pager"`
+	// RepoPaths maps repo names or wildcard patterns (for example "fcmb/*")
+	// to local checkout paths.
+	RepoPaths map[string]string `yaml:"repoPaths"`
+	// Git configures local git checkout behavior.
+	Git Git `yaml:"git"`
 }
 
-// Defaults holds startup and limit defaults. PRsLimit and IssuesLimit set the
-// per-view row-fetch cap used when a section omits its own Limit. Precedence:
-// section Limit -> per-view default -> 50.
+// Defaults holds startup and limit defaults. Per-view limits set the row-fetch
+// cap used when a section omits its own Limit. Precedence: section Limit ->
+// per-view default -> 50.
 type Defaults struct {
-	View               string `yaml:"view"` // "prs" | "issues" | "notifications"
+	View               string `yaml:"view"` // "prs" | "issues" | "notifications" | "actions" | "branches"
 	PRsLimit           int    `yaml:"prsLimit"`
 	IssuesLimit        int    `yaml:"issuesLimit"`
 	NotificationsLimit int    `yaml:"notificationsLimit"`
+	ActionsLimit       int    `yaml:"actionsLimit"`
+	BranchesLimit      int    `yaml:"branchesLimit"`
+}
+
+// Pager configures external pager commands.
+type Pager struct {
+	Diff string `yaml:"diff"`
+}
+
+// DiffCommand returns the configured diff pager command, then $PAGER, then the
+// less fallback that preserves ANSI color.
+func (p Pager) DiffCommand() string {
+	if diff := strings.TrimSpace(p.Diff); diff != "" {
+		return diff
+	}
+	if pager := strings.TrimSpace(os.Getenv("PAGER")); pager != "" {
+		return pager
+	}
+	return "less -R"
+}
+
+// Git configures local git checkout behavior.
+type Git struct {
+	Remote           string `yaml:"remote"`
+	PRBranchTemplate string `yaml:"prBranchTemplate"`
+}
+
+// RemoteName returns the configured remote name or the origin default.
+func (g Git) RemoteName() string {
+	if remote := strings.TrimSpace(g.Remote); remote != "" {
+		return remote
+	}
+	return "origin"
+}
+
+// BranchTemplate returns the configured PR branch template or the default.
+func (g Git) BranchTemplate() string {
+	if tmpl := strings.TrimSpace(g.PRBranchTemplate); tmpl != "" {
+		return tmpl
+	}
+	return "pr-{{.PrIndex}}"
 }
 
 // Instance selects and overrides the Gitea connection.
@@ -53,11 +110,19 @@ type Instance struct {
 // SectionConfig describes one dashboard section (a tab).
 type SectionConfig struct {
 	Title  string        `yaml:"title"`
+	Repo   string        `yaml:"repo"`
 	Filter PrIssueFilter `yaml:"filter"`
 	// Limit caps this section's row fetch. 0 falls back to the per-view default
-	// (defaults.prsLimit / defaults.issuesLimit), which in turn falls back to 50.
+	// (defaults.prsLimit / defaults.issuesLimit / etc.), which in turn falls back to 50.
 	// Precedence: section Limit -> per-view default -> 50.
 	Limit int `yaml:"limit"`
+}
+
+// LocalRepoConfig describes one local git checkout to include in the branches
+// view. Name is optional; Path must point at a git repository worktree.
+type LocalRepoConfig struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path"`
 }
 
 // PrIssueFilter is the structured, config-driven filter for one section. Every
@@ -78,6 +143,14 @@ type PrIssueFilter struct {
 	Since           string `yaml:"since"`           // RFC3339 lower bound on updatedAt
 	Sort            string `yaml:"sort"`            // e.g. recentupdate
 	Q               string `yaml:"-"`               // live keyword (set by "/", never persisted)
+
+	// Repo-scoped Actions filters. These are ignored by PR/issue search and are
+	// mapped to Gitea's actions/runs query params by the Actions view.
+	Status  string `yaml:"status"`
+	Branch  string `yaml:"branch"`
+	Event   string `yaml:"event"`
+	HeadSHA string `yaml:"headSha"`
+	Actor   string `yaml:"actor"`
 }
 
 // Validate rejects unsupported me-scoped author values. The cross-repo search
@@ -118,10 +191,28 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	for _, s := range c.ActionsSections {
+		if strings.TrimSpace(s.Repo) == "" {
+			continue
+		}
+		if _, err := ParseRepo(s.Repo); err != nil {
+			return fmt.Errorf("actionsSections.repo: %w", err)
+		}
+	}
+	for _, s := range c.BranchSections {
+		if err := s.Filter.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, r := range c.LocalRepos {
+		if strings.TrimSpace(r.Path) == "" {
+			return fmt.Errorf("localRepos entry %q: path is required", r.Name)
+		}
+	}
 	switch c.Defaults.View {
-	case "", "prs", "issues", "notifications":
+	case "", "prs", "issues", "notifications", "actions", "branches":
 	default:
-		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", or \"notifications\"", c.Defaults.View)
+		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", \"notifications\", \"actions\", or \"branches\"", c.Defaults.View)
 	}
 	return nil
 }
@@ -153,6 +244,85 @@ func ParseRepo(s string) (Repo, error) {
 		return Repo{}, fmt.Errorf("invalid repo %q, want \"owner/name\"", s)
 	}
 	return Repo{Owner: owner, Name: name}, nil
+}
+
+// ExpandPath expands a leading "~" or "~/" to the current user's home
+// directory. Other paths are returned unchanged.
+func ExpandPath(p string) (string, error) {
+	switch {
+	case p == "~":
+		return os.UserHomeDir()
+	case strings.HasPrefix(p, "~/"):
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, p[2:]), nil
+	default:
+		return p, nil
+	}
+}
+
+// MatchRepoPath returns the path mapped for repoName, preferring an exact key
+// before evaluating wildcard patterns such as "fcmb/*". Mapped paths may use
+// {{.Owner}}, {{.Repo}}, and {{.RepoName}} template variables, and are expanded
+// through ExpandPath before being returned.
+func MatchRepoPath(repoName string, repoPaths map[string]string) (string, bool, error) {
+	repoName = strings.TrimSpace(repoName)
+	if repoName == "" || len(repoPaths) == 0 {
+		return "", false, nil
+	}
+	if p, ok := repoPaths[repoName]; ok {
+		expanded, err := expandRepoPathMapping(p, repoName)
+		return expanded, true, err
+	}
+
+	patterns := make([]string, 0, len(repoPaths))
+	for pattern := range repoPaths {
+		if strings.ContainsAny(pattern, "*?[") {
+			patterns = append(patterns, pattern)
+		}
+	}
+	sort.Strings(patterns)
+	for _, pattern := range patterns {
+		ok, err := path.Match(pattern, repoName)
+		if err != nil {
+			return "", false, fmt.Errorf("repoPaths pattern %q: %w", pattern, err)
+		}
+		if !ok {
+			continue
+		}
+		expanded, err := expandRepoPathMapping(repoPaths[pattern], repoName)
+		return expanded, true, err
+	}
+	return "", false, nil
+}
+
+func expandRepoPathMapping(p, repoName string) (string, error) {
+	if strings.Contains(p, "{{") {
+		r, err := ParseRepo(repoName)
+		if err != nil {
+			return "", err
+		}
+		tmpl, err := template.New("repoPath").Option("missingkey=error").Parse(p)
+		if err != nil {
+			return "", fmt.Errorf("repoPaths template %q: %w", p, err)
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, struct {
+			Owner    string
+			Repo     string
+			RepoName string
+		}{
+			Owner:    r.Owner,
+			Repo:     r.Name,
+			RepoName: repoName,
+		}); err != nil {
+			return "", fmt.Errorf("repoPaths template %q: %w", p, err)
+		}
+		p = buf.String()
+	}
+	return ExpandPath(p)
 }
 
 // ParsedRepos returns the configured repos parsed into Repo values.

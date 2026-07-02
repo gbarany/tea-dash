@@ -4,14 +4,15 @@ A terminal dashboard for [Gitea](https://about.gitea.com/) (and Forgejo /
 Codeberg), in the spirit of [`gh-dash`](https://github.com/dlvhdr/gh-dash) — but
 for Gitea instead of GitHub.
 
-tea-dash is a keyboard-driven TUI for triaging pull requests, issues and
-notifications across one or more Gitea instances, without leaving the terminal.
+tea-dash is a keyboard-driven TUI for triaging pull requests, issues,
+notifications, and local branches across one or more Gitea instances, without
+leaving the terminal.
 
 > **Status: early — v1.** A working multi-view dashboard: live tables of your
-> pull requests, issues, and unread notifications across all your repos (fetched
-> via the Gitea API (Go SDK + REST)), with view switching (`s`), configurable
-> sections you page through with `h`/`l`, preview pane support, and live keyword
-> search (`/`). PR actions are in progress. See
+> pull requests, issues, unread notifications, Actions runs, and read-only local
+> branch status (fetched via the Gitea API (Go SDK + REST) and local `git`),
+> with view switching (`s`), configurable sections you page through with `h`/`l`,
+> live keyword search (`/`), a default-open preview, and PR / issue actions. See
 > [`docs/architecture.md`](docs/architecture.md) for the design.
 
 ## Why
@@ -72,14 +73,23 @@ tea-dash --help
 | Key             | Action                  |
 | --------------- | ----------------------- |
 | `↑`/`↓`, `j`/`k`| move selection          |
-| `s`             | switch view (PRs/issues/notifications)|
+| `g` / `G`       | first / last row        |
+| `s`             | switch view (PRs/issues/notifications/actions/branches)|
 | `h` / `l`       | prev / next section     |
 | `/`             | search by keyword       |
-| `p`             | toggle preview pane     |
-| `e`             | expand preview body     |
-| `ctrl+u/d`      | scroll preview          |
+| `p`             | show / hide preview panel |
+| `e`             | expand / fold preview body |
+| `ctrl+u` / `ctrl+d` | scroll preview       |
 | `o` / `enter`   | open in browser         |
-| `r`             | refresh                 |
+| `y` / `Y`       | copy row number / URL   |
+| `c`             | add comment             |
+| `m`             | merge PR                |
+| `x` / `X`       | close / reopen          |
+| `v`             | submit PR review        |
+| `d` / `ctrl+t`  | open PR diff in external pager |
+| `C` / `space`   | checkout PR locally     |
+| `r` / `R`       | refresh section / all sections |
+| `?`             | show / hide full help   |
 | `q` / `ctrl+c`  | quit                    |
 
 ## Configuration
@@ -100,10 +110,26 @@ instance:
   # tokenEnv:     TEA_DASH_TOKEN                        # name of an env var holding the token
 
 defaults:
-  view: prs              # startup view: "prs", "issues", or "notifications"
+  view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
   prsLimit: 50           # rows fetched per PR section (0 -> 50)
   issuesLimit: 50        # rows fetched per issue section (0 -> 50)
   notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)
+  actionsLimit: 50       # rows fetched per Actions section (0 -> 50)
+  branchesLimit: 0       # local branches shown (0 -> all)
+
+localRepos:
+  - name: tea-dash
+    path: /Users/gaborbarany/dev/sandbox/tea-dash
+
+pager:
+  diff: diffnav     # command that receives PR diff bytes on stdin (falls back to $PAGER, then less -R)
+
+repoPaths:
+  "gbarany/*": "~/dev/sandbox/{{.Repo}}"  # used by C checkout; exact repo names and wildcards both work
+
+git:
+  remote: origin
+  prBranchTemplate: "pr-{{.PrIndex}}"
 
 # Each section becomes a tab you page through with h/l. Omit prSections to get
 # two "@me"-authored PR defaults: open and closed pull requests. Omit
@@ -133,6 +159,9 @@ issuesSections:
 notificationsSections:
   - title: Unread
     limit: 50
+
+branchSections:
+  - title: Local Branches
 ```
 
 `filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
@@ -148,7 +177,9 @@ With or without a config file, tea-dash shows the pull requests and issues you
 authored, plus unread notifications, across every repo you can access on your
 Gitea instance. The default PR view has separate open and closed-history tabs;
 sections and filters let you tailor what each tab shows. Notification sections
-currently support title/limit configuration and default to unread threads.
+currently support title/limit configuration and default to unread threads. The
+branches view shells out to local `git` for configured `localRepos` only and is
+read-only; with no `localRepos`, it falls back to the current working directory.
 
 ## Development
 
@@ -166,6 +197,7 @@ Project layout:
 main.go                 entrypoint + flag handling; loads config, starts the TUI
 internal/ui/            Bubble Tea model, table, preview, keybindings, styles
 internal/gitea/         Gitea Go SDK client wrapper + PR/issue/notification APIs
+internal/git/           read-only local git branch status
 internal/auth/          resolves instance URL + token from the tea config
 internal/data/          TUI-agnostic domain models
 internal/config/        ~/.config/tea-dash/config.yml loading

@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/gbarany/tea-dash/internal/actionrunner"
 	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/build"
 	"github.com/gbarany/tea-dash/internal/config"
@@ -63,7 +64,17 @@ func run() error {
 		return fmt.Errorf("connecting to %s: %w", authCfg.URL, err)
 	}
 
-	p := tea.NewProgram(ui.New(cfg, client))
+	model := ui.New(cfg, client)
+	cwd, _ := os.Getwd()
+	runner := actionrunner.New(actionrunner.Options{
+		Client:      client,
+		Config:      cfg,
+		InstanceURL: authCfg.URL,
+		CWD:         cwd,
+	})
+	model.SetActionDispatcher(runner.Dispatch)
+
+	p := tea.NewProgram(model)
 	_, err = p.Run()
 	return err
 }

@@ -2,6 +2,7 @@ package gitea
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -35,6 +36,42 @@ func (c *Client) ListNotifications(_ context.Context, limit int) ([]data.Notific
 		rows = append(rows, mapNotificationThread(thread))
 	}
 	return rows, len(rows), nil
+}
+
+// MarkNotificationRead marks one notification thread as read.
+func (c *Client) MarkNotificationRead(_ context.Context, threadID int64) error {
+	return c.markNotification(threadID, sdk.NotifyStatusRead, "read")
+}
+
+// MarkNotificationUnread marks one notification thread as unread.
+func (c *Client) MarkNotificationUnread(_ context.Context, threadID int64) error {
+	return c.markNotification(threadID, sdk.NotifyStatusUnread, "unread")
+}
+
+// MarkAllNotificationsRead marks all unread notification threads as read.
+func (c *Client) MarkAllNotificationsRead(_ context.Context) error {
+	err := c.call(func() error {
+		_, _, e := c.sdk.ReadNotifications(sdk.MarkNotificationOptions{
+			Status:   []sdk.NotifyStatus{sdk.NotifyStatusUnread},
+			ToStatus: sdk.NotifyStatusRead,
+		})
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("marking all unread notifications read: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) markNotification(threadID int64, status sdk.NotifyStatus, label string) error {
+	err := c.call(func() error {
+		_, _, e := c.sdk.ReadNotification(threadID, status)
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("marking notification %d %s: %w", threadID, label, err)
+	}
+	return nil
 }
 
 func mapNotificationThread(thread *sdk.NotificationThread) data.Notification {

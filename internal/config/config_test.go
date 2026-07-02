@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -69,6 +70,8 @@ defaults:
   prsLimit: 25
   issuesLimit: 40
   notificationsLimit: 30
+  actionsLimit: 20
+  branchesLimit: 100
 prSections:
   - title: My PRs
     filter:
@@ -85,13 +88,29 @@ issuesSections:
 notificationsSections:
   - title: Inbox
     limit: 15
+actionsSections:
+  - title: CI
+    repo: acme/widgets
+    limit: 10
+    filter:
+      status: in_progress
+      branch: main
+      event: push
+      headSha: abc123
+      actor: octo
+branchSections:
+  - title: Local Branches
+    limit: 25
+localRepos:
+  - name: tea-dash
+    path: /Users/gaborbarany/dev/sandbox/tea-dash
 `
 	var c Config
 	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if c.Defaults.View != "notifications" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 ||
-		c.Defaults.NotificationsLimit != 30 {
+		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 || c.Defaults.BranchesLimit != 100 {
 		t.Fatalf("defaults = %+v", c.Defaults)
 	}
 	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
@@ -105,6 +124,117 @@ notificationsSections:
 	if len(c.NotificationsSections) != 1 || c.NotificationsSections[0].Title != "Inbox" ||
 		c.NotificationsSections[0].Limit != 15 {
 		t.Fatalf("notificationsSections = %+v", c.NotificationsSections)
+	}
+	if len(c.ActionsSections) != 1 || c.ActionsSections[0].Title != "CI" ||
+		c.ActionsSections[0].Repo != "acme/widgets" || c.ActionsSections[0].Limit != 10 {
+		t.Fatalf("actionsSections = %+v", c.ActionsSections)
+	}
+	filter := c.ActionsSections[0].Filter
+	if filter.Status != "in_progress" || filter.Branch != "main" || filter.Event != "push" ||
+		filter.HeadSHA != "abc123" || filter.Actor != "octo" {
+		t.Fatalf("actions filter = %+v", filter)
+	}
+	if len(c.BranchSections) != 1 || c.BranchSections[0].Title != "Local Branches" ||
+		c.BranchSections[0].Limit != 25 {
+		t.Fatalf("branchSections = %+v", c.BranchSections)
+	}
+	if len(c.LocalRepos) != 1 || c.LocalRepos[0].Name != "tea-dash" ||
+		c.LocalRepos[0].Path != "/Users/gaborbarany/dev/sandbox/tea-dash" {
+		t.Fatalf("localRepos = %+v", c.LocalRepos)
+	}
+}
+
+func TestUnmarshalPagerRepoPathsAndGit(t *testing.T) {
+	const y = `
+pager:
+  diff: delta --paging=always
+repoPaths:
+  fcmb/api: ~/src/fcmb-api
+  fcmb/*: ~/src/fcmb/{{.Repo}}
+git:
+  remote: upstream
+  prBranchTemplate: review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Pager.Diff != "delta --paging=always" {
+		t.Fatalf("pager.diff = %q", c.Pager.Diff)
+	}
+	if c.RepoPaths["fcmb/api"] != "~/src/fcmb-api" || c.RepoPaths["fcmb/*"] != "~/src/fcmb/{{.Repo}}" {
+		t.Fatalf("repoPaths = %+v", c.RepoPaths)
+	}
+	if c.Git.Remote != "upstream" || c.Git.PRBranchTemplate != "review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}" {
+		t.Fatalf("git = %+v", c.Git)
+	}
+}
+
+func TestPagerDiffCommandDefaults(t *testing.T) {
+	t.Setenv("PAGER", "bat --plain")
+	if got := (Pager{}).DiffCommand(); got != "bat --plain" {
+		t.Fatalf("DiffCommand() = %q, want env pager", got)
+	}
+	t.Setenv("PAGER", "")
+	if got := (Pager{}).DiffCommand(); got != "less -R" {
+		t.Fatalf("DiffCommand() = %q, want less -R fallback", got)
+	}
+	if got := (Pager{Diff: "delta"}).DiffCommand(); got != "delta" {
+		t.Fatalf("DiffCommand() = %q, want configured command", got)
+	}
+}
+
+func TestGitDefaults(t *testing.T) {
+	var g Git
+	if got := g.RemoteName(); got != "origin" {
+		t.Fatalf("RemoteName() = %q, want origin", got)
+	}
+	if got := g.BranchTemplate(); got != "pr-{{.PrIndex}}" {
+		t.Fatalf("BranchTemplate() = %q, want default template", got)
+	}
+	g = Git{Remote: "upstream", PRBranchTemplate: "review/{{.PrIndex}}"}
+	if got := g.RemoteName(); got != "upstream" {
+		t.Fatalf("RemoteName() = %q, want upstream", got)
+	}
+	if got := g.BranchTemplate(); got != "review/{{.PrIndex}}" {
+		t.Fatalf("BranchTemplate() = %q, want configured template", got)
+	}
+}
+
+func TestMatchRepoPathExactBeforeWildcardAndExpandsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := map[string]string{
+		"fcmb/*":   "~/src/fcmb/{{.Repo}}",
+		"fcmb/api": "~/src/exact",
+	}
+	got, ok, err := MatchRepoPath("fcmb/api", paths)
+	if err != nil {
+		t.Fatalf("MatchRepoPath exact: %v", err)
+	}
+	if !ok {
+		t.Fatal("MatchRepoPath exact did not match")
+	}
+	if want := filepath.Join(home, "src", "exact"); got != want {
+		t.Fatalf("MatchRepoPath exact = %q, want %q", got, want)
+	}
+
+	got, ok, err = MatchRepoPath("fcmb/web", paths)
+	if err != nil {
+		t.Fatalf("MatchRepoPath wildcard: %v", err)
+	}
+	if !ok {
+		t.Fatal("MatchRepoPath wildcard did not match")
+	}
+	if want := filepath.Join(home, "src", "fcmb", "web"); got != want {
+		t.Fatalf("MatchRepoPath wildcard = %q, want %q", got, want)
+	}
+}
+
+func TestMatchRepoPathRejectsBadWildcard(t *testing.T) {
+	_, _, err := MatchRepoPath("fcmb/api", map[string]string{"fcmb/[": "/tmp/repo"})
+	if err == nil || !strings.Contains(err.Error(), "fcmb/[") {
+		t.Fatalf("MatchRepoPath bad wildcard error = %v", err)
 	}
 }
 
@@ -121,10 +251,17 @@ func TestConfigValidateBadView(t *testing.T) {
 	if err := (&Config{Defaults: Defaults{View: "nope"}}).Validate(); err == nil {
 		t.Fatal("Validate() should reject an unknown defaults.view")
 	}
-	for _, view := range []string{"", "prs", "issues", "notifications"} {
+	for _, view := range []string{"", "prs", "issues", "notifications", "actions", "branches"} {
 		if err := (&Config{Defaults: Defaults{View: view}}).Validate(); err != nil {
 			t.Fatalf("Validate() rejected valid view %q: %v", view, err)
 		}
+	}
+}
+
+func TestConfigValidateRejectsLocalRepoWithoutPath(t *testing.T) {
+	cfg := &Config{LocalRepos: []LocalRepoConfig{{Name: "missing"}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() should reject a local repo without a path")
 	}
 }
 
@@ -136,6 +273,20 @@ func TestConfigValidateRejectsBadSectionFilter(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() should reject a section with a non-@me author filter")
+	}
+}
+
+func TestConfigValidateRejectsBadActionRepo(t *testing.T) {
+	if err := (&Config{ActionsSections: []SectionConfig{{
+		Title: "Actions",
+		Repo:  "owner/repo/extra",
+	}}}).Validate(); err == nil {
+		t.Fatal("Validate() should reject malformed actionsSections.repo")
+	}
+	if err := (&Config{ActionsSections: []SectionConfig{{
+		Title: "Actions",
+	}}}).Validate(); err != nil {
+		t.Fatalf("Validate() should allow a blank actions repo for the empty state: %v", err)
 	}
 }
 

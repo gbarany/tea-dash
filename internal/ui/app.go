@@ -2,7 +2,9 @@
 package ui
 
 import (
+	stdctx "context"
 	"fmt"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -12,6 +14,11 @@ import (
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
 	"github.com/gbarany/tea-dash/internal/gitea"
+	"github.com/gbarany/tea-dash/internal/ui/actions"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionfeedback"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
@@ -35,20 +42,29 @@ type Model struct {
 	prs           []section.Section
 	issues        []section.Section
 	notifications []section.Section
+	actions       []section.Section
+	branches      []section.Section
 	notice        string // transient status message (e.g. browser-open failure)
 
-	// pullDetails and issueDetails memoize fetched detail views keyed by
-	// "owner/repo#num". The map is chosen by the row's kind (PR vs issue), so
-	// syncSidebar reads the right one without any runtime type assertion.
-	pullDetails  map[string]*data.PullDetail
-	issueDetails map[string]*data.IssueDetail
-	// pullEnrichErr and issueEnrichErr record the last failed detail fetch per
-	// key so the preview can show an error block (instead of a perpetual
-	// "Loading…") while keeping the row retryable. They are kept separate, just
-	// like the detail maps, because PRs and issues in the same repo can share a
-	// number ("owner/repo#num").
-	pullEnrichErr  map[string]error
-	issueEnrichErr map[string]error
+	actionDispatcher func(actions.Intent) tea.Cmd
+	actionPrompt     actionprompt.Model
+	pendingAction    actions.Intent
+	actionFeedback   actionfeedback.Model
+	copyToClipboard  func(string) error
+	showHelp         bool
+
+	// Detail maps memoize fetched preview detail keyed by "owner/repo#num".
+	// syncSidebar reads the map matching the selected row kind.
+	pullDetails   map[string]*data.PullDetail
+	issueDetails  map[string]*data.IssueDetail
+	actionDetails map[string]*data.ActionRunDetail
+	// Enrich error maps record the last failed detail fetch per key so the
+	// preview can show an error block while keeping the row retryable. They are
+	// kept separate, just like the detail maps, because row kinds can share a
+	// number in the same repo ("owner/repo#num").
+	pullEnrichErr   map[string]error
+	issueEnrichErr  map[string]error
+	actionEnrichErr map[string]error
 	// expanded controls whether the preview shows the full body or the folded
 	// (read-more) form. Reset to false each time the preview is (re)opened.
 	expanded bool
@@ -61,6 +77,11 @@ type openFailedMsg struct {
 	err error
 }
 
+type copyResultMsg struct {
+	value string
+	err   error
+}
+
 // enrichedMsg carries the result of a lazy detail fetch back to the root, keyed
 // by the "owner/repo#num" it was requested for so a stale result (the user moved
 // on) is still cached under the right key rather than shown against the wrong row.
@@ -69,7 +90,14 @@ type enrichedMsg struct {
 	sectionType string
 	pull        *data.PullDetail
 	issue       *data.IssueDetail
+	action      *data.ActionRunDetail
 	err         error
+}
+
+type notificationActionMsg struct {
+	sectionID int
+	all       bool
+	err       error
 }
 
 // New builds the root model. client may be nil in tests (only FetchRows uses it).
@@ -86,6 +114,10 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 			view = context.IssuesView
 		case "notifications":
 			view = context.NotificationsView
+		case "actions":
+			view = context.ActionsView
+		case "branches":
+			view = context.BranchesView
 		}
 	}
 	ctx := &context.ProgramContext{
@@ -102,20 +134,31 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 	}
 
 	m := Model{
-		ctx:            ctx,
-		keys:           defaultKeyMap(),
-		tabs:           tabs.New(ctx),
-		sidebar:        sidebar.New(ctx),
-		tasks:          tasks,
-		pullDetails:    map[string]*data.PullDetail{},
-		issueDetails:   map[string]*data.IssueDetail{},
-		pullEnrichErr:  map[string]error{},
-		issueEnrichErr: map[string]error{},
+		ctx:             ctx,
+		keys:            defaultKeyMap(),
+		tabs:            tabs.New(ctx),
+		sidebar:         sidebar.New(ctx),
+		tasks:           tasks,
+		actionPrompt:    actionprompt.New(),
+		actionFeedback:  actionfeedback.New(),
+		copyToClipboard: writeClipboard,
+		pullDetails:     map[string]*data.PullDetail{},
+		issueDetails:    map[string]*data.IssueDetail{},
+		pullEnrichErr:   map[string]error{},
+		issueEnrichErr:  map[string]error{},
+		actionDetails:   map[string]*data.ActionRunDetail{},
+		actionEnrichErr: map[string]error{},
 	}
 	// Build only the starting view's sections; the other slice stays nil until
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
 	m.setCurrentViewSections(buildSections(view, ctx))
 	return m
+}
+
+// SetActionDispatcher wires the frontend action-intent seam. The dispatcher is
+// responsible for all backend or local-git side effects.
+func (m *Model) SetActionDispatcher(dispatcher func(actions.Intent) tea.Cmd) {
+	m.actionDispatcher = dispatcher
 }
 
 // buildSections constructs the section models for a view from its config list.
@@ -128,6 +171,10 @@ func buildSections(view context.ViewType, ctx *context.ProgramContext) []section
 			sections[i] = issuesection.NewModel(i, ctx, cfg)
 		case context.NotificationsView:
 			sections[i] = notificationsection.NewModel(i, ctx, cfg)
+		case context.ActionsView:
+			sections[i] = actionsection.NewModel(i, ctx, cfg)
+		case context.BranchesView:
+			sections[i] = branchsection.NewModel(i, ctx, cfg)
 		default:
 			sections[i] = pullsection.NewModel(i, ctx, cfg)
 		}
@@ -146,6 +193,9 @@ func (m Model) Init() tea.Cmd {
 
 // Update routes messages: layout, async results, keys, then generic fallthrough.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyPressMsg); ok && m.actionPrompt.Active() {
+		return m, m.updateActionPrompt(msg)
+	}
 	// While the current section's search bar is focused, route key presses
 	// straight to it so typing isn't eaten by nav/quit keys. Resize and async
 	// messages still flow through the normal switch below.
@@ -175,6 +225,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
 		return m, nil
 
+	case copyResultMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("Couldn't copy: %v", msg.err)
+		} else {
+			m.notice = fmt.Sprintf("Copied %s.", msg.value)
+		}
+		return m, nil
+
+	case actions.ResultMsg:
+		m.notice = ""
+		m.actionFeedback = m.actionFeedback.Set(feedbackFromActionResult(msg))
+		if msg.Status == actions.ResultSucceeded {
+			m.clearPreviewCacheForAction(msg.Intent.Target)
+			if s := m.getCurrSection(); s != nil &&
+				s.GetId() == msg.Intent.Target.SectionID &&
+				s.GetType() == msg.Intent.Target.SectionType {
+				if m.ctx.PreviewOpen {
+					m.syncSidebar()
+				}
+				return m, tea.Batch(s.FetchRows(), m.enrichCurrRow())
+			}
+		}
+		return m, nil
+
 	case enrichedMsg:
 		// Cache the fetched detail (keyed by the row it was requested for) and
 		// re-render the current preview, which picks up the new detail when the
@@ -190,9 +264,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(m.issueEnrichErr, msg.key)
 				m.issueDetails[msg.key] = msg.issue
 			}
+			if msg.action != nil {
+				delete(m.actionEnrichErr, msg.key)
+				m.actionDetails[msg.key] = msg.action
+			}
 		}
 		m.syncSidebar()
 		return m, nil
+
+	case notificationActionMsg:
+		return m.handleNotificationAction(msg)
 
 	case spinner.TickMsg:
 		// A tick belongs to whichever section started the spinner, but sibling
@@ -209,6 +290,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m.notice = "" // any key dismisses a transient notice
 		switch {
+		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkRead):
+			return m.markSelectedNotificationRead()
+		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkAllRead):
+			return m.markAllNotificationsRead()
+		case key.Matches(msg, m.keys.Comment):
+			return m, m.startAction(actions.KindComment)
+		case key.Matches(msg, m.keys.Merge):
+			return m, m.startAction(actions.KindMerge)
+		case key.Matches(msg, m.keys.Close):
+			return m, m.startAction(actions.KindClose)
+		case key.Matches(msg, m.keys.Reopen):
+			return m, m.startAction(actions.KindReopen)
+		case key.Matches(msg, m.keys.Review):
+			return m, m.startAction(actions.KindReview)
+		case key.Matches(msg, m.keys.ExternalDiff):
+			return m, m.startAction(actions.KindExternalDiff)
+		case key.Matches(msg, m.keys.Checkout):
+			return m, m.startAction(actions.KindCheckout)
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Refresh):
@@ -220,8 +319,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, s.FetchRows()
 			}
 			return m, nil
+		case key.Matches(msg, m.keys.RefreshAll):
+			return m, m.refreshAllSections()
 		case key.Matches(msg, m.keys.Open):
 			return m, m.openSelected()
+		case key.Matches(msg, m.keys.CopyNumber):
+			return m, m.copySelectedNumber()
+		case key.Matches(msg, m.keys.CopyURL):
+			return m, m.copySelectedURL()
+		case key.Matches(msg, m.keys.Help):
+			m.showHelp = !m.showHelp
+			return m, nil
 		case key.Matches(msg, m.keys.NextSection):
 			if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 				m.currSectionId++
@@ -294,6 +402,10 @@ func (m Model) View() tea.View {
 		subtitle = "  my issues"
 	case context.NotificationsView:
 		subtitle = "  notifications"
+	case context.ActionsView:
+		subtitle = "  actions"
+	case context.BranchesView:
+		subtitle = "  local branches"
 	}
 	title := titleStyle.Render("tea-dash") + m.ctx.Styles.DimText.Render(subtitle)
 
@@ -302,8 +414,12 @@ func (m Model) View() tea.View {
 		parts = append(parts, tv)
 	}
 	status := m.statusLine()
-	if m.notice != "" {
+	if m.actionPrompt.Active() {
+		status = m.actionPrompt.View(m.ctx.ScreenWidth - 4)
+	} else if m.notice != "" {
 		status = m.ctx.Styles.ErrorText.Render(m.notice)
+	} else if !m.actionFeedback.Empty() {
+		status = m.actionFeedback.View(m.ctx.ScreenWidth - 4)
 	}
 	body := ""
 	if s := m.getCurrSection(); s != nil {
@@ -313,15 +429,38 @@ func (m Model) View() tea.View {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
 	}
 	parts = append(parts, body, status,
-		helpStyle.Render("↑/↓ move · h/l section · s view · / search · p preview · e expand · r refresh · o open · q quit"))
+		helpStyle.Render(m.helpLine()))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true}
 }
 
+func (m Model) helpLine() string {
+	if m.showHelp {
+		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
+		if m.ctx.View == context.NotificationsView {
+			text += " · m mark read · M mark all read"
+		} else {
+			text += " · c comment · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
+		}
+		return text + " · q quit"
+	}
+	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh"
+	if m.ctx.View == context.NotificationsView {
+		text += " · m/M read"
+	} else {
+		text += " · c comment · m merge · d/ctrl+t diff · C/space checkout"
+	}
+	return text + " · ? help · q quit"
+}
+
 // currentViewSections returns the section slice for the active view.
 func (m *Model) currentViewSections() []section.Section {
 	switch m.ctx.View {
+	case context.ActionsView:
+		return m.actions
+	case context.BranchesView:
+		return m.branches
 	case context.NotificationsView:
 		return m.notifications
 	case context.IssuesView:
@@ -334,6 +473,10 @@ func (m *Model) currentViewSections() []section.Section {
 // setCurrentViewSections stores s under the active view and rewires the tab bar.
 func (m *Model) setCurrentViewSections(s []section.Section) {
 	switch m.ctx.View {
+	case context.ActionsView:
+		m.actions = s
+	case context.BranchesView:
+		m.branches = s
 	case context.NotificationsView:
 		m.notifications = s
 	case context.IssuesView:
@@ -387,7 +530,9 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 	if key == "" {
 		return nil
 	}
+	sectionType := ""
 	if s := m.getCurrSection(); s != nil {
+		sectionType = s.GetType()
 		switch s.GetType() {
 		case pullsection.SectionType:
 			if _, ok := m.pullDetails[key]; ok {
@@ -395,6 +540,10 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 			}
 		case issuesection.SectionType:
 			if _, ok := m.issueDetails[key]; ok {
+				return nil
+			}
+		case actionsection.SectionType:
+			if _, ok := m.actionDetails[key]; ok {
 				return nil
 			}
 		default:
@@ -410,30 +559,57 @@ func (m *Model) enrichCurrRow() tea.Cmd {
 	if client == nil {
 		return nil
 	}
-	index := row.GetNumber()
-	isPR := false
-	if s := m.getCurrSection(); s != nil {
-		isPR = s.GetType() == pullsection.SectionType
-	}
-	return func() tea.Msg {
-		if isPR {
+	switch sectionType {
+	case pullsection.SectionType:
+		index := row.GetNumber()
+		return func() tea.Msg {
 			d, err := client.GetPullDetail(owner, name, index)
 			if err != nil {
 				return enrichedMsg{key: key, sectionType: pullsection.SectionType, err: err}
 			}
 			return enrichedMsg{key: key, sectionType: pullsection.SectionType, pull: &d}
 		}
-		d, err := client.GetIssueDetail(owner, name, index)
-		if err != nil {
-			return enrichedMsg{key: key, sectionType: issuesection.SectionType, err: err}
+	case issuesection.SectionType:
+		index := row.GetNumber()
+		return func() tea.Msg {
+			d, err := client.GetIssueDetail(owner, name, index)
+			if err != nil {
+				return enrichedMsg{key: key, sectionType: issuesection.SectionType, err: err}
+			}
+			return enrichedMsg{key: key, sectionType: issuesection.SectionType, issue: &d}
 		}
-		return enrichedMsg{key: key, sectionType: issuesection.SectionType, issue: &d}
+	case actionsection.SectionType:
+		run, ok := row.(data.ActionRun)
+		if !ok {
+			return nil
+		}
+		runID := run.ID
+		if runID == 0 {
+			runID = run.GetNumber()
+		}
+		return func() tea.Msg {
+			d, err := client.GetActionRun(stdctx.Background(), owner, name, runID)
+			if err != nil {
+				return enrichedMsg{key: key, sectionType: actionsection.SectionType, err: err}
+			}
+			jobs, err := client.ListActionJobs(stdctx.Background(), owner, name, runID)
+			if err != nil {
+				return enrichedMsg{key: key, sectionType: actionsection.SectionType, err: err}
+			}
+			return enrichedMsg{
+				key:         key,
+				sectionType: actionsection.SectionType,
+				action:      &data.ActionRunDetail{Run: d, Jobs: jobs},
+			}
+		}
+	default:
+		return nil
 	}
 }
 
 // syncSidebar renders the current row (with its cached detail, if any) into the
-// preview pane. The concrete row type selects the pull vs issue renderer; a
-// missing/other-typed cache entry renders as the "loading" placeholder.
+// preview pane. The concrete row type selects the renderer; a missing cache
+// entry renders that row kind's loading placeholder.
 func (m *Model) syncSidebar() {
 	row := m.getCurrRowData()
 	if row == nil {
@@ -458,6 +634,15 @@ func (m *Model) syncSidebar() {
 		rendered = prview.RenderIssue(r, m.issueDetails[key], w, m.expanded)
 	case data.Notification:
 		rendered = prview.RenderNotification(r, w)
+	case data.ActionRun:
+		if err := m.actionEnrichErr[key]; err != nil {
+			m.sidebar.SetContent(m.failedPreview(row, err))
+			return
+		}
+		rendered = prview.RenderAction(r, m.actionDetails[key], w)
+	default:
+		m.sidebar.SetContent("")
+		return
 	}
 	m.sidebar.SetContent(rendered)
 }
@@ -468,6 +653,8 @@ func (m *Model) setEnrichErr(sectionType, key string, err error) {
 		m.pullEnrichErr[key] = err
 	case issuesection.SectionType:
 		m.issueEnrichErr[key] = err
+	case actionsection.SectionType:
+		m.actionEnrichErr[key] = err
 	default:
 		if s := m.getCurrSection(); s != nil {
 			m.setEnrichErr(s.GetType(), key, err)
@@ -488,18 +675,40 @@ func (m *Model) clearSelectedPreviewCache() {
 		case issuesection.SectionType:
 			delete(m.issueDetails, key)
 			delete(m.issueEnrichErr, key)
+		case actionsection.SectionType:
+			delete(m.actionDetails, key)
+			delete(m.actionEnrichErr, key)
 		}
 	}
 }
 
-// switchView cycles pulls -> issues -> notifications, lazily building and
-// fetching the target view's sections on first visit.
+func (m *Model) clearPreviewCacheForAction(target actions.Target) {
+	if target.Repo == "" || target.Number <= 0 {
+		return
+	}
+	key := fmt.Sprintf("%s#%d", target.Repo, target.Number)
+	switch target.RowKind {
+	case actions.RowKindPullRequest:
+		delete(m.pullDetails, key)
+		delete(m.pullEnrichErr, key)
+	case actions.RowKindIssue:
+		delete(m.issueDetails, key)
+		delete(m.issueEnrichErr, key)
+	}
+}
+
+// switchView cycles pulls -> issues -> notifications -> actions -> branches, lazily
+// building and fetching the target view's sections on first visit.
 func (m *Model) switchView() tea.Cmd {
 	switch m.ctx.View {
 	case context.PullsView:
 		m.ctx.View = context.IssuesView
 	case context.IssuesView:
 		m.ctx.View = context.NotificationsView
+	case context.NotificationsView:
+		m.ctx.View = context.ActionsView
+	case context.ActionsView:
+		m.ctx.View = context.BranchesView
 	default:
 		m.ctx.View = context.PullsView
 	}
@@ -552,6 +761,307 @@ func (m Model) openSelected() tea.Cmd {
 	}
 }
 
+func (m Model) copySelectedNumber() tea.Cmd {
+	row := m.getCurrRowData()
+	if row == nil {
+		return nil
+	}
+	return m.copyValue(fmt.Sprintf("%d", row.GetNumber()))
+}
+
+func (m Model) copySelectedURL() tea.Cmd {
+	row := m.getCurrRowData()
+	if row == nil || row.GetURL() == "" {
+		return nil
+	}
+	return m.copyValue(row.GetURL())
+}
+
+func (m Model) copyValue(value string) tea.Cmd {
+	copyFn := m.copyToClipboard
+	if copyFn == nil {
+		copyFn = writeClipboard
+	}
+	return func() tea.Msg {
+		return copyResultMsg{value: value, err: copyFn(value)}
+	}
+}
+
+func (m *Model) refreshAllSections() tea.Cmd {
+	var cmds []tea.Cmd
+	switch m.ctx.View {
+	case context.IssuesView:
+		m.issueDetails = map[string]*data.IssueDetail{}
+		m.issueEnrichErr = map[string]error{}
+	default:
+		m.pullDetails = map[string]*data.PullDetail{}
+		m.pullEnrichErr = map[string]error{}
+	}
+	for _, s := range m.currentViewSections() {
+		cmds = append(cmds, s.FetchRows())
+	}
+	if m.ctx.PreviewOpen {
+		m.syncSidebar()
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) startAction(kind actions.Kind) tea.Cmd {
+	target, ok := m.selectedActionTarget()
+	if !ok {
+		m.notice = "Select a row before running an action."
+		return nil
+	}
+	if actionRequiresPullRequest(kind) && target.RowKind != actions.RowKindPullRequest {
+		m.notice = fmt.Sprintf("%s is only available for pull requests.", actionLabel(kind))
+		return nil
+	}
+	intent := actions.Intent{
+		Kind:   kind,
+		Target: target,
+		Prompt: actions.Prompt{Mode: promptModeForAction(kind)},
+	}
+	m.pendingAction = intent
+	m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(kind, target))
+	return nil
+}
+
+func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
+	var result actionprompt.Result
+	var cmd tea.Cmd
+	m.actionPrompt, result, cmd = m.actionPrompt.Update(msg)
+	if result.Canceled {
+		m.pendingAction = actions.Intent{}
+		m.actionFeedback = m.actionFeedback.Set(actionfeedback.Cancel("Action cancelled."))
+		return cmd
+	}
+	if !result.Submitted {
+		return cmd
+	}
+	intent := m.pendingAction
+	intent.Prompt.Value = result.Value
+	intent.Prompt.Label = result.Label
+	m.pendingAction = actions.Intent{}
+	if m.actionDispatcher == nil {
+		m.notice = "Action not wired yet."
+		return cmd
+	}
+	m.actionFeedback = m.actionFeedback.Set(actionfeedback.Start(actionStartText(intent)))
+	dispatchCmd := m.actionDispatcher(intent)
+	if cmd == nil {
+		return dispatchCmd
+	}
+	if dispatchCmd == nil {
+		return cmd
+	}
+	return tea.Batch(cmd, dispatchCmd)
+}
+
+func (m Model) selectedActionTarget() (actions.Target, bool) {
+	s := m.getCurrSection()
+	row := m.getCurrRowData()
+	if s == nil || row == nil {
+		return actions.Target{}, false
+	}
+	rowKind := actions.RowKind(s.GetType())
+	switch row.(type) {
+	case data.PullRequest:
+		rowKind = actions.RowKindPullRequest
+	case data.Issue:
+		rowKind = actions.RowKindIssue
+	}
+	return actions.Target{
+		SectionID:   s.GetId(),
+		SectionType: s.GetType(),
+		RowKind:     rowKind,
+		Repo:        row.GetRepoNameWithOwner(),
+		Number:      row.GetNumber(),
+		Title:       row.GetTitle(),
+		URL:         row.GetURL(),
+	}, true
+}
+
+func actionRequiresPullRequest(kind actions.Kind) bool {
+	switch kind {
+	case actions.KindMerge, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
+		return true
+	default:
+		return false
+	}
+}
+
+func promptModeForAction(kind actions.Kind) actions.PromptMode {
+	switch kind {
+	case actions.KindComment:
+		return actions.PromptText
+	case actions.KindMerge, actions.KindReview:
+		return actions.PromptPicker
+	default:
+		return actions.PromptConfirm
+	}
+}
+
+func promptConfigForAction(kind actions.Kind, target actions.Target) actionprompt.Config {
+	title := fmt.Sprintf("%s #%d", actionLabel(kind), target.Number)
+	message := fmt.Sprintf("%s - %s", target.Repo, target.Title)
+	switch kind {
+	case actions.KindComment:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       title,
+			Message:     message,
+			Placeholder: "Write a comment",
+		}
+	case actions.KindReview:
+		return actionprompt.Config{
+			Mode:    actionprompt.ModePicker,
+			Title:   title,
+			Message: message,
+			Options: []actionprompt.Option{
+				{Label: "Comment", Value: "comment"},
+				{Label: "Approve", Value: "approve"},
+				{Label: "Request changes", Value: "request_changes"},
+			},
+		}
+	case actions.KindMerge:
+		return actionprompt.Config{
+			Mode:    actionprompt.ModePicker,
+			Title:   title,
+			Message: message,
+			Options: []actionprompt.Option{
+				{Label: "Merge", Value: string(data.MergeStyleMerge)},
+				{Label: "Squash", Value: string(data.MergeStyleSquash)},
+				{Label: "Rebase", Value: string(data.MergeStyleRebase)},
+				{Label: "Rebase merge", Value: string(data.MergeStyleRebaseMerge)},
+				{Label: "Fast-forward only", Value: string(data.MergeStyleFastForwardOnly)},
+			},
+		}
+	default:
+		return actionprompt.Config{
+			Mode:    actionprompt.ModeConfirm,
+			Title:   title,
+			Message: message,
+		}
+	}
+}
+
+func actionLabel(kind actions.Kind) string {
+	switch kind {
+	case actions.KindComment:
+		return "Comment"
+	case actions.KindMerge:
+		return "Merge"
+	case actions.KindClose:
+		return "Close"
+	case actions.KindReopen:
+		return "Reopen"
+	case actions.KindReview:
+		return "Review"
+	case actions.KindExternalDiff:
+		return "External diff"
+	case actions.KindCheckout:
+		return "Checkout"
+	default:
+		return string(kind)
+	}
+}
+
+func actionStartText(intent actions.Intent) string {
+	return fmt.Sprintf("Starting %s for %s#%d.", actionLabel(intent.Kind), intent.Target.Repo, intent.Target.Number)
+}
+
+func feedbackFromActionResult(msg actions.ResultMsg) actionfeedback.Message {
+	text := msg.Message
+	if text == "" && msg.Err != nil {
+		text = msg.Err.Error()
+	}
+	if text == "" {
+		text = actionStartText(msg.Intent)
+	}
+	switch msg.Status {
+	case actions.ResultSucceeded:
+		return actionfeedback.Success(text)
+	case actions.ResultErrored:
+		return actionfeedback.Error(text)
+	case actions.ResultCanceled:
+		return actionfeedback.Cancel(text)
+	default:
+		return actionfeedback.Start(text)
+	}
+}
+
+func (m Model) markSelectedNotificationRead() (Model, tea.Cmd) {
+	row, ok := m.getCurrRowData().(data.Notification)
+	if !ok {
+		m.notice = "Select a notification to mark read."
+		return m, nil
+	}
+	if row.ID == 0 {
+		m.notice = "Selected notification has no thread id."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to mark notifications read."
+		return m, nil
+	}
+	return m, markNotificationReadCmd(m.ctx.Client, m.currSectionId, row.ID)
+}
+
+func (m Model) markAllNotificationsRead() (Model, tea.Cmd) {
+	if m.ctx.View != context.NotificationsView {
+		m.notice = "Switch to notifications to mark all read."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to mark notifications read."
+		return m, nil
+	}
+	return m, markAllNotificationsReadCmd(m.ctx.Client, m.currSectionId)
+}
+
+func markNotificationReadCmd(client *gitea.Client, sectionID int, threadID int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			err:       client.MarkNotificationRead(ctx, threadID),
+		}
+	}
+}
+
+func markAllNotificationsReadCmd(client *gitea.Client, sectionID int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			all:       true,
+			err:       client.MarkAllNotificationsRead(ctx),
+		}
+	}
+}
+
+func (m Model) handleNotificationAction(msg notificationActionMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		if msg.all {
+			m.notice = fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err)
+		} else {
+			m.notice = fmt.Sprintf("Couldn't mark notification read: %v", msg.err)
+		}
+		return m, nil
+	}
+	if msg.all {
+		m.notice = "Marked all notifications read."
+	} else {
+		m.notice = "Marked notification read."
+	}
+	if msg.sectionID < 0 || msg.sectionID >= len(m.notifications) {
+		return m, nil
+	}
+	return m, m.notifications[msg.sectionID].FetchRows()
+}
+
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch sType {
@@ -566,6 +1076,14 @@ func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {
 	case notificationsection.SectionType:
 		if id >= 0 && id < len(m.notifications) {
 			m.notifications[id], cmd = m.notifications[id].Update(msg)
+		}
+	case actionsection.SectionType:
+		if id >= 0 && id < len(m.actions) {
+			m.actions[id], cmd = m.actions[id].Update(msg)
+		}
+	case branchsection.SectionType:
+		if id >= 0 && id < len(m.branches) {
+			m.branches[id], cmd = m.branches[id].Update(msg)
 		}
 	}
 	return cmd
@@ -587,6 +1105,12 @@ func (m *Model) syncProgramContext() {
 		s.UpdateProgramContext(m.ctx)
 	}
 	for _, s := range m.notifications {
+		s.UpdateProgramContext(m.ctx)
+	}
+	for _, s := range m.actions {
+		s.UpdateProgramContext(m.ctx)
+	}
+	for _, s := range m.branches {
 		s.UpdateProgramContext(m.ctx)
 	}
 	m.tabs.UpdateProgramContext(m.ctx)

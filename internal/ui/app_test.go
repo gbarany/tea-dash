@@ -1,14 +1,24 @@
 package ui
 
 import (
+	stdctx "context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	localgit "github.com/gbarany/tea-dash/internal/git"
+	"github.com/gbarany/tea-dash/internal/gitea"
+	"github.com/gbarany/tea-dash/internal/ui/actions"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
@@ -39,6 +49,39 @@ func notificationFetchedMsg(rows []data.Notification) context.TaskFinishedMsg {
 		TaskId:      "n1",
 		Msg: notificationsection.SectionNotificationsFetchedMsg{
 			Rows: rows, TotalCount: len(rows), TaskId: "n1",
+		},
+	}
+}
+
+func fetchedIssuesMsg(issues []data.Issue) context.TaskFinishedMsg {
+	return context.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: issuesection.SectionType,
+		TaskId:      "i1",
+		Msg: issuesection.SectionIssuesFetchedMsg{
+			Rows: issues, TotalCount: len(issues), TaskId: "i1",
+		},
+	}
+}
+
+func actionFetchedMsg(rows []data.ActionRun) context.TaskFinishedMsg {
+	return context.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: actionsection.SectionType,
+		TaskId:      "a1",
+		Msg: actionsection.SectionActionsFetchedMsg{
+			Rows: rows, TotalCount: len(rows), TaskId: "a1",
+		},
+	}
+}
+
+func branchFetchedMsg(rows []localgit.Branch) context.TaskFinishedMsg {
+	return context.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: branchsection.SectionType,
+		TaskId:      "b1",
+		Msg: branchsection.SectionBranchesFetchedMsg{
+			Rows: rows, TotalCount: len(rows), TaskId: "b1",
 		},
 	}
 }
@@ -178,6 +221,40 @@ func TestSwitchViewCyclesToNotifications(t *testing.T) {
 	}
 }
 
+func TestSwitchViewCyclesToActionsBranchesAndBackToPulls(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // issues
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // notifications
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = next.(Model)
+	if m.ctx.View != context.ActionsView {
+		t.Fatalf("View = %v, want ActionsView", m.ctx.View)
+	}
+	if len(m.actions) == 0 {
+		t.Fatal("expected action sections to be built lazily on switch")
+	}
+	if cmd == nil {
+		t.Fatal("expected a fetch command after switching to the actions view")
+	}
+
+	next, cmd = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = next.(Model)
+	if m.ctx.View != context.BranchesView {
+		t.Fatalf("View = %v, want BranchesView", m.ctx.View)
+	}
+	if len(m.branches) == 0 {
+		t.Fatal("expected branch sections to be built lazily on switch")
+	}
+	if cmd == nil {
+		t.Fatal("expected a fetch command after switching to the branches view")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("next switch after branches should wrap to pulls: View = %v", m.ctx.View)
+	}
+}
+
 func TestSectionSwitchWithTwoSections(t *testing.T) {
 	cfg := &config.Config{
 		PRSections: []config.SectionConfig{
@@ -295,6 +372,39 @@ func TestDefaultsViewStartsNotifications(t *testing.T) {
 	}
 }
 
+func TestDefaultsViewStartsActions(t *testing.T) {
+	m := New(&config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{{
+			Title: "CI",
+			Repo:  "gbarany/tea-dash",
+		}},
+	}, nil)
+	if m.ctx.View != context.ActionsView {
+		t.Fatalf("View = %v, want ActionsView", m.ctx.View)
+	}
+	if len(m.actions) == 0 {
+		t.Fatal("defaults.view=actions should build the action sections at startup")
+	}
+	if len(m.prs) != 0 || len(m.issues) != 0 || len(m.notifications) != 0 {
+		t.Fatalf("prs=%d issues=%d notifications=%d, want inactive views lazy",
+			len(m.prs), len(m.issues), len(m.notifications))
+	}
+}
+
+func TestDefaultsViewStartsBranches(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	if m.ctx.View != context.BranchesView {
+		t.Fatalf("View = %v, want BranchesView", m.ctx.View)
+	}
+	if len(m.branches) == 0 {
+		t.Fatal("defaults.view=branches should build the branch sections at startup")
+	}
+	if len(m.prs) != 0 || len(m.issues) != 0 || len(m.notifications) != 0 {
+		t.Fatalf("prs=%d issues=%d notifications=%d, want inactive views lazy", len(m.prs), len(m.issues), len(m.notifications))
+	}
+}
+
 // TestCrossViewFetchRoutesToOwnSlice verifies a late PR fetch that lands while
 // the Issues view is active is still routed to the pulls slice by (id, type),
 // not to whatever section is currently on screen.
@@ -316,8 +426,10 @@ func TestCrossViewFetchRoutesToOwnSlice(t *testing.T) {
 			TotalCount: 1, TaskId: "t1",
 		},
 	})
-	// Switch through Notifications back to the pulls view; the fetch must have
-	// landed in m.prs rather than whatever view is on screen.
+	// Switch through Notifications and Branches back to the pulls view; the
+	// fetch must have landed in m.prs rather than whatever view is on screen.
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
 	if m.ctx.View != context.PullsView {
@@ -445,6 +557,245 @@ func TestModelRendersLoadedNotifications(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("notifications view is missing %q\n---\n%s", want, view)
 		}
+	}
+}
+
+func TestMarkSelectedNotificationReadRefreshesNotifications(t *testing.T) {
+	var hit bool
+	client := newNotificationActionClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/notifications/threads/12" {
+				http.NotFound(w, r)
+				return
+			}
+			hit = true
+			if r.Method != http.MethodPatch {
+				t.Fatalf("method = %s, want PATCH", r.Method)
+			}
+			if got := r.URL.Query().Get("to-status"); got != "read" {
+				t.Fatalf("to-status = %q, want read", got)
+			}
+			fmt.Fprint(w, `{"id":12,"unread":false}`)
+		},
+		nil,
+	)
+	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, notificationFetchedMsg([]data.Notification{{
+		ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",
+		SubjectType: "Pull", SubjectState: "open", RepoNameWithOwner: "gbarany/tea-dash",
+		Unread: true, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if cmd == nil {
+		t.Fatal("'m' on a notification should return a mark-read command")
+	}
+	m = next.(Model)
+	msg := cmd()
+	if !hit {
+		t.Fatal("mark-read command did not call the notification thread endpoint")
+	}
+	next, refresh := m.Update(msg)
+	m = next.(Model)
+	if refresh == nil {
+		t.Fatal("successful mark-read should refresh the notifications section")
+	}
+	if !strings.Contains(m.notice, "Marked notification read") {
+		t.Fatalf("notice = %q, want mark-read confirmation", m.notice)
+	}
+}
+
+func TestMarkAllNotificationsReadRefreshesNotifications(t *testing.T) {
+	var hit bool
+	client := newNotificationActionClient(t,
+		nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			if r.Method != http.MethodPut {
+				t.Fatalf("method = %s, want PUT", r.Method)
+			}
+			q := r.URL.Query()
+			if got := q.Get("to-status"); got != "read" {
+				t.Fatalf("to-status = %q, want read", got)
+			}
+			if got := q["status-types"]; len(got) != 1 || got[0] != "unread" {
+				t.Fatalf("status-types = %v, want [unread]", got)
+			}
+			fmt.Fprint(w, `[]`)
+		},
+	)
+	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, notificationFetchedMsg([]data.Notification{{
+		ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",
+		SubjectType: "Pull", SubjectState: "open", RepoNameWithOwner: "gbarany/tea-dash",
+		Unread: true, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'M', Text: "M"})
+	if cmd == nil {
+		t.Fatal("'M' in notifications should return a mark-all-read command")
+	}
+	m = next.(Model)
+	msg := cmd()
+	if !hit {
+		t.Fatal("mark-all command did not call the notifications endpoint")
+	}
+	next, refresh := m.Update(msg)
+	m = next.(Model)
+	if refresh == nil {
+		t.Fatal("successful mark-all-read should refresh the notifications section")
+	}
+	if !strings.Contains(m.notice, "Marked all notifications read") {
+		t.Fatalf("notice = %q, want mark-all confirmation", m.notice)
+	}
+}
+
+func TestModelRendersLoadedActions(t *testing.T) {
+	m := New(&config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{{
+			Title: "CI",
+			Repo:  "gbarany/tea-dash",
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"}) // close preview for table assertions
+	m = update(t, m, actionFetchedMsg([]data.ActionRun{{
+		ID: 101, RunNumber: 77, DisplayTitle: "CI passed", WorkflowName: "CI",
+		RepoNameWithOwner: "gbarany/tea-dash", Actor: "octo", Event: "push",
+		Status: "completed", Conclusion: "success", UpdatedAt: time.Now().Add(-time.Hour),
+	}}))
+
+	view := m.View().Content
+	for _, want := range []string{"#77", "CI passed", "gbarany/tea-dash", "@octo push", "completed/success", "1 action run"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("actions view is missing %q\n---\n%s", want, view)
+		}
+	}
+}
+
+func TestModelRendersLoadedBranches(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"}) // close preview for table assertions
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", Name: "m5/repo-branches", Current: true,
+		Upstream: "origin/m4/notifications", Ahead: 1, Commit: "abc1234",
+		Subject: "Add branches view", UpdatedAt: time.Now().Add(-time.Hour),
+	}}))
+
+	view := m.View().Content
+	for _, want := range []string{"m5/repo-branches", "tea-dash", "origin/m4/notifications", "current", "ahead 1", "1 branch"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("branches view is missing %q\n---\n%s", want, view)
+		}
+	}
+}
+
+func TestActionsPreviewRendersStaticSummary(t *testing.T) {
+	m := New(&config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{{
+			Title: "CI",
+			Repo:  "gbarany/tea-dash",
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, actionFetchedMsg([]data.ActionRun{{
+		ID: 101, RunNumber: 77, DisplayTitle: "CI passed", WorkflowName: "CI",
+		RepoNameWithOwner: "gbarany/tea-dash", Actor: "octo", Event: "push",
+		Status: "completed", Conclusion: "success", HeadBranch: "main", HeadSHA: "abc123",
+		UpdatedAt: time.Now().Add(-time.Hour),
+	}}))
+
+	view := m.View().Content
+	for _, want := range []string{"gbarany/tea-dash · #77", "CI passed", "completed/success", "main", "abc123", "push", "@octo"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("actions preview missing %q\n---\n%s", want, view)
+		}
+	}
+}
+
+func TestActionsPreviewFetchesAndCachesRunDetail(t *testing.T) {
+	var runCalls, jobCalls int
+	srv := actionDetailServer(t, func(mux *http.ServeMux) {
+		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash/actions/runs/101", func(w http.ResponseWriter, _ *http.Request) {
+			runCalls++
+			fmt.Fprint(w, `{
+				"id": 101,
+				"run_number": 77,
+				"display_title": "CI passed",
+				"name": "CI",
+				"status": "completed",
+				"conclusion": "success",
+				"head_branch": "main",
+				"head_sha": "abc123"
+			}`)
+		})
+		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash/actions/runs/101/jobs", func(w http.ResponseWriter, _ *http.Request) {
+			jobCalls++
+			fmt.Fprint(w, `{
+				"jobs": [{
+					"id": 201,
+					"run_id": 101,
+					"name": "build",
+					"status": "completed",
+					"conclusion": "success",
+					"runner_name": "ubuntu-latest",
+					"steps": [{
+						"number": 1,
+						"name": "checkout",
+						"status": "completed",
+						"conclusion": "success"
+					}]
+				}]
+			}`)
+		})
+	})
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	m := New(&config.Config{
+		Defaults: config.Defaults{View: "actions"},
+		ActionsSections: []config.SectionConfig{{
+			Title: "CI",
+			Repo:  "gbarany/tea-dash",
+		}},
+	}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	next, cmd := m.Update(actionFetchedMsg([]data.ActionRun{{
+		ID: 101, RunNumber: 77, DisplayTitle: "CI passed", WorkflowName: "CI",
+		RepoNameWithOwner: "gbarany/tea-dash", Status: "completed", Conclusion: "success",
+	}}))
+	m = next.(Model)
+	msg := runEnrichedCommand(t, cmd)
+	if msg.err != nil {
+		t.Fatalf("action detail fetch returned error: %v", msg.err)
+	}
+	if msg.sectionType != actionsection.SectionType || msg.action == nil {
+		t.Fatalf("enrichedMsg = %+v, want action detail for action section", msg)
+	}
+
+	m = update(t, m, msg)
+	key := m.selKey()
+	if _, ok := m.actionDetails[key]; !ok {
+		t.Fatalf("actionDetails should contain %q after enrichedMsg", key)
+	}
+	view := m.View().Content
+	for _, want := range []string{"Jobs:", "build", "ubuntu-latest", "checkout"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("action detail preview missing %q:\n%s", want, view)
+		}
+	}
+	if runCalls != 1 || jobCalls != 1 {
+		t.Fatalf("detail endpoints called run=%d jobs=%d, want once each", runCalls, jobCalls)
+	}
+	if cmd := m.enrichCurrRow(); cmd != nil {
+		t.Fatal("cached action detail should suppress another lazy fetch")
 	}
 }
 
@@ -601,6 +952,8 @@ func TestPreviewErrorsDoNotLeakBetweenPullsAndIssuesWithSameNumber(t *testing.T)
 	})
 
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // notifications
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // actions
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // branches
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // pulls
 	m = update(t, m, context.TaskFinishedMsg{
 		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p1",
@@ -705,6 +1058,326 @@ func TestPreviewToggleGatedWhileSearching(t *testing.T) {
 	}
 }
 
+func TestActiveActionPromptCapturesGlobalKeys(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Prompt row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("'c' should open an action prompt")
+	}
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	m = next.(Model)
+	if isQuitCmd(cmd) {
+		t.Fatal("'q' while an action prompt is active must not quit")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("'s' while an action prompt is active must not switch views: %v", m.ctx.View)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("'p' while an action prompt is active must not toggle the default-open preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' while an action prompt is active must not focus search")
+	}
+}
+
+func TestActionKeysDispatchExpectedIntents(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         tea.KeyPressMsg
+		kind        actions.Kind
+		beforeEnter []tea.KeyPressMsg
+		wantPrompt  actions.Prompt
+	}{
+		{name: "comment", key: tea.KeyPressMsg{Code: 'c', Text: "c"}, kind: actions.KindComment},
+		{
+			name:        "merge",
+			key:         tea.KeyPressMsg{Code: 'm', Text: "m"},
+			kind:        actions.KindMerge,
+			beforeEnter: []tea.KeyPressMsg{{Code: 'j', Text: "j"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptPicker,
+				Value: "squash",
+				Label: "Squash",
+			},
+		},
+		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
+		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
+		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
+		{name: "external diff", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindExternalDiff},
+		{name: "external diff ctrl-t alias", key: tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, kind: actions.KindExternalDiff},
+		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},
+		{name: "checkout space alias", key: tea.KeyPressMsg{Code: ' ', Text: " "}, kind: actions.KindCheckout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedMsg([]data.PullRequest{{
+				Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+			}}))
+
+			m = update(t, m, tt.key)
+			if !m.actionPrompt.Active() {
+				t.Fatalf("%s key should open an action prompt", tt.name)
+			}
+			if tt.kind == actions.KindComment {
+				m = update(t, m, tea.KeyPressMsg{Code: 'o', Text: "o"})
+				m = update(t, m, tea.KeyPressMsg{Code: 'k', Text: "k"})
+			}
+			for _, key := range tt.beforeEnter {
+				m = update(t, m, key)
+			}
+			m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:   0,
+				SectionType: pullsection.SectionType,
+				RowKind:     actions.RowKindPullRequest,
+				Repo:        "gbarany/tea-dash",
+				Number:      42,
+				Title:       "Action row",
+				URL:         "https://example.test/gbarany/tea-dash/pulls/42",
+			}
+			if got[0].Kind != tt.kind || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want kind %q target %+v", got[0], tt.kind, wantTarget)
+			}
+			if tt.kind == actions.KindComment && got[0].Prompt.Value != "ok" {
+				t.Fatalf("comment prompt value = %q, want ok", got[0].Prompt.Value)
+			}
+			if tt.wantPrompt != (actions.Prompt{}) && got[0].Prompt != tt.wantPrompt {
+				t.Fatalf("prompt = %+v, want %+v", got[0].Prompt, tt.wantPrompt)
+			}
+		})
+	}
+}
+
+func TestHelpKeyTogglesFullHelp(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	if strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("full help should be hidden before '?' is pressed")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	view := m.View().Content
+	for _, want := range []string{"R refresh all", "y copy number", "Y copy URL", "C/space checkout"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("full help missing %q:\n%s", want, view)
+		}
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("second '?' should hide full help")
+	}
+}
+
+func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {
+	cfg := &config.Config{
+		PRSections: []config.SectionConfig{
+			{Title: "Mine", Filter: config.PrIssueFilter{CreatedBy: "@me"}},
+			{Title: "Review", Filter: config.PrIssueFilter{ReviewRequested: "@me"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p0",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p0",
+		},
+	})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 1, SectionType: pullsection.SectionType, TaskId: "p1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p1",
+		},
+	})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'R', Text: "R"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("'R' should batch refresh commands for all current sections")
+	}
+	if len(m.tasks) != 2 {
+		t.Fatalf("len(tasks) = %d, want both sections to register refresh tasks", len(m.tasks))
+	}
+}
+
+func TestCopyHotkeysUseSelectedRow(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		want string
+	}{
+		{name: "copy number", key: tea.KeyPressMsg{Code: 'y', Text: "y"}, want: "42"},
+		{name: "copy url", key: tea.KeyPressMsg{Code: 'Y', Text: "Y"}, want: "https://example.test/gbarany/tea-dash/pulls/42"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var copied string
+			m := New(&config.Config{}, nil)
+			m.copyToClipboard = func(s string) error {
+				copied = s
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedMsg([]data.PullRequest{{
+				Number: 42, Title: "Copy row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+			}}))
+
+			next, cmd := m.Update(tt.key)
+			m = next.(Model)
+			if cmd == nil {
+				t.Fatalf("%s should return a clipboard command", tt.name)
+			}
+			m = update(t, m, cmd())
+			if copied != tt.want {
+				t.Fatalf("copied = %q, want %q", copied, tt.want)
+			}
+			if !strings.Contains(m.View().Content, "Copied") {
+				t.Fatalf("copy result should be visible in the status area:\n%s", m.View().Content)
+			}
+		})
+	}
+}
+
+func TestGHDashFirstLastHotkeysMoveSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("'G' selected #%d, want #2", got)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'g', Text: "g"})
+	if got := m.getCurrRowData().GetNumber(); got != 1 {
+		t.Fatalf("'g' selected #%d, want #1", got)
+	}
+}
+
+func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
+	var dispatched bool
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m.actionDispatcher = func(actions.Intent) tea.Cmd {
+		dispatched = true
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 7, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if dispatched {
+		t.Fatal("merge on an issue must not dispatch")
+	}
+	if m.actionPrompt.Active() {
+		t.Fatal("merge on an issue must not open a prompt")
+	}
+	if !strings.Contains(m.notice, "pull requests") {
+		t.Fatalf("invalid action notice = %q, want pull requests message", m.notice)
+	}
+	if view := m.View().Content; !strings.Contains(view, "pull requests") {
+		t.Fatalf("invalid action notice should render in the view:\n%s", view)
+	}
+}
+
+func TestNilActionDispatcherShowsNoticeOnSubmit(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("'m' should open an action prompt")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.actionPrompt.Active() {
+		t.Fatal("submitted prompt should close")
+	}
+	if !strings.Contains(m.notice, "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice = %q, want action-not-wired message", m.notice)
+	}
+	if view := m.View().Content; !strings.Contains(view, "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice should render in the view:\n%s", view)
+	}
+}
+
+func TestSuccessfulActionRefreshesRowsAndClearsPreviewCache(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  key,
+		pull: &data.PullDetail{Body: "staledetailtoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	if _, ok := m.pullDetails[key]; !ok {
+		t.Fatalf("test setup: expected cached pull detail for %q", key)
+	}
+
+	next, cmd := m.Update(actions.ResultMsg{
+		Intent: actions.Intent{Kind: actions.KindClose, Target: actions.Target{
+			SectionID: 0, SectionType: pullsection.SectionType, RowKind: actions.RowKindPullRequest,
+			Repo: "gbarany/tea-dash", Number: 42,
+		}},
+		Status:  actions.ResultSucceeded,
+		Message: "Closed gbarany/tea-dash#42.",
+	})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("successful action should refresh the affected section")
+	}
+	if _, ok := m.pullDetails[key]; ok {
+		t.Fatalf("successful action should clear cached pull detail for %q", key)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "staledetailtoken") || !strings.Contains(view, "Loading") {
+		t.Fatalf("successful action should replace stale preview with loading state:\n%s", view)
+	}
+}
+
 // isQuitCmd reports whether running cmd yields a tea.QuitMsg.
 func isQuitCmd(cmd tea.Cmd) bool {
 	if cmd == nil {
@@ -714,8 +1387,77 @@ func isQuitCmd(cmd tea.Cmd) bool {
 	return ok
 }
 
+func runEnrichedCommand(t *testing.T, cmd tea.Cmd) enrichedMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected an enrichment command, got nil")
+	}
+	msg := cmd()
+	if enriched, ok := msg.(enrichedMsg); ok {
+		return enriched
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("enrichment command returned %T, want enrichedMsg or BatchMsg", msg)
+	}
+	for _, nested := range batch {
+		if nested == nil {
+			continue
+		}
+		if enriched, ok := nested().(enrichedMsg); ok {
+			return enriched
+		}
+	}
+	t.Fatal("enrichment batch did not contain an enrichedMsg")
+	return enrichedMsg{}
+}
+
+func actionDetailServer(t *testing.T, register func(*http.ServeMux)) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 var errBoom = errBoomType("boom")
 
 type errBoomType string
 
 func (e errBoomType) Error() string { return string(e) }
+
+func newNotificationActionClient(
+	t *testing.T,
+	threadHandler http.HandlerFunc,
+	notificationsHandler http.HandlerFunc,
+) *gitea.Client {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	if threadHandler != nil {
+		mux.HandleFunc("/api/v1/notifications/threads/12", threadHandler)
+	}
+	if notificationsHandler != nil {
+		mux.HandleFunc("/api/v1/notifications", notificationsHandler)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return client
+}
