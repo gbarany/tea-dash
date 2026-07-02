@@ -75,6 +75,7 @@ tea-dash --help
 | --------------- | ----------------------- |
 | `↑`/`↓`, `j`/`k`| move selection          |
 | mouse click      | select row              |
+| action button click | run common row action |
 | mouse wheel      | move selection          |
 | `g` / `G`       | first / last row        |
 | `s`             | switch view (PRs/issues/notifications/actions/branches)|

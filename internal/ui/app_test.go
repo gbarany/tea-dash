@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/config"
@@ -161,6 +162,76 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 	}
 }
 
+func TestActionBarRendersCommonPullRequestButtons(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	view := m.View().Content
+	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Diff]", "[Checkout]", "[Merge]", "[Close]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("action bar missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestMouseClickActionButtonStartsPromptAction(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	x := actionButtonClickX(t, m, "Comment")
+	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatalf("comment button should open the prompt synchronously, got cmd %v", cmd)
+	}
+	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindComment {
+		t.Fatalf("comment button prompt active=%v pending=%s, want comment prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
+	}
+}
+
+func TestMouseClickRefreshActionButtonRefreshesCurrentSection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	x := actionButtonClickX(t, m, "Refresh")
+	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("refresh action button should return a fetch command")
+	}
+	if s := m.getCurrSection(); s == nil || !s.GetIsLoading() {
+		t.Fatal("refresh action button should mark the current section loading")
+	}
+}
+
+func TestMouseClickNotificationActionButtonUsesNotificationFlow(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, notificationFetchedMsg([]data.Notification{{
+		ID: 8, Number: 42, SubjectTitle: "Review notification", SubjectType: "Pull",
+		RepoNameWithOwner: "gitea/tea", Unread: true,
+	}}))
+
+	x := actionButtonClickX(t, m, "Mark read")
+	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatalf("nil-client mark-read button should not return a command, got %v", cmd)
+	}
+	if !strings.Contains(m.notice, "No Gitea client available") {
+		t.Fatalf("notice = %q, want nil-client notification message", m.notice)
+	}
+}
+
 func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -202,6 +273,21 @@ func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) 
 	if !strings.Contains(view, "Closed row") || !strings.Contains(view, "Loading") {
 		t.Fatalf("tab click should render the clicked section preview loading state:\n%s", view)
 	}
+}
+
+func actionButtonClickX(t *testing.T, m Model, label string) int {
+	t.Helper()
+	x := 2
+	for _, b := range m.actionButtons() {
+		rendered := renderActionButton(b)
+		w := lipgloss.Width(rendered)
+		if b.Label == label {
+			return x + w/2
+		}
+		x += w + 1
+	}
+	t.Fatalf("button %q not found in %+v", label, m.actionButtons())
+	return 0
 }
 
 func TestMouseWheelMovesSelectionInList(t *testing.T) {
