@@ -2,7 +2,9 @@
 package ui
 
 import (
+	stdctx "context"
 	"fmt"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -85,6 +87,12 @@ type enrichedMsg struct {
 	pull        *data.PullDetail
 	issue       *data.IssueDetail
 	err         error
+}
+
+type notificationActionMsg struct {
+	sectionID int
+	all       bool
+	err       error
 }
 
 // New builds the root model. client may be nil in tests (only FetchRows uses it).
@@ -245,6 +253,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncSidebar()
 		return m, nil
 
+	case notificationActionMsg:
+		return m.handleNotificationAction(msg)
+
 	case spinner.TickMsg:
 		// A tick belongs to whichever section started the spinner, but sibling
 		// sections in the current view share one animation; route it to every one
@@ -260,6 +271,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m.notice = "" // any key dismisses a transient notice
 		switch {
+		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkRead):
+			return m.markSelectedNotificationRead()
+		case m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkAllRead):
+			return m.markAllNotificationsRead()
 		case key.Matches(msg, m.keys.Comment):
 			return m, m.startAction(actions.KindComment)
 		case key.Matches(msg, m.keys.Merge):
@@ -399,9 +414,21 @@ func (m Model) View() tea.View {
 
 func (m Model) helpLine() string {
 	if m.showHelp {
-		return "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL · c comment · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout · q quit"
+		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
+		if m.ctx.View == context.NotificationsView {
+			text += " · m mark read · M mark all read"
+		} else {
+			text += " · c comment · m merge · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
+		}
+		return text + " · q quit"
 	}
-	return "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh · c comment · m merge · d/ctrl+t diff · C/space checkout · ? help · q quit"
+	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh"
+	if m.ctx.View == context.NotificationsView {
+		text += " · m/M read"
+	} else {
+		text += " · c comment · m merge · d/ctrl+t diff · C/space checkout"
+	}
+	return text + " · ? help · q quit"
 }
 
 // currentViewSections returns the section slice for the active view.
@@ -879,6 +906,78 @@ func feedbackFromActionResult(msg actions.ResultMsg) actionfeedback.Message {
 	default:
 		return actionfeedback.Start(text)
 	}
+}
+
+func (m Model) markSelectedNotificationRead() (Model, tea.Cmd) {
+	row, ok := m.getCurrRowData().(data.Notification)
+	if !ok {
+		m.notice = "Select a notification to mark read."
+		return m, nil
+	}
+	if row.ID == 0 {
+		m.notice = "Selected notification has no thread id."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to mark notifications read."
+		return m, nil
+	}
+	return m, markNotificationReadCmd(m.ctx.Client, m.currSectionId, row.ID)
+}
+
+func (m Model) markAllNotificationsRead() (Model, tea.Cmd) {
+	if m.ctx.View != context.NotificationsView {
+		m.notice = "Switch to notifications to mark all read."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to mark notifications read."
+		return m, nil
+	}
+	return m, markAllNotificationsReadCmd(m.ctx.Client, m.currSectionId)
+}
+
+func markNotificationReadCmd(client *gitea.Client, sectionID int, threadID int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			err:       client.MarkNotificationRead(ctx, threadID),
+		}
+	}
+}
+
+func markAllNotificationsReadCmd(client *gitea.Client, sectionID int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			all:       true,
+			err:       client.MarkAllNotificationsRead(ctx),
+		}
+	}
+}
+
+func (m Model) handleNotificationAction(msg notificationActionMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		if msg.all {
+			m.notice = fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err)
+		} else {
+			m.notice = fmt.Sprintf("Couldn't mark notification read: %v", msg.err)
+		}
+		return m, nil
+	}
+	if msg.all {
+		m.notice = "Marked all notifications read."
+	} else {
+		m.notice = "Marked notification read."
+	}
+	if msg.sectionID < 0 || msg.sectionID >= len(m.notifications) {
+		return m, nil
+	}
+	return m, m.notifications[msg.sectionID].FetchRows()
 }
 
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {

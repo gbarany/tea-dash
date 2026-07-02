@@ -27,6 +27,8 @@ type keyMap struct {
 	CopyNumber    key.Binding
 	CopyURL       key.Binding
 	Help          key.Binding
+	MarkRead      key.Binding
+	MarkAllRead   key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -118,6 +120,14 @@ func defaultKeyMap() keyMap {
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
+		),
+		MarkRead: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "mark read"),
+		),
+		MarkAllRead: key.NewBinding(
+			key.WithKeys("M"),
+			key.WithHelp("M", "mark all read"),
 		),
 	}
 }
