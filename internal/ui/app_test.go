@@ -9,6 +9,8 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	localgit "github.com/gbarany/tea-dash/internal/git"
+	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
@@ -39,6 +41,17 @@ func notificationFetchedMsg(rows []data.Notification) context.TaskFinishedMsg {
 		TaskId:      "n1",
 		Msg: notificationsection.SectionNotificationsFetchedMsg{
 			Rows: rows, TotalCount: len(rows), TaskId: "n1",
+		},
+	}
+}
+
+func branchFetchedMsg(rows []localgit.Branch) context.TaskFinishedMsg {
+	return context.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: branchsection.SectionType,
+		TaskId:      "b1",
+		Msg: branchsection.SectionBranchesFetchedMsg{
+			Rows: rows, TotalCount: len(rows), TaskId: "b1",
 		},
 	}
 }
@@ -178,6 +191,28 @@ func TestSwitchViewCyclesToNotifications(t *testing.T) {
 	}
 }
 
+func TestSwitchViewCyclesToBranches(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // issues
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // notifications
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = next.(Model)
+	if m.ctx.View != context.BranchesView {
+		t.Fatalf("View = %v, want BranchesView", m.ctx.View)
+	}
+	if len(m.branches) == 0 {
+		t.Fatal("expected branch sections to be built lazily on switch")
+	}
+	if cmd == nil {
+		t.Fatal("expected a fetch command after switching to the branches view")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("next switch after branches should wrap to pulls: View = %v", m.ctx.View)
+	}
+}
+
 func TestSectionSwitchWithTwoSections(t *testing.T) {
 	cfg := &config.Config{
 		PRSections: []config.SectionConfig{
@@ -295,6 +330,19 @@ func TestDefaultsViewStartsNotifications(t *testing.T) {
 	}
 }
 
+func TestDefaultsViewStartsBranches(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	if m.ctx.View != context.BranchesView {
+		t.Fatalf("View = %v, want BranchesView", m.ctx.View)
+	}
+	if len(m.branches) == 0 {
+		t.Fatal("defaults.view=branches should build the branch sections at startup")
+	}
+	if len(m.prs) != 0 || len(m.issues) != 0 || len(m.notifications) != 0 {
+		t.Fatalf("prs=%d issues=%d notifications=%d, want inactive views lazy", len(m.prs), len(m.issues), len(m.notifications))
+	}
+}
+
 // TestCrossViewFetchRoutesToOwnSlice verifies a late PR fetch that lands while
 // the Issues view is active is still routed to the pulls slice by (id, type),
 // not to whatever section is currently on screen.
@@ -316,8 +364,9 @@ func TestCrossViewFetchRoutesToOwnSlice(t *testing.T) {
 			TotalCount: 1, TaskId: "t1",
 		},
 	})
-	// Switch through Notifications back to the pulls view; the fetch must have
-	// landed in m.prs rather than whatever view is on screen.
+	// Switch through Notifications and Branches back to the pulls view; the
+	// fetch must have landed in m.prs rather than whatever view is on screen.
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
 	if m.ctx.View != context.PullsView {
@@ -444,6 +493,24 @@ func TestModelRendersLoadedNotifications(t *testing.T) {
 	for _, want := range []string{"#42", "Review the new dashboard", "gbarany/tea-dash", "pull", "unread", "1 notification"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("notifications view is missing %q\n---\n%s", want, view)
+		}
+	}
+}
+
+func TestModelRendersLoadedBranches(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"}) // close preview for table assertions
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", Name: "m5/repo-branches", Current: true,
+		Upstream: "origin/m4/notifications", Ahead: 1, Commit: "abc1234",
+		Subject: "Add branches view", UpdatedAt: time.Now().Add(-time.Hour),
+	}}))
+
+	view := m.View().Content
+	for _, want := range []string{"m5/repo-branches", "tea-dash", "origin/m4/notifications", "current", "ahead 1", "1 branch"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("branches view is missing %q\n---\n%s", want, view)
 		}
 	}
 }
@@ -601,6 +668,7 @@ func TestPreviewErrorsDoNotLeakBetweenPullsAndIssuesWithSameNumber(t *testing.T)
 	})
 
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // notifications
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // branches
 	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"}) // pulls
 	m = update(t, m, context.TaskFinishedMsg{
 		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p1",

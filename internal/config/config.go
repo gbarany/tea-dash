@@ -17,14 +17,18 @@ type Config struct {
 	Instance Instance `yaml:"instance"`
 	// Login is a deprecated alias for Instance.Login (tea login profile name).
 	Login string `yaml:"login"`
-	// Repos lists repositories to watch. Unused in M0; per-repo sections
-	// return in M1.
+	// Repos lists remote Gitea repositories to watch. Unused in M0; per-repo
+	// sections return in M1.
 	Repos []string `yaml:"repos"`
-	// PRSections, IssuesSections, and NotificationsSections configure the tabs
-	// for their respective views. Empty falls back to a default section.
+	// LocalRepos lists local git repository paths for read-only branch status.
+	LocalRepos []LocalRepoConfig `yaml:"localRepos"`
+	// PRSections, IssuesSections, NotificationsSections, and BranchSections
+	// configure tabs for their respective views. Empty falls back to a default
+	// section.
 	PRSections            []SectionConfig `yaml:"prSections"`
 	IssuesSections        []SectionConfig `yaml:"issuesSections"`
 	NotificationsSections []SectionConfig `yaml:"notificationsSections"`
+	BranchSections        []SectionConfig `yaml:"branchSections"`
 	// Defaults sets the startup view and per-view row limits.
 	Defaults Defaults `yaml:"defaults"`
 }
@@ -37,6 +41,7 @@ type Defaults struct {
 	PRsLimit           int    `yaml:"prsLimit"`
 	IssuesLimit        int    `yaml:"issuesLimit"`
 	NotificationsLimit int    `yaml:"notificationsLimit"`
+	BranchesLimit      int    `yaml:"branchesLimit"`
 }
 
 // Instance selects and overrides the Gitea connection.
@@ -58,6 +63,13 @@ type SectionConfig struct {
 	// (defaults.prsLimit / defaults.issuesLimit), which in turn falls back to 50.
 	// Precedence: section Limit -> per-view default -> 50.
 	Limit int `yaml:"limit"`
+}
+
+// LocalRepoConfig describes one local git checkout to include in the branches
+// view. Name is optional; Path must point at a git repository worktree.
+type LocalRepoConfig struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path"`
 }
 
 // PrIssueFilter is the structured, config-driven filter for one section. Every
@@ -118,10 +130,20 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	for _, s := range c.BranchSections {
+		if err := s.Filter.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, r := range c.LocalRepos {
+		if strings.TrimSpace(r.Path) == "" {
+			return fmt.Errorf("localRepos entry %q: path is required", r.Name)
+		}
+	}
 	switch c.Defaults.View {
-	case "", "prs", "issues", "notifications":
+	case "", "prs", "issues", "notifications", "branches":
 	default:
-		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", or \"notifications\"", c.Defaults.View)
+		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", \"notifications\", or \"branches\"", c.Defaults.View)
 	}
 	return nil
 }

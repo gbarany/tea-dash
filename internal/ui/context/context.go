@@ -23,6 +23,7 @@ const (
 	PullsView ViewType = iota
 	IssuesView
 	NotificationsView
+	BranchesView
 )
 
 // TaskState is the lifecycle of an async task.
@@ -74,6 +75,13 @@ type ProgramContext struct {
 // default section.
 func (c *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
 	switch c.View {
+	case BranchesView:
+		if c.Config != nil && len(c.Config.BranchSections) > 0 {
+			return c.Config.BranchSections
+		}
+		return []config.SectionConfig{{
+			Title: "Local Branches",
+		}}
 	case NotificationsView:
 		if c.Config != nil && len(c.Config.NotificationsSections) > 0 {
 			return c.Config.NotificationsSections

@@ -12,6 +12,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
 	"github.com/gbarany/tea-dash/internal/gitea"
+	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
@@ -35,6 +36,7 @@ type Model struct {
 	prs           []section.Section
 	issues        []section.Section
 	notifications []section.Section
+	branches      []section.Section
 	notice        string // transient status message (e.g. browser-open failure)
 
 	// pullDetails and issueDetails memoize fetched detail views keyed by
@@ -86,6 +88,8 @@ func New(cfg *config.Config, client *gitea.Client) Model {
 			view = context.IssuesView
 		case "notifications":
 			view = context.NotificationsView
+		case "branches":
+			view = context.BranchesView
 		}
 	}
 	ctx := &context.ProgramContext{
@@ -128,6 +132,8 @@ func buildSections(view context.ViewType, ctx *context.ProgramContext) []section
 			sections[i] = issuesection.NewModel(i, ctx, cfg)
 		case context.NotificationsView:
 			sections[i] = notificationsection.NewModel(i, ctx, cfg)
+		case context.BranchesView:
+			sections[i] = branchsection.NewModel(i, ctx, cfg)
 		default:
 			sections[i] = pullsection.NewModel(i, ctx, cfg)
 		}
@@ -294,6 +300,8 @@ func (m Model) View() tea.View {
 		subtitle = "  my issues"
 	case context.NotificationsView:
 		subtitle = "  notifications"
+	case context.BranchesView:
+		subtitle = "  local branches"
 	}
 	title := titleStyle.Render("tea-dash") + m.ctx.Styles.DimText.Render(subtitle)
 
@@ -322,6 +330,8 @@ func (m Model) View() tea.View {
 // currentViewSections returns the section slice for the active view.
 func (m *Model) currentViewSections() []section.Section {
 	switch m.ctx.View {
+	case context.BranchesView:
+		return m.branches
 	case context.NotificationsView:
 		return m.notifications
 	case context.IssuesView:
@@ -334,6 +344,8 @@ func (m *Model) currentViewSections() []section.Section {
 // setCurrentViewSections stores s under the active view and rewires the tab bar.
 func (m *Model) setCurrentViewSections(s []section.Section) {
 	switch m.ctx.View {
+	case context.BranchesView:
+		m.branches = s
 	case context.NotificationsView:
 		m.notifications = s
 	case context.IssuesView:
@@ -458,6 +470,9 @@ func (m *Model) syncSidebar() {
 		rendered = prview.RenderIssue(r, m.issueDetails[key], w, m.expanded)
 	case data.Notification:
 		rendered = prview.RenderNotification(r, w)
+	default:
+		m.sidebar.SetContent("")
+		return
 	}
 	m.sidebar.SetContent(rendered)
 }
@@ -492,14 +507,16 @@ func (m *Model) clearSelectedPreviewCache() {
 	}
 }
 
-// switchView cycles pulls -> issues -> notifications, lazily building and
-// fetching the target view's sections on first visit.
+// switchView cycles pulls -> issues -> notifications -> branches, lazily
+// building and fetching the target view's sections on first visit.
 func (m *Model) switchView() tea.Cmd {
 	switch m.ctx.View {
 	case context.PullsView:
 		m.ctx.View = context.IssuesView
 	case context.IssuesView:
 		m.ctx.View = context.NotificationsView
+	case context.NotificationsView:
+		m.ctx.View = context.BranchesView
 	default:
 		m.ctx.View = context.PullsView
 	}
@@ -567,6 +584,10 @@ func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {
 		if id >= 0 && id < len(m.notifications) {
 			m.notifications[id], cmd = m.notifications[id].Update(msg)
 		}
+	case branchsection.SectionType:
+		if id >= 0 && id < len(m.branches) {
+			m.branches[id], cmd = m.branches[id].Update(msg)
+		}
 	}
 	return cmd
 }
@@ -587,6 +608,9 @@ func (m *Model) syncProgramContext() {
 		s.UpdateProgramContext(m.ctx)
 	}
 	for _, s := range m.notifications {
+		s.UpdateProgramContext(m.ctx)
+	}
+	for _, s := range m.branches {
 		s.UpdateProgramContext(m.ctx)
 	}
 	m.tabs.UpdateProgramContext(m.ctx)
