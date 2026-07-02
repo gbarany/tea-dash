@@ -464,6 +464,42 @@ func TestRefreshGatedWhileLoading(t *testing.T) {
 	}
 }
 
+func TestAutoRefreshDisabledByDefault(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	if got := m.autoRefreshInterval(); got != 0 {
+		t.Fatalf("auto-refresh interval = %v, want disabled by default", got)
+	}
+	if cmd := m.autoRefreshCmd(); cmd != nil {
+		t.Fatalf("auto-refresh command = %v, want nil when disabled", cmd)
+	}
+}
+
+func TestAutoRefreshTickRefreshesCurrentViewAndReschedules(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{RefetchIntervalMinutes: 1}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+	if s := m.getCurrSection(); s == nil || s.GetIsLoading() {
+		t.Fatal("section should be loaded before the auto-refresh tick")
+	}
+
+	next, cmd := m.Update(autoRefreshMsg{})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("auto-refresh tick should return a batched refresh + reschedule command")
+	}
+	if got := m.autoRefreshInterval(); got != time.Minute {
+		t.Fatalf("auto-refresh interval = %v, want 1m", got)
+	}
+	if s := m.getCurrSection(); s == nil || !s.GetIsLoading() {
+		t.Fatal("auto-refresh tick should mark current view sections loading")
+	}
+	if len(m.tasks) == 0 {
+		t.Fatal("auto-refresh tick should register fetch tasks")
+	}
+}
+
 func TestFetchRowsRegistersTask(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	// Exercise the real StartTask closure wired in New: FetchRows registers the

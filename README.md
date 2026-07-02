@@ -123,6 +123,7 @@ smartFilteringAtLaunch: true # when launched inside a matching git checkout, bla
 
 defaults:
   view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
+  refetchIntervalMinutes: 0 # auto-refresh current view every N minutes (0/omitted -> manual only)
   prsLimit: 50           # PR page size; more rows load when you reach the bottom (0 -> 50)
   issuesLimit: 50        # issue page size; more rows load when you reach the bottom (0 -> 50)
   notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)
