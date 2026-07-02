@@ -31,6 +31,18 @@ func BuildCommand(command string, stdin []byte, dir string) Command {
 	}
 }
 
+// BuildExecCommand builds an *exec.Cmd suitable for Bubble Tea's ExecProcess,
+// so interactive full-screen commands can temporarily take over the terminal.
+func BuildExecCommand(command string, stdin []byte, dir string) *exec.Cmd {
+	c := BuildCommand(command, stdin, dir)
+	cmd := exec.Command(c.Name, c.Args...)
+	cmd.Dir = c.Dir
+	if c.Stdin != nil {
+		cmd.Stdin = bytes.NewReader(c.Stdin)
+	}
+	return cmd
+}
+
 // Runner runs shell commands.
 type Runner interface {
 	Run(context.Context, Command) ([]byte, error)

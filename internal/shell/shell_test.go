@@ -37,3 +37,25 @@ func TestBuildCommandDefaultsToBinSh(t *testing.T) {
 		t.Fatalf("Args = %#v, want %#v", cmd.Args, want)
 	}
 }
+
+func TestBuildExecCommandUsesShellCDirAndOptionalStdin(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+
+	cmd := BuildExecCommand("lazygit", []byte("input"), "/tmp/repo")
+
+	if cmd.Path != "/bin/zsh" {
+		t.Fatalf("Path = %q, want /bin/zsh", cmd.Path)
+	}
+	if want := []string{"/bin/zsh", "-c", "lazygit"}; !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("Args = %#v, want %#v", cmd.Args, want)
+	}
+	if cmd.Dir != "/tmp/repo" {
+		t.Fatalf("Dir = %q, want /tmp/repo", cmd.Dir)
+	}
+	if cmd.Stdin == nil {
+		t.Fatal("Stdin should be populated when stdin bytes are provided")
+	}
+	if cmd.Stdout != nil || cmd.Stderr != nil {
+		t.Fatal("Stdout/Stderr should stay nil so Bubble Tea ExecProcess can wire terminal output")
+	}
+}

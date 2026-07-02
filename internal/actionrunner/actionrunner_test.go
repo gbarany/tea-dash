@@ -3,6 +3,7 @@ package actionrunner
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -162,6 +163,59 @@ func TestDispatchExternalDiffRunsConfiguredPager(t *testing.T) {
 	}
 }
 
+func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
+	execProcess := &fakeExecProcess{}
+	r := New(Options{
+		Config:      &config.Config{},
+		InstanceURL: "https://git.example",
+		CWD:         "/fallback",
+		ExecProcess: execProcess.Run,
+	})
+	intent := pullIntent(uiactions.KindCustomCommand)
+	intent.Command = "cd {{.RepoPath}} && echo {{.RepoName}} {{.PrNumber}}/{{.PrIndex}} {{.Title}} {{.Author}} {{.InstanceURL}} {{.Url}}"
+	intent.Name = "lazygit"
+	intent.Target.RepositoryPath = "/src/widgets"
+	intent.Target.URL = "https://git.example/acme/widgets/pulls/7"
+	intent.Target.Author = "alice"
+
+	got := runDispatch(t, r, intent)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("custom command result = %+v", got)
+	}
+	if execProcess.cmd == nil {
+		t.Fatal("exec process was not called")
+	}
+	if len(execProcess.cmd.Args) != 3 || execProcess.cmd.Args[1] != "-c" {
+		t.Fatalf("shell args = %#v, want shell -c", execProcess.cmd.Args)
+	}
+	want := "cd /src/widgets && echo acme/widgets 7/7 PR title alice https://git.example https://git.example/acme/widgets/pulls/7"
+	if execProcess.cmd.Args[2] != want {
+		t.Fatalf("rendered command = %q, want %q", execProcess.cmd.Args[2], want)
+	}
+	if execProcess.cmd.Dir != "/src/widgets" {
+		t.Fatalf("command dir = %q, want selected repo path", execProcess.cmd.Dir)
+	}
+	if !strings.Contains(got.Message, "lazygit") {
+		t.Fatalf("custom command message = %q", got.Message)
+	}
+}
+
+func TestDispatchCustomCommandMissingVariableDoesNotRunShell(t *testing.T) {
+	execProcess := &fakeExecProcess{}
+	r := New(Options{ExecProcess: execProcess.Run})
+	intent := pullIntent(uiactions.KindCustomCommand)
+	intent.Command = "echo {{.NoSuchField}}"
+
+	got := runDispatch(t, r, intent)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "render custom command template") {
+		t.Fatalf("custom command missing variable result = %+v", got)
+	}
+	if execProcess.cmd != nil {
+		t.Fatalf("exec should not run for a missing template variable, ran %+v", execProcess.cmd)
+	}
+}
+
 func TestDispatchCheckoutPassesConfig(t *testing.T) {
 	var gotOpts localgit.CheckoutOptions
 	r := New(Options{
@@ -295,6 +349,18 @@ type fakeShellRunner struct {
 func (f *fakeShellRunner) Run(_ context.Context, cmd shell.Command) ([]byte, error) {
 	f.command = cmd
 	return nil, f.err
+}
+
+type fakeExecProcess struct {
+	cmd *exec.Cmd
+	err error
+}
+
+func (f *fakeExecProcess) Run(cmd *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
+	f.cmd = cmd
+	return func() tea.Msg {
+		return cb(f.err)
+	}
 }
 
 var _ tea.Cmd

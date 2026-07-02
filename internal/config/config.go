@@ -43,6 +43,8 @@ type Config struct {
 	RepoPaths map[string]string `yaml:"repoPaths"`
 	// Git configures local git checkout behavior.
 	Git Git `yaml:"git"`
+	// Keybindings overrides built-in keys and adds custom shell commands.
+	Keybindings Keybindings `yaml:"keybindings"`
 }
 
 // Defaults holds startup and limit defaults. Per-view limits set the row-fetch
@@ -78,6 +80,26 @@ func (p Pager) DiffCommand() string {
 type Git struct {
 	Remote           string `yaml:"remote"`
 	PRBranchTemplate string `yaml:"prBranchTemplate"`
+}
+
+// Keybindings groups configurable bindings by scope. Universal bindings are
+// active in every view; scoped bindings apply only while that view is active.
+type Keybindings struct {
+	Universal     []Keybinding `yaml:"universal"`
+	PRs           []Keybinding `yaml:"prs"`
+	Issues        []Keybinding `yaml:"issues"`
+	Notifications []Keybinding `yaml:"notifications"`
+	Actions       []Keybinding `yaml:"actions"`
+	Branches      []Keybinding `yaml:"branches"`
+}
+
+// Keybinding is one user-configured key entry. Builtin remaps a native command;
+// Command runs a shell command using the selected row as template context.
+type Keybinding struct {
+	Key     string `yaml:"key"`
+	Builtin string `yaml:"builtin"`
+	Command string `yaml:"command"`
+	Name    string `yaml:"name"`
 }
 
 // RemoteName returns the configured remote name or the origin default.
@@ -209,12 +231,88 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("localRepos entry %q: path is required", r.Name)
 		}
 	}
+	if err := c.Keybindings.Validate(); err != nil {
+		return err
+	}
 	switch c.Defaults.View {
 	case "", "prs", "issues", "notifications", "actions", "branches":
 	default:
 		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", \"notifications\", \"actions\", or \"branches\"", c.Defaults.View)
 	}
 	return nil
+}
+
+// Validate rejects keybinding entries that cannot be matched or executed.
+func (k Keybindings) Validate() error {
+	for _, group := range []struct {
+		name     string
+		bindings []Keybinding
+		builtins map[string]struct{}
+	}{
+		{"keybindings.universal", k.Universal, universalBuiltins},
+		{"keybindings.prs", k.PRs, prBuiltins},
+		{"keybindings.issues", k.Issues, issueBuiltins},
+		{"keybindings.notifications", k.Notifications, notificationBuiltins},
+		{"keybindings.actions", k.Actions, actionBuiltins},
+		{"keybindings.branches", k.Branches, branchBuiltins},
+	} {
+		for i, b := range group.bindings {
+			if strings.TrimSpace(b.Key) == "" {
+				return fmt.Errorf("%s[%d].key is required", group.name, i)
+			}
+			hasBuiltin := strings.TrimSpace(b.Builtin) != ""
+			hasCommand := strings.TrimSpace(b.Command) != ""
+			if hasBuiltin == hasCommand {
+				return fmt.Errorf("%s[%d] must set builtin or command", group.name, i)
+			}
+			if hasBuiltin {
+				name := normalizeBuiltinName(b.Builtin)
+				if _, ok := group.builtins[name]; !ok {
+					return fmt.Errorf("%s[%d].builtin = %q is not supported in this scope", group.name, i, b.Builtin)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+var universalBuiltins = builtinSet(
+	"refresh", "refreshAll", "openGithub", "open", "search", "togglePreview",
+	"pageUp", "pageDown", "scrollUp", "scrollDown", "prevSection",
+	"previousSection", "nextSection", "switchView", "copyurl", "copyNumber",
+	"help", "quit", "expand", "summaryViewMore",
+)
+
+var prBuiltins = builtinSet(
+	"comment", "merge", "close", "reopen", "diff", "checkout", "approve",
+	"review", "summaryViewMore", "expand",
+)
+
+var issueBuiltins = builtinSet("comment", "close", "reopen")
+
+var notificationBuiltins = builtinSet(
+	"openGithub", "open", "markAsRead", "markRead", "markAsUnread",
+	"markUnread", "markAllAsRead", "markAllRead", "markAsDone", "markDone",
+	"markAllAsDone", "markAllDone",
+)
+
+var actionBuiltins = builtinSet("rerun", "rerunRun", "cancel", "cancelRun")
+
+var branchBuiltins = builtinSet("checkout")
+
+func builtinSet(names ...string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		out[normalizeBuiltinName(name)] = struct{}{}
+	}
+	return out
+}
+
+func normalizeBuiltinName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "-", "")
+	name = strings.ReplaceAll(name, "_", "")
+	return strings.ToLower(name)
 }
 
 // WithDefaults fills the section-driven Type and the "open" State default,

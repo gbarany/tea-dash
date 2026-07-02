@@ -170,6 +170,97 @@ git:
 	}
 }
 
+func TestUnmarshalKeybindings(t *testing.T) {
+	const y = `
+keybindings:
+  universal:
+    - key: tab
+      builtin: nextSection
+  prs:
+    - key: O
+      builtin: checkout
+    - key: g
+      name: lazygit
+      command: cd {{.RepoPath}} && lazygit
+  issues:
+    - key: i
+      command: echo {{.IssueNumber}}
+  notifications:
+    - key: D
+      builtin: markAllRead
+  actions:
+    - key: a
+      command: echo {{.RunID}}
+  branches:
+    - key: B
+      command: git -C {{.RepoPath}} status
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(c.Keybindings.Universal) != 1 || c.Keybindings.Universal[0].Key != "tab" ||
+		c.Keybindings.Universal[0].Builtin != "nextSection" {
+		t.Fatalf("universal keybindings = %+v", c.Keybindings.Universal)
+	}
+	if len(c.Keybindings.PRs) != 2 || c.Keybindings.PRs[1].Name != "lazygit" ||
+		!strings.Contains(c.Keybindings.PRs[1].Command, "lazygit") {
+		t.Fatalf("prs keybindings = %+v", c.Keybindings.PRs)
+	}
+	if c.Keybindings.Notifications[0].Builtin != "markAllRead" ||
+		c.Keybindings.Actions[0].Key != "a" ||
+		c.Keybindings.Branches[0].Command == "" {
+		t.Fatalf("keybindings = %+v", c.Keybindings)
+	}
+}
+
+func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{
+			name: "missing key",
+			cfg: Config{Keybindings: Keybindings{Universal: []Keybinding{{
+				Builtin: "refresh",
+			}}}},
+		},
+		{
+			name: "missing builtin and command",
+			cfg: Config{Keybindings: Keybindings{PRs: []Keybinding{{
+				Key: "g",
+			}}}},
+		},
+		{
+			name: "both builtin and command",
+			cfg: Config{Keybindings: Keybindings{PRs: []Keybinding{{
+				Key: "g", Builtin: "checkout", Command: "lazygit",
+			}}}},
+		},
+		{
+			name: "unsupported scoped builtin",
+			cfg: Config{Keybindings: Keybindings{Issues: []Keybinding{{
+				Key: "m", Builtin: "merge",
+			}}}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.cfg.Validate(); err == nil {
+				t.Fatal("Validate() should reject the invalid keybinding")
+			}
+		})
+	}
+
+	ok := Config{Keybindings: Keybindings{Universal: []Keybinding{
+		{Key: "R", Builtin: "refreshAll"},
+		{Key: "g", Command: "lazygit"},
+	}}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("Validate() rejected valid keybindings: %v", err)
+	}
+}
+
 func TestPagerDiffCommandDefaults(t *testing.T) {
 	t.Setenv("PAGER", "bat --plain")
 	if got := (Pager{}).DiffCommand(); got != "bat --plain" {
