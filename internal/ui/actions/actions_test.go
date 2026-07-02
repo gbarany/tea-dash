@@ -11,6 +11,8 @@ func TestKindConstants(t *testing.T) {
 		KindReview:       "review",
 		KindExternalDiff: "external_diff",
 		KindCheckout:     "checkout",
+		KindRerunRun:     "rerun_run",
+		KindCancelRun:    "cancel_run",
 	}
 	for got, want := range tests {
 		if string(got) != want {
@@ -28,12 +30,14 @@ func TestIntentCarriesTargetAndPrompt(t *testing.T) {
 			RowKind:     RowKindPullRequest,
 			Repo:        "gbarany/tea-dash",
 			Number:      42,
+			RunID:       101,
 			Title:       "Add action UI",
 			URL:         "https://example.test/pr/42",
 		},
 		Prompt: Prompt{Mode: PromptText, Value: "ship it"},
 	}
-	if intent.Kind != KindComment || intent.Target.Repo != "gbarany/tea-dash" || intent.Prompt.Value != "ship it" {
+	if intent.Kind != KindComment || intent.Target.Repo != "gbarany/tea-dash" ||
+		intent.Target.RunID != 101 || intent.Prompt.Value != "ship it" {
 		t.Fatalf("intent did not retain values: %+v", intent)
 	}
 }

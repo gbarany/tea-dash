@@ -142,6 +142,22 @@ func (c *Client) ListActionJobs(ctx context.Context, owner, repo string, runID i
 	return jobs, nil
 }
 
+// RerunActionRun asks the server to rerun one repo-scoped Actions workflow run.
+func (c *Client) RerunActionRun(ctx context.Context, owner, repo string, runID int64) error {
+	if err := c.rawPost(ctx, actionRunControlPath(owner, repo, runID, "rerun")); err != nil {
+		return fmt.Errorf("rerun action run %s/%s#%d: %w", owner, repo, runID, err)
+	}
+	return nil
+}
+
+// CancelActionRun asks the server to cancel one repo-scoped Actions workflow run.
+func (c *Client) CancelActionRun(ctx context.Context, owner, repo string, runID int64) error {
+	if err := c.rawPost(ctx, actionRunControlPath(owner, repo, runID, "cancel")); err != nil {
+		return fmt.Errorf("cancel action run %s/%s#%d: %w", owner, repo, runID, err)
+	}
+	return nil
+}
+
 func buildActionRunParams(opts ActionRunListOptions) url.Values {
 	q := url.Values{}
 	if opts.Event != "" {
@@ -312,4 +328,8 @@ func actionRunPath(owner, repo string, runID int64) string {
 
 func actionJobsPath(owner, repo string, runID int64) string {
 	return actionRunPath(owner, repo, runID) + "/jobs"
+}
+
+func actionRunControlPath(owner, repo string, runID int64, control string) string {
+	return actionRunPath(owner, repo, runID) + "/" + control
 }

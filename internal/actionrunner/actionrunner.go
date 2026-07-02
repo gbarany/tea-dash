@@ -27,6 +27,8 @@ type Client interface {
 	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error)
 	SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error)
 	GetPullDiff(owner, repo string, index int64) ([]byte, error)
+	RerunActionRun(ctx context.Context, owner, repo string, runID int64) error
+	CancelActionRun(ctx context.Context, owner, repo string, runID int64) error
 }
 
 // CheckoutFunc runs or fakes a local PR checkout.
@@ -204,9 +206,30 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			return "", err
 		}
 		return fmt.Sprintf("Checked out %s in %s.", plan.Branch, plan.RepoPath), nil
+
+	case uiactions.KindRerunRun:
+		runID := targetRunID(intent.Target)
+		if err := r.client.RerunActionRun(ctx, owner, repo, runID); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Rerun requested for %s run #%d.", intent.Target.Repo, intent.Target.Number), nil
+
+	case uiactions.KindCancelRun:
+		runID := targetRunID(intent.Target)
+		if err := r.client.CancelActionRun(ctx, owner, repo, runID); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Cancel requested for %s run #%d.", intent.Target.Repo, intent.Target.Number), nil
 	default:
 		return "", fmt.Errorf("unsupported action %q", intent.Kind)
 	}
+}
+
+func targetRunID(target uiactions.Target) int64 {
+	if target.RunID != 0 {
+		return target.RunID
+	}
+	return target.Number
 }
 
 func (r Runner) setState(owner, repo string, index int64, kind uiactions.RowKind, state data.ItemState) error {
@@ -276,6 +299,10 @@ func actionLabel(kind uiactions.Kind) string {
 		return "checkout"
 	case uiactions.KindSwitchBranch:
 		return "switch branch"
+	case uiactions.KindRerunRun:
+		return "rerun"
+	case uiactions.KindCancelRun:
+		return "cancel run"
 	default:
 		return string(kind)
 	}

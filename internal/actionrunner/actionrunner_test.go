@@ -60,6 +60,19 @@ func branchIntent(kind uiactions.Kind) uiactions.Intent {
 	}
 }
 
+func actionRunIntent(kind uiactions.Kind) uiactions.Intent {
+	return uiactions.Intent{
+		Kind: kind,
+		Target: uiactions.Target{
+			RowKind: uiactions.RowKindActionRun,
+			Repo:    "acme/widgets",
+			Number:  77,
+			RunID:   101,
+			Title:   "CI",
+		},
+	}
+}
+
 func TestDispatchCommentAndClose(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})
@@ -194,6 +207,27 @@ func TestDispatchSwitchBranchDoesNotRequireClient(t *testing.T) {
 	}
 }
 
+func TestDispatchActionRunControlsUseRunID(t *testing.T) {
+	client := &fakeClient{}
+	r := New(Options{Client: client})
+
+	got := runDispatch(t, r, actionRunIntent(uiactions.KindRerunRun))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("rerun result = %+v", got)
+	}
+	if client.rerunRunID != 101 {
+		t.Fatalf("rerunRunID = %d, want 101", client.rerunRunID)
+	}
+
+	got = runDispatch(t, r, actionRunIntent(uiactions.KindCancelRun))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("cancel result = %+v", got)
+	}
+	if client.cancelRunID != 101 {
+		t.Fatalf("cancelRunID = %d, want 101", client.cancelRunID)
+	}
+}
+
 func TestDispatchReturnsErrorResult(t *testing.T) {
 	client := &fakeClient{err: errors.New("boom")}
 	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindMerge))
@@ -210,6 +244,8 @@ type fakeClient struct {
 	merge       data.MergeOptions
 	review      data.PullReviewOptions
 	diff        []byte
+	rerunRunID  int64
+	cancelRunID int64
 }
 
 func (f *fakeClient) AddComment(_, _ string, _ int64, body string) (data.Comment, error) {
@@ -239,6 +275,16 @@ func (f *fakeClient) SubmitPullReview(_, _ string, _ int64, opt data.PullReviewO
 
 func (f *fakeClient) GetPullDiff(_, _ string, _ int64) ([]byte, error) {
 	return f.diff, f.err
+}
+
+func (f *fakeClient) RerunActionRun(_ context.Context, _, _ string, runID int64) error {
+	f.rerunRunID = runID
+	return f.err
+}
+
+func (f *fakeClient) CancelActionRun(_ context.Context, _, _ string, runID int64) error {
+	f.cancelRunID = runID
+	return f.err
 }
 
 type fakeShellRunner struct {
