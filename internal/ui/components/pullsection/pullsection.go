@@ -40,6 +40,9 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		Limit:        func(c *config.Config) int { return c.Defaults.PRsLimit },
 		Pageable:     true,
 		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.PullRequest, int, error) {
+			if cfg.Repo != "" {
+				return c.ListRepoPullsPage(ctx, cfg.Repo, f, limit, page)
+			}
 			return c.SearchPullsPage(ctx, f, limit, page)
 		},
 		BuildRow: prBuildRow,

@@ -373,6 +373,42 @@ func TestConfigValidateRejectsBadSectionFilter(t *testing.T) {
 	}
 }
 
+func TestConfigValidateAllowsRepoScopedLoginFilters(t *testing.T) {
+	cfg := &Config{
+		IssuesSections: []SectionConfig{
+			{Title: "Alice bugs", Repo: "acme/widgets", Filter: PrIssueFilter{CreatedBy: "alice"}},
+		},
+		PRSections: []SectionConfig{
+			{Title: "Assigned PRs", Repo: "acme/widgets", Filter: PrIssueFilter{AssignedBy: "alice"}},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() should allow plain login filters on repo-scoped sections: %v", err)
+	}
+}
+
+func TestConfigValidateRejectsBadRepoScopedRepo(t *testing.T) {
+	cfg := &Config{
+		PRSections: []SectionConfig{
+			{Title: "Bad repo", Repo: "owner/repo/extra"},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() should reject malformed prSections.repo")
+	}
+}
+
+func TestConfigValidateRejectsRepoScopedReviewRequested(t *testing.T) {
+	cfg := &Config{
+		PRSections: []SectionConfig{
+			{Title: "Needs review", Repo: "acme/widgets", Filter: PrIssueFilter{ReviewRequested: "@me"}},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() should reject repo-scoped reviewRequested because the repo endpoint cannot express it")
+	}
+}
+
 func TestConfigValidateRejectsBadActionRepo(t *testing.T) {
 	if err := (&Config{ActionsSections: []SectionConfig{{
 		Title: "Actions",

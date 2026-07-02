@@ -40,6 +40,9 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		Limit:        func(c *config.Config) int { return c.Defaults.IssuesLimit },
 		Pageable:     true,
 		Fetch: func(ctx stdctx.Context, c *gitea.Client, f config.PrIssueFilter, limit, page int) ([]data.Issue, int, error) {
+			if cfg.Repo != "" {
+				return c.ListRepoIssuesPage(ctx, cfg.Repo, f, limit, page)
+			}
 			return c.SearchIssuesPage(ctx, f, limit, page)
 		},
 		BuildRow: issueBuildRow,

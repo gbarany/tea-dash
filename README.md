@@ -154,6 +154,11 @@ prSections:
     filter:
       reviewRequested: "@me"
     limit: 25              # per-section page size; overrides defaults.prsLimit
+  - title: Alice in Widgets
+    repo: acme/widgets     # repo-scoped sections can use plain login filters
+    filter:
+      state: open
+      createdBy: alice
 
 issuesSections:
   - title: My Issues
@@ -225,9 +230,9 @@ actions; commands run through your shell with row template fields such as
 `RunID`, `Title`, `Author`, `Sha`, `InstanceURL`, and `Url`/`URL`.
 
 > **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
-> `reviewRequested`) support the sentinel `"@me"` only — a plain login is
-> rejected at load, because Gitea's cross-repo search endpoint has no per-login
-> author filter.
+> `reviewRequested`) support the sentinel `"@me"` on cross-repo sections.
+> Plain login filters such as `createdBy: alice` require `repo: owner/name`,
+> because Gitea's cross-repo search endpoint has no per-login author filter.
 
 With or without a config file, tea-dash shows the pull requests and issues you
 authored, plus unread notifications, across every repo you can access on your

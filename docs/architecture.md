@@ -44,12 +44,16 @@ an actionable message.
   raw escape hatch,
 - caches the authenticated user's login via `GetMyUserInfo` (exposed as `Me()`).
 
-Most reads go through the typed SDK. The one exception is the **me-scoped,
-cross-repo pull-request search**, which the typed SDK cannot express: it is
-served by a small raw HTTP escape hatch (`rawGet`) that calls
+Most reads go through the typed SDK. The exception is the **me-scoped,
+cross-repo pull-request/issue search**, whose `created=true` / `assigned=true`
+booleans are not expressible through the SDK's per-repo option structs. That
+path is served by a small raw HTTP escape hatch (`rawGet`) calling
 `GET /repos/issues/search?type=pulls&created=true&state=…` and tolerantly
-decodes the rows (unknown fields ignored). Results are mapped into the domain
-model, never leaking SDK/REST types past the transport boundary.
+decoding rows (unknown fields ignored). When a section declares
+`repo: owner/name`, tea-dash uses the typed repo issues endpoint instead, so
+plain login filters such as `createdBy: alice` can be honored. Results are
+mapped into the domain model, never leaking SDK/REST types past the transport
+boundary.
 
 ## Domain model
 
@@ -64,7 +68,7 @@ is denormalized — each row from the cross-repo search carries its own
 | ----------------- | ------------------------------------------------------------------------- |
 | `main`            | entrypoint, `--version`/`--help`; loads config, resolves auth, builds the client, starts the Bubble Tea program |
 | `internal/ui`     | root model, table, keybindings, Lipgloss styles, loading/error states     |
-| `internal/gitea`  | Gitea SDK wrapper + raw HTTP escape hatch (me-scoped cross-repo PR search) |
+| `internal/gitea`  | Gitea SDK wrapper + raw HTTP escape hatch (me-scoped cross-repo search)    |
 | `internal/auth`   | resolves the instance URL + token from overrides, env, and `tea`'s config |
 | `internal/data`   | TUI-agnostic domain model (`PullRequest`, `Label`, …)                     |
 | `internal/config` | loads `~/.config/tea-dash/config.yml` (instance block, repos)             |
@@ -72,7 +76,6 @@ is denormalized — each row from the cross-repo search carries its own
 
 ## Roadmap (next steps)
 
-1. Add config-driven, per-repo sections and per-section filters (à la `gh-dash`).
-2. Issue and notification sections.
-3. A detail pane (PR/issue body via the SDK, rendered with `glamour`).
-4. Actions (checkout, merge, comment, close, …) through the SDK.
+1. Multi-repo fan-out from `repos:` and smart cwd repo detection.
+2. Richer table columns / per-column layout configuration.
+3. Capability-probed fallbacks for version-sensitive Actions and review flows.

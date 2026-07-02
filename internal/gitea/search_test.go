@@ -223,6 +223,104 @@ func TestSearchIssues(t *testing.T) {
 	}
 }
 
+func TestListRepoIssuesUsesRepoEndpointAndPlainLoginFilters(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := repoSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("X-Total-Count", "9")
+		fmt.Fprint(w, issueJSON)
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	issues, total, err := c.ListRepoIssuesPage(context.Background(), "acme/widgets", config.PrIssueFilter{
+		State:      "closed",
+		Labels:     []string{"bug", "urgent"},
+		Milestone:  "v1",
+		CreatedBy:  "alice",
+		AssignedBy: "@me",
+		Mentioned:  "bob",
+		Q:          "login",
+		Sort:       "recentupdate",
+	}, 25, 3)
+	if err != nil {
+		t.Fatalf("ListRepoIssuesPage: %v", err)
+	}
+	if total != 9 || len(issues) != 1 {
+		t.Fatalf("got total=%d len=%d, want total=9 len=1", total, len(issues))
+	}
+	if gotPath != "/api/v1/repos/acme/widgets/issues" {
+		t.Fatalf("path = %q, want repo issues endpoint", gotPath)
+	}
+	for _, want := range []string{
+		"type=issues",
+		"state=closed",
+		"labels=bug%2Curgent",
+		"milestones=v1",
+		"created_by=alice",
+		"assigned_by=me",
+		"mentioned_by=bob",
+		"q=login",
+		"page=3",
+		"limit=25",
+	} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("query %q missing %q", gotQuery, want)
+		}
+	}
+	if issues[0].RepoNameWithOwner != "acme/widgets" {
+		t.Fatalf("repo = %q, want acme/widgets", issues[0].RepoNameWithOwner)
+	}
+}
+
+func TestListRepoPullsUsesRepoIssueEndpointForFilterablePRRows(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := repoSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("X-Total-Count", "3")
+		fmt.Fprint(w, `[
+		  {"number":8,"title":"Repo PR","state":"closed",
+		   "html_url":"https://git.example/acme/widgets/pulls/8",
+		   "user":{"login":"alice"},
+		   "pull_request":{"merged":true},
+		   "updated_at":"2026-06-02T00:00:00Z"}
+		]`)
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	prs, total, err := c.ListRepoPullsPage(context.Background(), "acme/widgets", config.PrIssueFilter{
+		State:     "closed",
+		CreatedBy: "alice",
+	}, 10, 2)
+	if err != nil {
+		t.Fatalf("ListRepoPullsPage: %v", err)
+	}
+	if total != 3 || len(prs) != 1 {
+		t.Fatalf("got total=%d len=%d, want total=3 len=1", total, len(prs))
+	}
+	if gotPath != "/api/v1/repos/acme/widgets/issues" {
+		t.Fatalf("path = %q, want repo issues endpoint", gotPath)
+	}
+	for _, want := range []string{"type=pulls", "state=closed", "created_by=alice", "page=2", "limit=10"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("query %q missing %q", gotQuery, want)
+		}
+	}
+	if prs[0].Number != 8 || prs[0].RepoNameWithOwner != "acme/widgets" ||
+		prs[0].Author != "alice" || prs[0].State != "merged" {
+		t.Fatalf("mapped PR = %+v", prs[0])
+	}
+}
+
 // searchServer builds a fake Gitea that serves the version/user probes plus a
 // /repos/issues/search handler supplied by the caller.
 func searchServer(t *testing.T, search http.HandlerFunc) *httptest.Server {
@@ -235,6 +333,21 @@ func searchServer(t *testing.T, search http.HandlerFunc) *httptest.Server {
 		fmt.Fprint(w, `{"id":1,"login":"me"}`)
 	})
 	mux.HandleFunc("/api/v1/repos/issues/search", search)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func repoSearchServer(t *testing.T, repoIssues http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/acme/widgets/issues", repoIssues)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
