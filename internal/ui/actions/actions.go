@@ -13,6 +13,8 @@ const (
 	KindRemoveLabel   Kind = "remove_label"
 	KindMerge         Kind = "merge"
 	KindUpdateBranch  Kind = "update_branch"
+	KindMarkReady     Kind = "mark_ready"
+	KindMarkDraft     Kind = "mark_draft"
 	KindClose         Kind = "close"
 	KindReopen        Kind = "reopen"
 	KindReview        Kind = "review"

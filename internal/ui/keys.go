@@ -30,6 +30,7 @@ type keyMap struct {
 	RemoveLabel   key.Binding
 	Merge         key.Binding
 	UpdateBranch  key.Binding
+	MarkReady     key.Binding
 	Close         key.Binding
 	Reopen        key.Binding
 	Review        key.Binding
@@ -122,6 +123,10 @@ func defaultKeyMap() keyMap {
 		UpdateBranch: key.NewBinding(
 			key.WithKeys("u"),
 			key.WithHelp("u", "update branch"),
+		),
+		MarkReady: key.NewBinding(
+			key.WithKeys("W"),
+			key.WithHelp("W", "ready"),
 		),
 		Close: key.NewBinding(
 			key.WithKeys("x"),
@@ -234,6 +239,8 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Merge = binding(keyName, "merge")
 	case "update", "updatebranch":
 		k.UpdateBranch = binding(keyName, "update branch")
+	case "ready", "markready":
+		k.MarkReady = binding(keyName, "ready")
 	case "close":
 		k.Close = binding(keyName, "close")
 	case "reopen":

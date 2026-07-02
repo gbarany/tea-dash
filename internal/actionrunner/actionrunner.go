@@ -35,6 +35,8 @@ type Client interface {
 	RemoveLabels(owner, repo string, index int64, names []string) error
 	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error)
 	UpdatePullRequest(owner, repo string, index int64) error
+	MarkPullReady(owner, repo string, index int64) (bool, error)
+	MarkPullDraft(owner, repo string, index int64) (bool, error)
 	SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error)
 	GetPullDiff(owner, repo string, index int64) ([]byte, error)
 	RerunActionRun(ctx context.Context, owner, repo string, runID int64) error
@@ -268,6 +270,26 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		}
 		return fmt.Sprintf("Updated %s#%d from its base branch.", intent.Target.Repo, index), nil
 
+	case uiactions.KindMarkReady:
+		changed, err := r.client.MarkPullReady(owner, repo, index)
+		if err != nil {
+			return "", err
+		}
+		if !changed {
+			return fmt.Sprintf("%s#%d is already ready for review.", intent.Target.Repo, index), nil
+		}
+		return fmt.Sprintf("Marked %s#%d ready for review.", intent.Target.Repo, index), nil
+
+	case uiactions.KindMarkDraft:
+		changed, err := r.client.MarkPullDraft(owner, repo, index)
+		if err != nil {
+			return "", err
+		}
+		if !changed {
+			return fmt.Sprintf("%s#%d is already draft.", intent.Target.Repo, index), nil
+		}
+		return fmt.Sprintf("Marked %s#%d draft.", intent.Target.Repo, index), nil
+
 	case uiactions.KindExternalDiff:
 		diff, err := r.client.GetPullDiff(owner, repo, index)
 		if err != nil {
@@ -490,6 +512,10 @@ func actionLabel(kind uiactions.Kind) string {
 		return "merge"
 	case uiactions.KindUpdateBranch:
 		return "update branch"
+	case uiactions.KindMarkReady:
+		return "mark ready"
+	case uiactions.KindMarkDraft:
+		return "mark draft"
 	case uiactions.KindClose:
 		return "close"
 	case uiactions.KindReopen:

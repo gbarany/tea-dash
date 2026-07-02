@@ -324,7 +324,7 @@ var universalBuiltins = builtinSet(
 
 var prBuiltins = builtinSet(
 	"comment", "assign", "unassign", "addLabel", "removeLabel", "merge",
-	"update", "updateBranch", "close", "reopen", "diff", "checkout", "approve", "review",
+	"update", "updateBranch", "ready", "markReady", "draft", "markDraft", "close", "reopen", "diff", "checkout", "approve", "review",
 	"summaryViewMore", "expand",
 )
 

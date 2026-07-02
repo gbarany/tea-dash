@@ -2,6 +2,7 @@ package gitea
 
 import (
 	"fmt"
+	"strings"
 
 	sdk "code.gitea.io/sdk/gitea"
 
@@ -279,6 +280,75 @@ func (c *Client) UpdatePullRequest(owner, repo string, index int64) error {
 		return fmt.Errorf("update pull request %s/%s#%d: %w", owner, repo, index, err)
 	}
 	return nil
+}
+
+// MarkPullReady removes Gitea/Forgejo's work-in-progress title prefix. The
+// pinned SDK exposes no draft edit field, and Gitea documents WIP prefixes as
+// the portable way to mark a pull request as not ready.
+func (c *Client) MarkPullReady(owner, repo string, index int64) (bool, error) {
+	return c.setPullDraft(owner, repo, index, false)
+}
+
+// MarkPullDraft adds Gitea/Forgejo's default work-in-progress title prefix.
+func (c *Client) MarkPullDraft(owner, repo string, index int64) (bool, error) {
+	return c.setPullDraft(owner, repo, index, true)
+}
+
+func (c *Client) setPullDraft(owner, repo string, index int64, draft bool) (bool, error) {
+	var current *sdk.PullRequest
+	err := c.call(func() error {
+		var e error
+		current, _, e = c.sdk.GetPullRequest(owner, repo, index)
+		return e
+	})
+	if err != nil {
+		return false, fmt.Errorf("get pull title %s/%s#%d: %w", owner, repo, index, err)
+	}
+	if current == nil {
+		return false, fmt.Errorf("get pull title %s/%s#%d: empty response", owner, repo, index)
+	}
+
+	title, changed := draftTitle(current.Title, draft)
+	if !changed {
+		return false, nil
+	}
+	err = c.call(func() error {
+		_, _, e := c.sdk.EditPullRequest(owner, repo, index, sdk.EditPullRequestOption{Title: title})
+		return e
+	})
+	if err != nil {
+		action := "mark pull ready"
+		if draft {
+			action = "mark pull draft"
+		}
+		return false, fmt.Errorf("%s %s/%s#%d: %w", action, owner, repo, index, err)
+	}
+	return true, nil
+}
+
+func draftTitle(title string, draft bool) (string, bool) {
+	readyTitle, hadPrefix := stripWIPPrefix(title)
+	if draft {
+		if hadPrefix {
+			return title, false
+		}
+		return "WIP: " + title, true
+	}
+	if !hadPrefix {
+		return title, false
+	}
+	return readyTitle, true
+}
+
+func stripWIPPrefix(title string) (string, bool) {
+	trimmedLeft := strings.TrimLeft(title, " \t")
+	lower := strings.ToLower(trimmedLeft)
+	for _, prefix := range []string{"wip:", "[wip]"} {
+		if strings.HasPrefix(lower, prefix) {
+			return strings.TrimLeft(trimmedLeft[len(prefix):], " \t"), true
+		}
+	}
+	return title, false
 }
 
 // SubmitPullReview creates a submitted pull-request review.

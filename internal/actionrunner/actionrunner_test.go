@@ -229,6 +229,34 @@ func TestDispatchUpdatePullRequest(t *testing.T) {
 	}
 }
 
+func TestDispatchMarkPullReady(t *testing.T) {
+	client := &fakeClient{markReadyChanged: true}
+	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindMarkReady))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("mark ready result = %+v", got)
+	}
+	if client.markReady != 7 {
+		t.Fatalf("markReady = %d, want 7", client.markReady)
+	}
+	if !strings.Contains(got.Message, "Marked acme/widgets#7 ready for review") {
+		t.Fatalf("message = %q, want ready confirmation", got.Message)
+	}
+}
+
+func TestDispatchMarkPullDraft(t *testing.T) {
+	client := &fakeClient{markDraftChanged: true}
+	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindMarkDraft))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("mark draft result = %+v", got)
+	}
+	if client.markDraft != 7 {
+		t.Fatalf("markDraft = %d, want 7", client.markDraft)
+	}
+	if !strings.Contains(got.Message, "Marked acme/widgets#7 draft") {
+		t.Fatalf("message = %q, want draft confirmation", got.Message)
+	}
+}
+
 func TestDispatchExternalDiffRunsConfiguredPager(t *testing.T) {
 	client := &fakeClient{diff: []byte("diff --git a/a b/a\n+hello\n")}
 	shellRunner := &fakeShellRunner{}
@@ -382,23 +410,27 @@ func TestDispatchReturnsErrorResult(t *testing.T) {
 }
 
 type fakeClient struct {
-	err           error
-	commentBody   string
-	issueState    data.ItemState
-	pullState     data.ItemState
-	merge         data.MergeOptions
-	review        data.PullReviewOptions
-	updatePull    int64
-	diff          []byte
-	rerunRunID    int64
-	cancelRunID   int64
-	assignPull    int64
-	assignIssue   int64
-	unassignPull  int64
-	unassignIssue int64
-	labelIndex    int64
-	addLabels     []string
-	removeLabels  []string
+	err              error
+	commentBody      string
+	issueState       data.ItemState
+	pullState        data.ItemState
+	merge            data.MergeOptions
+	review           data.PullReviewOptions
+	updatePull       int64
+	markReady        int64
+	markDraft        int64
+	diff             []byte
+	rerunRunID       int64
+	cancelRunID      int64
+	assignPull       int64
+	assignIssue      int64
+	unassignPull     int64
+	unassignIssue    int64
+	labelIndex       int64
+	addLabels        []string
+	removeLabels     []string
+	markReadyChanged bool
+	markDraftChanged bool
 }
 
 func (f *fakeClient) AddComment(_, _ string, _ int64, body string) (data.Comment, error) {
@@ -461,6 +493,16 @@ func (f *fakeClient) SubmitPullReview(_, _ string, _ int64, opt data.PullReviewO
 func (f *fakeClient) UpdatePullRequest(_, _ string, index int64) error {
 	f.updatePull = index
 	return f.err
+}
+
+func (f *fakeClient) MarkPullReady(_, _ string, index int64) (bool, error) {
+	f.markReady = index
+	return f.markReadyChanged, f.err
+}
+
+func (f *fakeClient) MarkPullDraft(_, _ string, index int64) (bool, error) {
+	f.markDraft = index
+	return f.markDraftChanged, f.err
 }
 
 func (f *fakeClient) GetPullDiff(_, _ string, _ int64) ([]byte, error) {

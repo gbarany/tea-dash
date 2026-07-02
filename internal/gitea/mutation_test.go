@@ -311,6 +311,86 @@ func TestUpdatePullRequestPostsUpdateEndpoint(t *testing.T) {
 	}
 }
 
+func TestMarkPullReadyRemovesWIPPrefix(t *testing.T) {
+	var patchedTitle string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/44" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"number":44,"title":"WIP: Add dashboard"}`)
+		case http.MethodPatch:
+			body := decodeMutationBody(t, r)
+			patchedTitle, _ = body["title"].(string)
+			fmt.Fprintf(w, `{"number":44,"title":%q}`, patchedTitle)
+		default:
+			t.Fatalf("method = %s", r.Method)
+		}
+	})
+
+	changed, err := c.MarkPullReady("acme", "widgets", 44)
+	if err != nil {
+		t.Fatalf("MarkPullReady: %v", err)
+	}
+	if !changed || patchedTitle != "Add dashboard" {
+		t.Fatalf("changed=%v patchedTitle=%q, want changed title without WIP prefix", changed, patchedTitle)
+	}
+}
+
+func TestMarkPullReadyNoOpsWhenAlreadyReady(t *testing.T) {
+	var patchCalls int
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/44" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"number":44,"title":"Add dashboard"}`)
+		case http.MethodPatch:
+			patchCalls++
+			fmt.Fprint(w, `{"number":44,"title":"unexpected"}`)
+		default:
+			t.Fatalf("method = %s", r.Method)
+		}
+	})
+
+	changed, err := c.MarkPullReady("acme", "widgets", 44)
+	if err != nil {
+		t.Fatalf("MarkPullReady: %v", err)
+	}
+	if changed || patchCalls != 0 {
+		t.Fatalf("changed=%v patchCalls=%d, want no mutation when title is already ready", changed, patchCalls)
+	}
+}
+
+func TestMarkPullDraftAddsWIPPrefix(t *testing.T) {
+	var patchedTitle string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/44" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"number":44,"title":"Add dashboard"}`)
+		case http.MethodPatch:
+			body := decodeMutationBody(t, r)
+			patchedTitle, _ = body["title"].(string)
+			fmt.Fprintf(w, `{"number":44,"title":%q}`, patchedTitle)
+		default:
+			t.Fatalf("method = %s", r.Method)
+		}
+	})
+
+	changed, err := c.MarkPullDraft("acme", "widgets", 44)
+	if err != nil {
+		t.Fatalf("MarkPullDraft: %v", err)
+	}
+	if !changed || patchedTitle != "WIP: Add dashboard" {
+		t.Fatalf("changed=%v patchedTitle=%q, want WIP-prefixed title", changed, patchedTitle)
+	}
+}
+
 func TestSubmitPullReviewPostsEventAndMapsResponse(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
