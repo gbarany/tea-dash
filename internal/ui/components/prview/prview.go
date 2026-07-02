@@ -30,8 +30,10 @@ const (
 // maxChecks / maxComments cap how many per-check and per-comment lines render
 // before a "…and N more" summary line.
 const (
-	maxChecks   = 8
-	maxComments = 10
+	maxChecks      = 8
+	maxComments    = 10
+	maxActionJobs  = 12
+	maxActionSteps = 12
 )
 
 var (
@@ -122,43 +124,53 @@ func RenderNotification(row data.Notification, width int) string {
 	return compose(header, body, false, width, true, nil)
 }
 
-// RenderAction renders a repo-scoped Actions workflow run into the preview. It
-// is intentionally static: opening the run in Gitea is the path to jobs/logs.
-func RenderAction(row data.ActionRun, width int) string {
-	header := []string{
-		locator(row.RepoNameWithOwner, row.GetNumber()),
-		titleLine(row.GetTitle(), width),
+// RenderAction renders a repo-scoped Actions workflow run into the preview.
+// When detail is present it appends the loaded job and step statuses.
+func RenderAction(row data.ActionRun, detail *data.ActionRunDetail, width int) string {
+	run := row
+	if detail != nil {
+		run = mergeActionRun(row, detail.Run)
 	}
-	if status := actionRunStatus(row); status != "" {
-		header = append(header, pill(strings.ToUpper(status), actionRunColor(row)))
+	header := []string{
+		locator(run.RepoNameWithOwner, run.GetNumber()),
+		titleLine(run.GetTitle(), width),
+	}
+	if status := actionRunStatus(run); status != "" {
+		header = append(header, pill(strings.ToUpper(status), actionRunColor(run)))
 	}
 
 	var body []string
-	if row.WorkflowName != "" {
-		body = append(body, "Workflow: "+row.WorkflowName)
+	if run.WorkflowName != "" {
+		body = append(body, "Workflow: "+run.WorkflowName)
 	}
-	if status := actionRunStatus(row); status != "" {
+	if status := actionRunStatus(run); status != "" {
 		body = append(body, "Status: "+status)
 	}
-	if row.Event != "" {
-		body = append(body, "Event: "+row.Event)
+	if run.Event != "" {
+		body = append(body, "Event: "+run.Event)
 	}
-	if row.Actor != "" {
-		body = append(body, "Actor: @"+row.Actor)
+	if run.Actor != "" {
+		body = append(body, "Actor: @"+run.Actor)
 	}
-	if row.HeadBranch != "" {
-		body = append(body, "Branch: "+row.HeadBranch)
+	if run.HeadBranch != "" {
+		body = append(body, "Branch: "+run.HeadBranch)
 	}
-	if row.HeadSHA != "" {
-		body = append(body, "SHA: "+shortSHA(row.HeadSHA))
+	if run.HeadSHA != "" {
+		body = append(body, "SHA: "+shortSHA(run.HeadSHA))
 	}
-	if rel := section.HumanizeTime(row.GetUpdatedAt()); rel != "" {
+	if rel := section.HumanizeTime(run.GetUpdatedAt()); rel != "" {
 		body = append(body, "Updated: "+rel)
 	}
 	if len(body) == 0 {
 		body = append(body, "Open this action run in Gitea to inspect jobs and logs.")
 	}
-	return compose(header, strings.Join(body, "\n"), false, width, true, nil)
+	var extras []string
+	if detail == nil {
+		body = append(body, "", "Jobs: Loading...")
+	} else {
+		extras = []string{renderActionJobs(detail.Jobs, width)}
+	}
+	return compose(header, strings.Join(body, "\n"), false, width, true, extras)
 }
 
 // compose joins the header block with the rendered body, then appends any
@@ -291,6 +303,145 @@ func actionRunColor(row data.ActionRun) string {
 		return "#d29922"
 	default:
 		return "#1f6feb"
+	}
+}
+
+func mergeActionRun(base, detail data.ActionRun) data.ActionRun {
+	if detail.ID == 0 {
+		return base
+	}
+	if detail.RunNumber == 0 {
+		detail.RunNumber = base.RunNumber
+	}
+	if detail.RunAttempt == 0 {
+		detail.RunAttempt = base.RunAttempt
+	}
+	if detail.DisplayTitle == "" {
+		detail.DisplayTitle = base.DisplayTitle
+	}
+	if detail.WorkflowName == "" {
+		detail.WorkflowName = base.WorkflowName
+	}
+	if detail.Event == "" {
+		detail.Event = base.Event
+	}
+	if detail.Status == "" {
+		detail.Status = base.Status
+	}
+	if detail.Conclusion == "" {
+		detail.Conclusion = base.Conclusion
+	}
+	if detail.HeadBranch == "" {
+		detail.HeadBranch = base.HeadBranch
+	}
+	if detail.HeadSHA == "" {
+		detail.HeadSHA = base.HeadSHA
+	}
+	if detail.Actor == "" {
+		detail.Actor = base.Actor
+	}
+	if detail.RepoNameWithOwner == "" {
+		detail.RepoNameWithOwner = base.RepoNameWithOwner
+	}
+	if detail.HTMLURL == "" {
+		detail.HTMLURL = base.HTMLURL
+	}
+	if detail.CreatedAt.IsZero() {
+		detail.CreatedAt = base.CreatedAt
+	}
+	if detail.UpdatedAt.IsZero() {
+		detail.UpdatedAt = base.UpdatedAt
+	}
+	if detail.StartedAt.IsZero() {
+		detail.StartedAt = base.StartedAt
+	}
+	return detail
+}
+
+func renderActionJobs(jobs []data.ActionJob, width int) string {
+	lines := []string{titleStyle.Render("Jobs:")}
+	if len(jobs) == 0 {
+		return strings.Join(append(lines, dimStyle.Render("No jobs reported.")), "\n")
+	}
+
+	shown := jobs
+	extra := 0
+	if len(shown) > maxActionJobs {
+		extra = len(shown) - maxActionJobs
+		shown = shown[:maxActionJobs]
+	}
+	for _, job := range shown {
+		lines = append(lines, actionJobLine(job, width))
+		steps := job.Steps
+		stepExtra := 0
+		if len(steps) > maxActionSteps {
+			stepExtra = len(steps) - maxActionSteps
+			steps = steps[:maxActionSteps]
+		}
+		for _, step := range steps {
+			lines = append(lines, actionStepLine(step, width))
+		}
+		if stepExtra > 0 {
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("  …and %d more steps", stepExtra)))
+		}
+	}
+	if extra > 0 {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("…and %d more jobs", extra)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func actionJobLine(job data.ActionJob, width int) string {
+	icon, st := actionStatusIcon(job.Status, job.Conclusion)
+	text := job.Name
+	if status := actionItemStatus(job.Status, job.Conclusion); status != "" {
+		text += " · " + status
+	}
+	if job.RunnerName != "" {
+		text += " · " + job.RunnerName
+	}
+	return st.Render(icon) + " " + truncateText(text, width-2)
+}
+
+func actionStepLine(step data.ActionStep, width int) string {
+	icon, st := actionStatusIcon(step.Status, step.Conclusion)
+	text := step.Name
+	if step.Number != 0 {
+		text = fmt.Sprintf("%d. %s", step.Number, text)
+	}
+	if status := actionItemStatus(step.Status, step.Conclusion); status != "" {
+		text += " · " + status
+	}
+	return "  " + st.Render(icon) + " " + truncateText(text, width-4)
+}
+
+func actionItemStatus(status, conclusion string) string {
+	switch {
+	case status != "" && conclusion != "":
+		return status + "/" + conclusion
+	case conclusion != "":
+		return conclusion
+	default:
+		return status
+	}
+}
+
+func actionStatusIcon(status, conclusion string) (string, lipgloss.Style) {
+	switch strings.ToLower(conclusion) {
+	case "success":
+		return "✓", greenStyle
+	case "failure", "cancelled", "timed_out":
+		return "✗", redStyle
+	case "skipped":
+		return "•", dimStyle
+	}
+	switch strings.ToLower(status) {
+	case "completed":
+		return "•", dimStyle
+	case "queued", "waiting", "in_progress", "requested":
+		return "•", yellowStyle
+	default:
+		return "•", yellowStyle
 	}
 }
 
