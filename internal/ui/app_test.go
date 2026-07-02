@@ -1,14 +1,20 @@
 package ui
 
 import (
+	stdctx "context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
@@ -448,6 +454,116 @@ func TestModelRendersLoadedNotifications(t *testing.T) {
 	}
 }
 
+func TestMarkSelectedNotificationReadRefreshesNotifications(t *testing.T) {
+	var hit bool
+	client := newNotificationActionClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/notifications/threads/12" {
+				http.NotFound(w, r)
+				return
+			}
+			hit = true
+			if r.Method != http.MethodPatch {
+				t.Fatalf("method = %s, want PATCH", r.Method)
+			}
+			if got := r.URL.Query().Get("to-status"); got != "read" {
+				t.Fatalf("to-status = %q, want read", got)
+			}
+			fmt.Fprint(w, `{"id":12,"unread":false}`)
+		},
+		nil,
+	)
+	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, notificationFetchedMsg([]data.Notification{{
+		ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",
+		SubjectType: "Pull", SubjectState: "open", RepoNameWithOwner: "gbarany/tea-dash",
+		Unread: true, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if cmd == nil {
+		t.Fatal("'m' on a notification should return a mark-read command")
+	}
+	m = next.(Model)
+	msg := cmd()
+	if !hit {
+		t.Fatal("mark-read command did not call the notification thread endpoint")
+	}
+	next, refresh := m.Update(msg)
+	m = next.(Model)
+	if refresh == nil {
+		t.Fatal("successful mark-read should refresh the notifications section")
+	}
+	if !strings.Contains(m.notice, "Marked notification read") {
+		t.Fatalf("notice = %q, want mark-read confirmation", m.notice)
+	}
+}
+
+func TestMarkAllNotificationsReadRefreshesNotifications(t *testing.T) {
+	var hit bool
+	client := newNotificationActionClient(t,
+		nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			if r.Method != http.MethodPut {
+				t.Fatalf("method = %s, want PUT", r.Method)
+			}
+			q := r.URL.Query()
+			if got := q.Get("to-status"); got != "read" {
+				t.Fatalf("to-status = %q, want read", got)
+			}
+			if got := q["status-types"]; len(got) != 1 || got[0] != "unread" {
+				t.Fatalf("status-types = %v, want [unread]", got)
+			}
+			fmt.Fprint(w, `[]`)
+		},
+	)
+	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, notificationFetchedMsg([]data.Notification{{
+		ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",
+		SubjectType: "Pull", SubjectState: "open", RepoNameWithOwner: "gbarany/tea-dash",
+		Unread: true, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'M', Text: "M"})
+	if cmd == nil {
+		t.Fatal("'M' in notifications should return a mark-all-read command")
+	}
+	m = next.(Model)
+	msg := cmd()
+	if !hit {
+		t.Fatal("mark-all command did not call the notifications endpoint")
+	}
+	next, refresh := m.Update(msg)
+	m = next.(Model)
+	if refresh == nil {
+		t.Fatal("successful mark-all-read should refresh the notifications section")
+	}
+	if !strings.Contains(m.notice, "Marked all notifications read") {
+		t.Fatalf("notice = %q, want mark-all confirmation", m.notice)
+	}
+}
+
+func TestMarkSelectedReadOnNonNotificationShowsNotice(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Not a notification", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatalf("'m' on a pull request should be a no-op, got %v", cmd)
+	}
+	if !strings.Contains(m.notice, "Select a notification") {
+		t.Fatalf("notice = %q, want non-notification guidance", m.notice)
+	}
+}
+
 // TestPreviewStartsOpenAndToggles verifies the preview pane is visible by
 // default: the initial window size gives it dimensions and the composed View()
 // renders the sidebar region. 'p' still toggles it closed and open again.
@@ -719,3 +835,32 @@ var errBoom = errBoomType("boom")
 type errBoomType string
 
 func (e errBoomType) Error() string { return string(e) }
+
+func newNotificationActionClient(
+	t *testing.T,
+	threadHandler http.HandlerFunc,
+	notificationsHandler http.HandlerFunc,
+) *gitea.Client {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	if threadHandler != nil {
+		mux.HandleFunc("/api/v1/notifications/threads/12", threadHandler)
+	}
+	if notificationsHandler != nil {
+		mux.HandleFunc("/api/v1/notifications", notificationsHandler)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return client
+}
