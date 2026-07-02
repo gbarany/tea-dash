@@ -2,7 +2,9 @@
 package ui
 
 import (
+	stdctx "context"
 	"fmt"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -70,6 +72,12 @@ type enrichedMsg struct {
 	pull        *data.PullDetail
 	issue       *data.IssueDetail
 	err         error
+}
+
+type notificationActionMsg struct {
+	sectionID int
+	all       bool
+	err       error
 }
 
 // New builds the root model. client may be nil in tests (only FetchRows uses it).
@@ -194,6 +202,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncSidebar()
 		return m, nil
 
+	case notificationActionMsg:
+		return m.handleNotificationAction(msg)
+
 	case spinner.TickMsg:
 		// A tick belongs to whichever section started the spinner, but sibling
 		// sections in the current view share one animation; route it to every one
@@ -222,6 +233,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Open):
 			return m, m.openSelected()
+		case key.Matches(msg, m.keys.MarkRead):
+			return m.markSelectedNotificationRead()
+		case key.Matches(msg, m.keys.MarkAllRead):
+			return m.markAllNotificationsRead()
 		case key.Matches(msg, m.keys.NextSection):
 			if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 				m.currSectionId++
@@ -313,7 +328,7 @@ func (m Model) View() tea.View {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
 	}
 	parts = append(parts, body, status,
-		helpStyle.Render("↑/↓ move · h/l section · s view · / search · p preview · e expand · r refresh · o open · q quit"))
+		helpStyle.Render(m.helpText()))
 
 	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true}
@@ -550,6 +565,86 @@ func (m Model) openSelected() tea.Cmd {
 		}
 		return nil
 	}
+}
+
+func (m Model) markSelectedNotificationRead() (Model, tea.Cmd) {
+	row, ok := m.getCurrRowData().(data.Notification)
+	if !ok {
+		m.notice = "Select a notification to mark read."
+		return m, nil
+	}
+	if row.ID == 0 {
+		m.notice = "Selected notification has no thread id."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to mark notifications read."
+		return m, nil
+	}
+	return m, markNotificationReadCmd(m.ctx.Client, m.currSectionId, row.ID)
+}
+
+func (m Model) markAllNotificationsRead() (Model, tea.Cmd) {
+	if m.ctx.View != context.NotificationsView {
+		m.notice = "Switch to notifications to mark all read."
+		return m, nil
+	}
+	if m.ctx.Client == nil {
+		m.notice = "No Gitea client available to mark notifications read."
+		return m, nil
+	}
+	return m, markAllNotificationsReadCmd(m.ctx.Client, m.currSectionId)
+}
+
+func markNotificationReadCmd(client *gitea.Client, sectionID int, threadID int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			err:       client.MarkNotificationRead(ctx, threadID),
+		}
+	}
+}
+
+func markAllNotificationsReadCmd(client *gitea.Client, sectionID int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+		defer cancel()
+		return notificationActionMsg{
+			sectionID: sectionID,
+			all:       true,
+			err:       client.MarkAllNotificationsRead(ctx),
+		}
+	}
+}
+
+func (m Model) handleNotificationAction(msg notificationActionMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		if msg.all {
+			m.notice = fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err)
+		} else {
+			m.notice = fmt.Sprintf("Couldn't mark notification read: %v", msg.err)
+		}
+		return m, nil
+	}
+	if msg.all {
+		m.notice = "Marked all notifications read."
+	} else {
+		m.notice = "Marked notification read."
+	}
+	if msg.sectionID < 0 || msg.sectionID >= len(m.notifications) {
+		return m, nil
+	}
+	return m, m.notifications[msg.sectionID].FetchRows()
+}
+
+func (m Model) helpText() string {
+	text := "↑/↓ move · h/l section · s view · / search · p preview · e expand · r refresh · o open"
+	if m.ctx.View == context.NotificationsView {
+		text += " · m read · M all read"
+	}
+	return text + " · q quit"
 }
 
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {
