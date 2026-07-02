@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,7 +40,7 @@ type Config struct {
 	NotificationsSections []SectionConfig `yaml:"notificationsSections"`
 	ActionsSections       []SectionConfig `yaml:"actionsSections"`
 	BranchSections        []SectionConfig `yaml:"branchSections"`
-	// Defaults sets the startup view and per-view row limits.
+	// Defaults sets startup behavior, optional auto-refresh, and per-view row limits.
 	Defaults Defaults `yaml:"defaults"`
 	// Pager configures external pager commands.
 	Pager Pager `yaml:"pager"`
@@ -68,12 +69,23 @@ func (c *Config) SmartFilteringEnabled() bool {
 // cap used when a section omits its own Limit. Precedence: section Limit ->
 // per-view default -> 50.
 type Defaults struct {
-	View               string `yaml:"view"` // "prs" | "issues" | "notifications" | "actions" | "branches"
-	PRsLimit           int    `yaml:"prsLimit"`
-	IssuesLimit        int    `yaml:"issuesLimit"`
-	NotificationsLimit int    `yaml:"notificationsLimit"`
-	ActionsLimit       int    `yaml:"actionsLimit"`
-	BranchesLimit      int    `yaml:"branchesLimit"`
+	View                   string `yaml:"view"` // "prs" | "issues" | "notifications" | "actions" | "branches"
+	RefetchIntervalMinutes int    `yaml:"refetchIntervalMinutes"`
+	PRsLimit               int    `yaml:"prsLimit"`
+	IssuesLimit            int    `yaml:"issuesLimit"`
+	NotificationsLimit     int    `yaml:"notificationsLimit"`
+	ActionsLimit           int    `yaml:"actionsLimit"`
+	BranchesLimit          int    `yaml:"branchesLimit"`
+}
+
+// RefetchInterval returns the configured automatic refetch interval. A zero or
+// negative value disables background refreshes, preserving manual-refresh-only
+// behavior unless the user explicitly opts in.
+func (d Defaults) RefetchInterval() time.Duration {
+	if d.RefetchIntervalMinutes <= 0 {
+		return 0
+	}
+	return time.Duration(d.RefetchIntervalMinutes) * time.Minute
 }
 
 // Pager configures external pager commands.

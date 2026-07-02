@@ -88,6 +88,9 @@ type copyResultMsg struct {
 	err   error
 }
 
+// autoRefreshMsg is emitted by the optional background refetch timer.
+type autoRefreshMsg struct{}
+
 // enrichedMsg carries the result of a lazy detail fetch back to the root, keyed
 // by the "owner/repo#num" it was requested for so a stale result (the user moved
 // on) is still cached under the right key rather than shown against the wrong row.
@@ -292,7 +295,25 @@ func (m Model) Init() tea.Cmd {
 	for _, s := range m.currentViewSections() {
 		cmds = append(cmds, s.FetchRows())
 	}
+	cmds = append(cmds, m.autoRefreshCmd())
 	return tea.Batch(cmds...)
+}
+
+func (m Model) autoRefreshInterval() time.Duration {
+	if m.ctx == nil || m.ctx.Config == nil {
+		return 0
+	}
+	return m.ctx.Config.Defaults.RefetchInterval()
+}
+
+func (m Model) autoRefreshCmd() tea.Cmd {
+	interval := m.autoRefreshInterval()
+	if interval <= 0 {
+		return nil
+	}
+	return tea.Tick(interval, func(time.Time) tea.Msg {
+		return autoRefreshMsg{}
+	})
 }
 
 // Update routes messages: layout, async results, keys, then generic fallthrough.
@@ -378,6 +399,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case notificationActionMsg:
 		return m.handleNotificationAction(msg)
+
+	case autoRefreshMsg:
+		return m.handleAutoRefresh()
 
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
@@ -1266,6 +1290,21 @@ func (m Model) toggleSmartFiltering() (Model, tea.Cmd) {
 		m.syncProgramContext()
 		return m, nil
 	}
+}
+
+func (m Model) handleAutoRefresh() (Model, tea.Cmd) {
+	if m.autoRefreshInterval() <= 0 {
+		return m, nil
+	}
+	cmds := []tea.Cmd{m.autoRefreshCmd()}
+	if m.actionPrompt.Active() {
+		return m, tea.Batch(cmds...)
+	}
+	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
+		return m, tea.Batch(cmds...)
+	}
+	cmds = append(cmds, m.refreshAllSections())
+	return m, tea.Batch(cmds...)
 }
 
 func (m *Model) startAction(kind actions.Kind) tea.Cmd {

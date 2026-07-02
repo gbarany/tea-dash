@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -78,6 +79,7 @@ func TestUnmarshalSectionsAndDefaults(t *testing.T) {
 	const y = `
 defaults:
   view: notifications
+  refetchIntervalMinutes: 3
   prsLimit: 25
   issuesLimit: 40
   notificationsLimit: 30
@@ -121,7 +123,8 @@ localRepos:
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if c.Defaults.View != "notifications" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 ||
-		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 || c.Defaults.BranchesLimit != 100 {
+		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 || c.Defaults.BranchesLimit != 100 ||
+		c.Defaults.RefetchIntervalMinutes != 3 {
 		t.Fatalf("defaults = %+v", c.Defaults)
 	}
 	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
@@ -170,6 +173,18 @@ func TestSmartFilteringAtLaunchCanBeDisabled(t *testing.T) {
 	}
 	if c.SmartFilteringEnabled() {
 		t.Fatal("SmartFilteringEnabled should be false when smartFilteringAtLaunch is false")
+	}
+}
+
+func TestDefaultsRefetchInterval(t *testing.T) {
+	if got := (Defaults{}).RefetchInterval(); got != 0 {
+		t.Fatalf("zero refetch interval = %v, want disabled", got)
+	}
+	if got := (Defaults{RefetchIntervalMinutes: -1}).RefetchInterval(); got != 0 {
+		t.Fatalf("negative refetch interval = %v, want disabled", got)
+	}
+	if got := (Defaults{RefetchIntervalMinutes: 5}).RefetchInterval(); got != 5*time.Minute {
+		t.Fatalf("refetch interval = %v, want 5m", got)
 	}
 }
 
