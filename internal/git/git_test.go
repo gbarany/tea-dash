@@ -1,0 +1,295 @@
+package git
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestParseRemoteURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		raw    string
+		host   string
+		owner  string
+		repo   string
+		remote string
+	}{
+		{
+			name:   "https with git suffix",
+			raw:    "https://git.example.com/acme/widgets.git",
+			host:   "git.example.com",
+			owner:  "acme",
+			repo:   "widgets",
+			remote: "acme/widgets",
+		},
+		{
+			name:   "https with port",
+			raw:    "http://git.example.com:3000/acme/widgets",
+			host:   "git.example.com:3000",
+			owner:  "acme",
+			repo:   "widgets",
+			remote: "acme/widgets",
+		},
+		{
+			name:   "ssh URL with port",
+			raw:    "ssh://git@git.example.com:2222/acme/widgets.git",
+			host:   "git.example.com:2222",
+			owner:  "acme",
+			repo:   "widgets",
+			remote: "acme/widgets",
+		},
+		{
+			name:   "ssh URL preserves explicit port 443",
+			raw:    "ssh://git@git.example.com:443/acme/widgets.git",
+			host:   "git.example.com:443",
+			owner:  "acme",
+			repo:   "widgets",
+			remote: "acme/widgets",
+		},
+		{
+			name:   "scp SSH",
+			raw:    "git@git.example.com:acme/widgets.git",
+			host:   "git.example.com",
+			owner:  "acme",
+			repo:   "widgets",
+			remote: "acme/widgets",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseRemoteURL(tt.raw)
+			if err != nil {
+				t.Fatalf("ParseRemoteURL: %v", err)
+			}
+			if got.Host != tt.host || got.Owner != tt.owner || got.Repo != tt.repo || got.FullName() != tt.remote {
+				t.Fatalf("ParseRemoteURL = %+v, FullName=%q", got, got.FullName())
+			}
+		})
+	}
+}
+
+func TestRemoteMatchesInstanceURL(t *testing.T) {
+	remote, err := ParseRemoteURL("git@gitea.example.com:fcmb/api.git")
+	if err != nil {
+		t.Fatalf("ParseRemoteURL: %v", err)
+	}
+	if !remote.MatchesInstanceURL("https://gitea.example.com") {
+		t.Fatal("remote should match same instance host")
+	}
+	if remote.MatchesInstanceURL("https://other.example.com") {
+		t.Fatal("remote should not match a different instance host")
+	}
+
+	withPort, err := ParseRemoteURL("ssh://git@gitea.example.com:2222/fcmb/api.git")
+	if err != nil {
+		t.Fatalf("ParseRemoteURL with port: %v", err)
+	}
+	if !withPort.MatchesInstanceURL("https://gitea.example.com:2222") {
+		t.Fatal("remote with port should match same instance host and port")
+	}
+	if withPort.MatchesInstanceURL("https://gitea.example.com") {
+		t.Fatal("remote with port should not match instance without that port")
+	}
+}
+
+func TestResolveRepoPathExactWildcardAndCWD(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := map[string]string{
+		"fcmb/*":   "~/work/fcmb/{{.Repo}}",
+		"fcmb/api": "~/work/exact-api",
+	}
+
+	got, err := ResolveRepoPath("fcmb/api", "/not/used", "https://gitea.example.com", paths)
+	if err != nil {
+		t.Fatalf("ResolveRepoPath exact: %v", err)
+	}
+	if want := filepath.Join(home, "work", "exact-api"); got != want {
+		t.Fatalf("ResolveRepoPath exact = %q, want %q", got, want)
+	}
+
+	got, err = ResolveRepoPath("fcmb/web", "/not/used", "https://gitea.example.com", paths)
+	if err != nil {
+		t.Fatalf("ResolveRepoPath wildcard: %v", err)
+	}
+	if want := filepath.Join(home, "work", "fcmb", "web"); got != want {
+		t.Fatalf("ResolveRepoPath wildcard = %q, want %q", got, want)
+	}
+
+	cwd := makeGitDir(t, "https://gitea.example.com/fcmb/api.git")
+	got, err = ResolveRepoPath("fcmb/api", cwd, "https://gitea.example.com", nil)
+	if err != nil {
+		t.Fatalf("ResolveRepoPath cwd: %v", err)
+	}
+	if got != cwd {
+		t.Fatalf("ResolveRepoPath cwd = %q, want %q", got, cwd)
+	}
+}
+
+func TestResolveRepoPathRejectsCWDHostMismatch(t *testing.T) {
+	cwd := makeGitDir(t, "https://other.example.com/fcmb/api.git")
+	_, err := ResolveRepoPath("fcmb/api", cwd, "https://gitea.example.com", nil)
+	if err == nil || !strings.Contains(err.Error(), "no local checkout") {
+		t.Fatalf("ResolveRepoPath host mismatch error = %v", err)
+	}
+}
+
+func TestBranchNameFromTemplate(t *testing.T) {
+	got, err := BranchNameFromTemplate("review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}", "fcmb/api", 42)
+	if err != nil {
+		t.Fatalf("BranchNameFromTemplate: %v", err)
+	}
+	if got != "review/fcmb-api-42" {
+		t.Fatalf("BranchNameFromTemplate = %q", got)
+	}
+
+	got, err = BranchNameFromTemplate("", "fcmb/api", 42)
+	if err != nil {
+		t.Fatalf("BranchNameFromTemplate default: %v", err)
+	}
+	if got != "pr-42" {
+		t.Fatalf("BranchNameFromTemplate default = %q", got)
+	}
+}
+
+func TestRunCheckoutDirtyTreeRefusal(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{{Stdout: " M file.txt\n", ExitCode: 0}}}
+
+	_, err := RunCheckout(context.Background(), CheckoutOptions{
+		RepoName:  "fcmb/api",
+		RepoPaths: map[string]string{"fcmb/api": repo},
+		PrIndex:   42,
+		Runner:    runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "dirty") {
+		t.Fatalf("RunCheckout dirty error = %v", err)
+	}
+	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].Args, []string{"status", "--porcelain"}) {
+		t.Fatalf("commands = %#v", runner.commands)
+	}
+}
+
+func TestRunCheckoutFetchesAndCreatesMissingBranch(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{ExitCode: 0}, // status
+		{ExitCode: 0}, // fetch
+		{ExitCode: 1}, // show-ref missing branch
+		{ExitCode: 0}, // switch -c
+	}}
+
+	plan, err := RunCheckout(context.Background(), CheckoutOptions{
+		RepoName:       "fcmb/api",
+		RepoPaths:      map[string]string{"fcmb/api": repo},
+		Remote:         "upstream",
+		BranchTemplate: "review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}",
+		PrIndex:        42,
+		Runner:         runner,
+	})
+	if err != nil {
+		t.Fatalf("RunCheckout: %v", err)
+	}
+	if plan.Branch != "review/fcmb-api-42" {
+		t.Fatalf("Branch = %q", plan.Branch)
+	}
+	if plan.FetchRefspec != "+refs/pull/42/head:refs/remotes/upstream/pull/42/head" {
+		t.Fatalf("FetchRefspec = %q", plan.FetchRefspec)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
+		{Dir: repo, Name: "git", Args: []string{"fetch", "upstream", "+refs/pull/42/head:refs/remotes/upstream/pull/42/head"}},
+		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/review/fcmb-api-42"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "-c", "review/fcmb-api-42", "refs/remotes/upstream/pull/42/head"}},
+	})
+}
+
+func TestRunCheckoutExistingBranchFastForwardOnly(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{ExitCode: 0}, // status
+		{ExitCode: 0}, // fetch
+		{ExitCode: 0}, // show-ref existing branch
+		{ExitCode: 0}, // switch branch
+		{ExitCode: 0}, // merge --ff-only
+	}}
+
+	_, err := RunCheckout(context.Background(), CheckoutOptions{
+		RepoName:  "fcmb/api",
+		RepoPaths: map[string]string{"fcmb/api": repo},
+		PrIndex:   7,
+		Runner:    runner,
+	})
+	if err != nil {
+		t.Fatalf("RunCheckout: %v", err)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
+		{Dir: repo, Name: "git", Args: []string{"fetch", "origin", "+refs/pull/7/head:refs/remotes/origin/pull/7/head"}},
+		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/pr-7"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "pr-7"}},
+		{Dir: repo, Name: "git", Args: []string{"merge", "--ff-only", "refs/remotes/origin/pull/7/head"}},
+	})
+}
+
+func TestRunCheckoutMissingRepoPath(t *testing.T) {
+	runner := &fakeRunner{}
+	_, err := RunCheckout(context.Background(), CheckoutOptions{
+		RepoName:    "fcmb/api",
+		CWD:         t.TempDir(),
+		InstanceURL: "https://gitea.example.com",
+		PrIndex:     7,
+		Runner:      runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no local checkout") {
+		t.Fatalf("RunCheckout missing repo error = %v", err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner should not be called, commands = %#v", runner.commands)
+	}
+}
+
+func makeGitDir(t *testing.T, remoteURL string) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitDir := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := "[remote \"origin\"]\n\turl = " + remoteURL + "\n"
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+type fakeRunner struct {
+	results  []Result
+	err      error
+	commands []Command
+}
+
+func (f *fakeRunner) Run(_ context.Context, cmd Command) (Result, error) {
+	f.commands = append(f.commands, cmd)
+	if f.err != nil {
+		return Result{}, f.err
+	}
+	if len(f.results) == 0 {
+		return Result{}, errors.New("unexpected command: " + strings.Join(cmd.Args, " "))
+	}
+	res := f.results[0]
+	f.results = f.results[1:]
+	return res, nil
+}
+
+func assertCommands(t *testing.T, got, want []Command) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands:\n got: %#v\nwant: %#v", got, want)
+	}
+}

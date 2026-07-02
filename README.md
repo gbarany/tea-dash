@@ -10,8 +10,8 @@ notifications across one or more Gitea instances, without leaving the terminal.
 > **Status: early — v1.** A working multi-view dashboard: live tables of your
 > pull requests, issues, and unread notifications across all your repos (fetched
 > via the Gitea API (Go SDK + REST)), with view switching (`s`), configurable
-> sections you page through with `h`/`l`, preview pane support, and live keyword
-> search (`/`). PR actions are in progress. See
+> sections you page through with `h`/`l`, live keyword search (`/`),
+> default-open preview, and PR / issue actions. See
 > [`docs/architecture.md`](docs/architecture.md) for the design.
 
 ## Why
@@ -72,14 +72,23 @@ tea-dash --help
 | Key             | Action                  |
 | --------------- | ----------------------- |
 | `↑`/`↓`, `j`/`k`| move selection          |
+| `g` / `G`       | first / last row        |
 | `s`             | switch view (PRs/issues/notifications)|
 | `h` / `l`       | prev / next section     |
 | `/`             | search by keyword       |
-| `p`             | toggle preview pane     |
-| `e`             | expand preview body     |
-| `ctrl+u/d`      | scroll preview          |
+| `p`             | show / hide preview panel |
+| `e`             | expand / fold preview body |
+| `ctrl+u` / `ctrl+d` | scroll preview       |
 | `o` / `enter`   | open in browser         |
-| `r`             | refresh                 |
+| `y` / `Y`       | copy row number / URL   |
+| `c`             | add comment             |
+| `m`             | merge PR                |
+| `x` / `X`       | close / reopen          |
+| `v`             | submit PR review        |
+| `d` / `ctrl+t`  | open PR diff in external pager |
+| `C` / `space`   | checkout PR locally     |
+| `r` / `R`       | refresh section / all sections |
+| `?`             | show / hide full help   |
 | `q` / `ctrl+c`  | quit                    |
 
 ## Configuration
@@ -104,6 +113,16 @@ defaults:
   prsLimit: 50           # rows fetched per PR section (0 -> 50)
   issuesLimit: 50        # rows fetched per issue section (0 -> 50)
   notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)
+
+pager:
+  diff: diffnav     # command that receives PR diff bytes on stdin (falls back to $PAGER, then less -R)
+
+repoPaths:
+  "gbarany/*": "~/dev/sandbox/{{.Repo}}"  # used by C checkout; exact repo names and wildcards both work
+
+git:
+  remote: origin
+  prBranchTemplate: "pr-{{.PrIndex}}"
 
 # Each section becomes a tab you page through with h/l. Omit prSections to get
 # two "@me"-authored PR defaults: open and closed pull requests. Omit

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
+	"github.com/gbarany/tea-dash/internal/ui/actions"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
@@ -39,6 +40,17 @@ func notificationFetchedMsg(rows []data.Notification) context.TaskFinishedMsg {
 		TaskId:      "n1",
 		Msg: notificationsection.SectionNotificationsFetchedMsg{
 			Rows: rows, TotalCount: len(rows), TaskId: "n1",
+		},
+	}
+}
+
+func fetchedIssuesMsg(issues []data.Issue) context.TaskFinishedMsg {
+	return context.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: issuesection.SectionType,
+		TaskId:      "i1",
+		Msg: issuesection.SectionIssuesFetchedMsg{
+			Rows: issues, TotalCount: len(issues), TaskId: "i1",
 		},
 	}
 }
@@ -702,6 +714,326 @@ func TestPreviewToggleGatedWhileSearching(t *testing.T) {
 	}
 	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "p") {
 		t.Fatalf("search value = %q, want it to contain the typed \"p\"", got)
+	}
+}
+
+func TestActiveActionPromptCapturesGlobalKeys(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Prompt row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("'c' should open an action prompt")
+	}
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	m = next.(Model)
+	if isQuitCmd(cmd) {
+		t.Fatal("'q' while an action prompt is active must not quit")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("'s' while an action prompt is active must not switch views: %v", m.ctx.View)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("'p' while an action prompt is active must not toggle the default-open preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' while an action prompt is active must not focus search")
+	}
+}
+
+func TestActionKeysDispatchExpectedIntents(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         tea.KeyPressMsg
+		kind        actions.Kind
+		beforeEnter []tea.KeyPressMsg
+		wantPrompt  actions.Prompt
+	}{
+		{name: "comment", key: tea.KeyPressMsg{Code: 'c', Text: "c"}, kind: actions.KindComment},
+		{
+			name:        "merge",
+			key:         tea.KeyPressMsg{Code: 'm', Text: "m"},
+			kind:        actions.KindMerge,
+			beforeEnter: []tea.KeyPressMsg{{Code: 'j', Text: "j"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptPicker,
+				Value: "squash",
+				Label: "Squash",
+			},
+		},
+		{name: "close", key: tea.KeyPressMsg{Code: 'x', Text: "x"}, kind: actions.KindClose},
+		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
+		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
+		{name: "external diff", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindExternalDiff},
+		{name: "external diff ctrl-t alias", key: tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, kind: actions.KindExternalDiff},
+		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},
+		{name: "checkout space alias", key: tea.KeyPressMsg{Code: ' ', Text: " "}, kind: actions.KindCheckout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedMsg([]data.PullRequest{{
+				Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+			}}))
+
+			m = update(t, m, tt.key)
+			if !m.actionPrompt.Active() {
+				t.Fatalf("%s key should open an action prompt", tt.name)
+			}
+			if tt.kind == actions.KindComment {
+				m = update(t, m, tea.KeyPressMsg{Code: 'o', Text: "o"})
+				m = update(t, m, tea.KeyPressMsg{Code: 'k', Text: "k"})
+			}
+			for _, key := range tt.beforeEnter {
+				m = update(t, m, key)
+			}
+			m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:   0,
+				SectionType: pullsection.SectionType,
+				RowKind:     actions.RowKindPullRequest,
+				Repo:        "gbarany/tea-dash",
+				Number:      42,
+				Title:       "Action row",
+				URL:         "https://example.test/gbarany/tea-dash/pulls/42",
+			}
+			if got[0].Kind != tt.kind || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want kind %q target %+v", got[0], tt.kind, wantTarget)
+			}
+			if tt.kind == actions.KindComment && got[0].Prompt.Value != "ok" {
+				t.Fatalf("comment prompt value = %q, want ok", got[0].Prompt.Value)
+			}
+			if tt.wantPrompt != (actions.Prompt{}) && got[0].Prompt != tt.wantPrompt {
+				t.Fatalf("prompt = %+v, want %+v", got[0].Prompt, tt.wantPrompt)
+			}
+		})
+	}
+}
+
+func TestHelpKeyTogglesFullHelp(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	if strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("full help should be hidden before '?' is pressed")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	view := m.View().Content
+	for _, want := range []string{"R refresh all", "y copy number", "Y copy URL", "C/space checkout"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("full help missing %q:\n%s", want, view)
+		}
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if strings.Contains(m.View().Content, "R refresh all") {
+		t.Fatal("second '?' should hide full help")
+	}
+}
+
+func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {
+	cfg := &config.Config{
+		PRSections: []config.SectionConfig{
+			{Title: "Mine", Filter: config.PrIssueFilter{CreatedBy: "@me"}},
+			{Title: "Review", Filter: config.PrIssueFilter{ReviewRequested: "@me"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 0, SectionType: pullsection.SectionType, TaskId: "p0",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p0",
+		},
+	})
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 1, SectionType: pullsection.SectionType, TaskId: "p1",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: []data.PullRequest{{
+				Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open",
+			}},
+			TotalCount: 1, TaskId: "p1",
+		},
+	})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'R', Text: "R"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("'R' should batch refresh commands for all current sections")
+	}
+	if len(m.tasks) != 2 {
+		t.Fatalf("len(tasks) = %d, want both sections to register refresh tasks", len(m.tasks))
+	}
+}
+
+func TestCopyHotkeysUseSelectedRow(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		want string
+	}{
+		{name: "copy number", key: tea.KeyPressMsg{Code: 'y', Text: "y"}, want: "42"},
+		{name: "copy url", key: tea.KeyPressMsg{Code: 'Y', Text: "Y"}, want: "https://example.test/gbarany/tea-dash/pulls/42"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var copied string
+			m := New(&config.Config{}, nil)
+			m.copyToClipboard = func(s string) error {
+				copied = s
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, fetchedMsg([]data.PullRequest{{
+				Number: 42, Title: "Copy row", RepoNameWithOwner: "gbarany/tea-dash",
+				Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+			}}))
+
+			next, cmd := m.Update(tt.key)
+			m = next.(Model)
+			if cmd == nil {
+				t.Fatalf("%s should return a clipboard command", tt.name)
+			}
+			m = update(t, m, cmd())
+			if copied != tt.want {
+				t.Fatalf("copied = %q, want %q", copied, tt.want)
+			}
+			if !strings.Contains(m.View().Content, "Copied") {
+				t.Fatalf("copy result should be visible in the status area:\n%s", m.View().Content)
+			}
+		})
+	}
+}
+
+func TestGHDashFirstLastHotkeysMoveSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("'G' selected #%d, want #2", got)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'g', Text: "g"})
+	if got := m.getCurrRowData().GetNumber(); got != 1 {
+		t.Fatalf("'g' selected #%d, want #1", got)
+	}
+}
+
+func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
+	var dispatched bool
+	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
+	m.actionDispatcher = func(actions.Intent) tea.Cmd {
+		dispatched = true
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 7, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if dispatched {
+		t.Fatal("merge on an issue must not dispatch")
+	}
+	if m.actionPrompt.Active() {
+		t.Fatal("merge on an issue must not open a prompt")
+	}
+	if !strings.Contains(m.notice, "pull requests") {
+		t.Fatalf("invalid action notice = %q, want pull requests message", m.notice)
+	}
+	if view := m.View().Content; !strings.Contains(view, "pull requests") {
+		t.Fatalf("invalid action notice should render in the view:\n%s", view)
+	}
+}
+
+func TestNilActionDispatcherShowsNoticeOnSubmit(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("'m' should open an action prompt")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.actionPrompt.Active() {
+		t.Fatal("submitted prompt should close")
+	}
+	if !strings.Contains(m.notice, "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice = %q, want action-not-wired message", m.notice)
+	}
+	if view := m.View().Content; !strings.Contains(view, "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice should render in the view:\n%s", view)
+	}
+}
+
+func TestSuccessfulActionRefreshesRowsAndClearsPreviewCache(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	key := m.selKey()
+	m = update(t, m, enrichedMsg{
+		key:  key,
+		pull: &data.PullDetail{Body: "staledetailtoken", BaseRef: "main", HeadRef: "feature"},
+	})
+	if _, ok := m.pullDetails[key]; !ok {
+		t.Fatalf("test setup: expected cached pull detail for %q", key)
+	}
+
+	next, cmd := m.Update(actions.ResultMsg{
+		Intent: actions.Intent{Kind: actions.KindClose, Target: actions.Target{
+			SectionID: 0, SectionType: pullsection.SectionType, RowKind: actions.RowKindPullRequest,
+			Repo: "gbarany/tea-dash", Number: 42,
+		}},
+		Status:  actions.ResultSucceeded,
+		Message: "Closed gbarany/tea-dash#42.",
+	})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("successful action should refresh the affected section")
+	}
+	if _, ok := m.pullDetails[key]; ok {
+		t.Fatalf("successful action should clear cached pull detail for %q", key)
+	}
+	view := m.View().Content
+	if strings.Contains(view, "staledetailtoken") || !strings.Contains(view, "Loading") {
+		t.Fatalf("successful action should replace stale preview with loading state:\n%s", view)
 	}
 }
 
