@@ -70,6 +70,7 @@ defaults:
   prsLimit: 25
   issuesLimit: 40
   notificationsLimit: 30
+  actionsLimit: 20
 prSections:
   - title: My PRs
     filter:
@@ -86,13 +87,23 @@ issuesSections:
 notificationsSections:
   - title: Inbox
     limit: 15
+actionsSections:
+  - title: CI
+    repo: acme/widgets
+    limit: 10
+    filter:
+      status: in_progress
+      branch: main
+      event: push
+      headSha: abc123
+      actor: octo
 `
 	var c Config
 	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if c.Defaults.View != "notifications" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 ||
-		c.Defaults.NotificationsLimit != 30 {
+		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 {
 		t.Fatalf("defaults = %+v", c.Defaults)
 	}
 	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
@@ -106,6 +117,15 @@ notificationsSections:
 	if len(c.NotificationsSections) != 1 || c.NotificationsSections[0].Title != "Inbox" ||
 		c.NotificationsSections[0].Limit != 15 {
 		t.Fatalf("notificationsSections = %+v", c.NotificationsSections)
+	}
+	if len(c.ActionsSections) != 1 || c.ActionsSections[0].Title != "CI" ||
+		c.ActionsSections[0].Repo != "acme/widgets" || c.ActionsSections[0].Limit != 10 {
+		t.Fatalf("actionsSections = %+v", c.ActionsSections)
+	}
+	filter := c.ActionsSections[0].Filter
+	if filter.Status != "in_progress" || filter.Branch != "main" || filter.Event != "push" ||
+		filter.HeadSHA != "abc123" || filter.Actor != "octo" {
+		t.Fatalf("actions filter = %+v", filter)
 	}
 }
 
@@ -216,7 +236,7 @@ func TestConfigValidateBadView(t *testing.T) {
 	if err := (&Config{Defaults: Defaults{View: "nope"}}).Validate(); err == nil {
 		t.Fatal("Validate() should reject an unknown defaults.view")
 	}
-	for _, view := range []string{"", "prs", "issues", "notifications"} {
+	for _, view := range []string{"", "prs", "issues", "notifications", "actions"} {
 		if err := (&Config{Defaults: Defaults{View: view}}).Validate(); err != nil {
 			t.Fatalf("Validate() rejected valid view %q: %v", view, err)
 		}
@@ -231,6 +251,20 @@ func TestConfigValidateRejectsBadSectionFilter(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() should reject a section with a non-@me author filter")
+	}
+}
+
+func TestConfigValidateRejectsBadActionRepo(t *testing.T) {
+	if err := (&Config{ActionsSections: []SectionConfig{{
+		Title: "Actions",
+		Repo:  "owner/repo/extra",
+	}}}).Validate(); err == nil {
+		t.Fatal("Validate() should reject malformed actionsSections.repo")
+	}
+	if err := (&Config{ActionsSections: []SectionConfig{{
+		Title: "Actions",
+	}}}).Validate(); err != nil {
+		t.Fatalf("Validate() should allow a blank actions repo for the empty state: %v", err)
 	}
 }
 

@@ -24,11 +24,13 @@ type Config struct {
 	// Repos lists repositories to watch. Unused in M0; per-repo sections
 	// return in M1.
 	Repos []string `yaml:"repos"`
-	// PRSections, IssuesSections, and NotificationsSections configure the tabs
-	// for their respective views. Empty falls back to a default section.
+	// PRSections, IssuesSections, NotificationsSections, and ActionsSections
+	// configure the tabs for their respective views. Empty falls back to a
+	// default section.
 	PRSections            []SectionConfig `yaml:"prSections"`
 	IssuesSections        []SectionConfig `yaml:"issuesSections"`
 	NotificationsSections []SectionConfig `yaml:"notificationsSections"`
+	ActionsSections       []SectionConfig `yaml:"actionsSections"`
 	// Defaults sets the startup view and per-view row limits.
 	Defaults Defaults `yaml:"defaults"`
 	// Pager configures external pager commands.
@@ -40,14 +42,15 @@ type Config struct {
 	Git Git `yaml:"git"`
 }
 
-// Defaults holds startup and limit defaults. PRsLimit and IssuesLimit set the
-// per-view row-fetch cap used when a section omits its own Limit. Precedence:
-// section Limit -> per-view default -> 50.
+// Defaults holds startup and limit defaults. Per-view limits set the row-fetch
+// cap used when a section omits its own Limit. Precedence: section Limit ->
+// per-view default -> 50.
 type Defaults struct {
-	View               string `yaml:"view"` // "prs" | "issues" | "notifications"
+	View               string `yaml:"view"` // "prs" | "issues" | "notifications" | "actions"
 	PRsLimit           int    `yaml:"prsLimit"`
 	IssuesLimit        int    `yaml:"issuesLimit"`
 	NotificationsLimit int    `yaml:"notificationsLimit"`
+	ActionsLimit       int    `yaml:"actionsLimit"`
 }
 
 // Pager configures external pager commands.
@@ -103,9 +106,10 @@ type Instance struct {
 // SectionConfig describes one dashboard section (a tab).
 type SectionConfig struct {
 	Title  string        `yaml:"title"`
+	Repo   string        `yaml:"repo"`
 	Filter PrIssueFilter `yaml:"filter"`
 	// Limit caps this section's row fetch. 0 falls back to the per-view default
-	// (defaults.prsLimit / defaults.issuesLimit), which in turn falls back to 50.
+	// (defaults.prsLimit / defaults.issuesLimit / etc.), which in turn falls back to 50.
 	// Precedence: section Limit -> per-view default -> 50.
 	Limit int `yaml:"limit"`
 }
@@ -128,6 +132,14 @@ type PrIssueFilter struct {
 	Since           string `yaml:"since"`           // RFC3339 lower bound on updatedAt
 	Sort            string `yaml:"sort"`            // e.g. recentupdate
 	Q               string `yaml:"-"`               // live keyword (set by "/", never persisted)
+
+	// Repo-scoped Actions filters. These are ignored by PR/issue search and are
+	// mapped to Gitea's actions/runs query params by the Actions view.
+	Status  string `yaml:"status"`
+	Branch  string `yaml:"branch"`
+	Event   string `yaml:"event"`
+	HeadSHA string `yaml:"headSha"`
+	Actor   string `yaml:"actor"`
 }
 
 // Validate rejects unsupported me-scoped author values. The cross-repo search
@@ -168,10 +180,18 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	for _, s := range c.ActionsSections {
+		if strings.TrimSpace(s.Repo) == "" {
+			continue
+		}
+		if _, err := ParseRepo(s.Repo); err != nil {
+			return fmt.Errorf("actionsSections.repo: %w", err)
+		}
+	}
 	switch c.Defaults.View {
-	case "", "prs", "issues", "notifications":
+	case "", "prs", "issues", "notifications", "actions":
 	default:
-		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", or \"notifications\"", c.Defaults.View)
+		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", \"notifications\", or \"actions\"", c.Defaults.View)
 	}
 	return nil
 }

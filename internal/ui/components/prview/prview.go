@@ -122,6 +122,45 @@ func RenderNotification(row data.Notification, width int) string {
 	return compose(header, body, false, width, true, nil)
 }
 
+// RenderAction renders a repo-scoped Actions workflow run into the preview. It
+// is intentionally static: opening the run in Gitea is the path to jobs/logs.
+func RenderAction(row data.ActionRun, width int) string {
+	header := []string{
+		locator(row.RepoNameWithOwner, row.GetNumber()),
+		titleLine(row.GetTitle(), width),
+	}
+	if status := actionRunStatus(row); status != "" {
+		header = append(header, pill(strings.ToUpper(status), actionRunColor(row)))
+	}
+
+	var body []string
+	if row.WorkflowName != "" {
+		body = append(body, "Workflow: "+row.WorkflowName)
+	}
+	if status := actionRunStatus(row); status != "" {
+		body = append(body, "Status: "+status)
+	}
+	if row.Event != "" {
+		body = append(body, "Event: "+row.Event)
+	}
+	if row.Actor != "" {
+		body = append(body, "Actor: @"+row.Actor)
+	}
+	if row.HeadBranch != "" {
+		body = append(body, "Branch: "+row.HeadBranch)
+	}
+	if row.HeadSHA != "" {
+		body = append(body, "SHA: "+shortSHA(row.HeadSHA))
+	}
+	if rel := section.HumanizeTime(row.GetUpdatedAt()); rel != "" {
+		body = append(body, "Updated: "+rel)
+	}
+	if len(body) == 0 {
+		body = append(body, "Open this action run in Gitea to inspect jobs and logs.")
+	}
+	return compose(header, strings.Join(body, "\n"), false, width, true, nil)
+}
+
 // compose joins the header block with the rendered body, then appends any
 // non-empty extra sections (CI / reviews / comments) below the fold, each
 // separated by a blank line so the viewport scrolls through them. When loading
@@ -225,6 +264,41 @@ func notificationColor(row data.Notification) string {
 	default:
 		return stateColor(row.SubjectState)
 	}
+}
+
+func actionRunStatus(row data.ActionRun) string {
+	switch {
+	case row.Status != "" && row.Conclusion != "":
+		return row.Status + "/" + row.Conclusion
+	case row.Conclusion != "":
+		return row.Conclusion
+	default:
+		return row.Status
+	}
+}
+
+func actionRunColor(row data.ActionRun) string {
+	switch strings.ToLower(row.Conclusion) {
+	case "success":
+		return colOpen
+	case "failure", "cancelled", "timed_out":
+		return colClosed
+	}
+	switch strings.ToLower(row.Status) {
+	case "completed":
+		return colDraft
+	case "queued", "waiting":
+		return "#d29922"
+	default:
+		return "#1f6feb"
+	}
+}
+
+func shortSHA(sha string) string {
+	if len(sha) <= 12 {
+		return sha
+	}
+	return sha[:12]
 }
 
 // renderCI renders the CI block: a colored "Checks: ✓N ✗M •K" summary line
