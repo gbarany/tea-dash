@@ -2279,6 +2279,8 @@ func TestBranchLocalOpHotkeysDispatchExpectedIntents(t *testing.T) {
 		kind actions.Kind
 	}{
 		{name: "push", key: tea.KeyPressMsg{Code: 'P', Text: "P"}, kind: actions.KindPushBranch},
+		{name: "force push", key: tea.KeyPressMsg{Code: 'F', Text: "F"}, kind: actions.KindForcePushBranch},
+		{name: "fast forward", key: tea.KeyPressMsg{Code: 'f', Text: "f"}, kind: actions.KindFastForwardBranch},
 		{name: "delete", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindDeleteBranch},
 	}
 
@@ -2332,7 +2334,7 @@ func TestBranchActionButtonsIncludeLocalOps(t *testing.T) {
 	for _, b := range m.actionButtons() {
 		found[b.Label] = true
 	}
-	for _, label := range []string{"Push", "Delete"} {
+	for _, label := range []string{"Push", "Force push", "Fast-forward", "Delete"} {
 		if !found[label] {
 			t.Fatalf("branch action button %q not found in %+v", label, m.actionButtons())
 		}

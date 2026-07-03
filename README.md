@@ -105,6 +105,7 @@ tea-dash --help
 | `d` / `ctrl+t`  | open PR diff in external pager |
 | `C` / `space`   | checkout PR/issue locally; switch branch in Branches view |
 | `P`             | push branch in Branches view   |
+| `f` / `F`       | fast-forward / force-push branch in Branches view |
 | `d` / `backspace` | delete branch in Branches view |
 | `R` / `!`       | rerun / cancel Actions run |
 | `r` / `R`       | refresh section / all sections (`ctrl+r` refreshes all in Actions view) |
@@ -294,6 +295,10 @@ keybindings:
       command: git -C {{.RepoPath}} status
     - key: P
       builtin: push
+    - key: f
+      builtin: fastForward
+    - key: F
+      builtin: forcePush
     - key: d
       builtin: delete
 ```

@@ -528,6 +528,50 @@ func TestDispatchBranchPushAndDeleteDoNotRequireClient(t *testing.T) {
 	})
 }
 
+func TestDispatchBranchSyncActionsDoNotRequireClient(t *testing.T) {
+	t.Run("fast forward", func(t *testing.T) {
+		var gotOpts localgit.FastForwardBranchOptions
+		r := New(Options{
+			BranchFastForward: func(_ context.Context, opts localgit.FastForwardBranchOptions) (localgit.FastForwardBranchResult, error) {
+				gotOpts = opts
+				return localgit.FastForwardBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch, Remote: "origin", Upstream: "origin/feature/local-ops"}, nil
+			},
+		})
+
+		got := runDispatch(t, r, branchIntent(uiactions.KindFastForwardBranch))
+		if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+			t.Fatalf("fast-forward branch result = %+v", got)
+		}
+		if gotOpts.RepoPath != "/src/tea-dash" || gotOpts.Branch != "feature/local-ops" {
+			t.Fatalf("fast-forward branch opts = %+v", gotOpts)
+		}
+		if !strings.Contains(got.Message, "Fast-forwarded feature/local-ops") {
+			t.Fatalf("fast-forward branch message = %q", got.Message)
+		}
+	})
+
+	t.Run("force push", func(t *testing.T) {
+		var gotOpts localgit.ForcePushBranchOptions
+		r := New(Options{
+			BranchForcePush: func(_ context.Context, opts localgit.ForcePushBranchOptions) (localgit.ForcePushBranchResult, error) {
+				gotOpts = opts
+				return localgit.ForcePushBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch, Remote: "origin"}, nil
+			},
+		})
+
+		got := runDispatch(t, r, branchIntent(uiactions.KindForcePushBranch))
+		if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+			t.Fatalf("force-push branch result = %+v", got)
+		}
+		if gotOpts.RepoPath != "/src/tea-dash" || gotOpts.Branch != "feature/local-ops" || gotOpts.Remote != "" {
+			t.Fatalf("force-push branch opts = %+v", gotOpts)
+		}
+		if !strings.Contains(got.Message, "Force-pushed feature/local-ops") {
+			t.Fatalf("force-push branch message = %q", got.Message)
+		}
+	})
+}
+
 func TestDispatchActionRunControlsUseRunID(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})

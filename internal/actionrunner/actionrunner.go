@@ -58,6 +58,12 @@ type BranchSwitchFunc func(context.Context, localgit.SwitchBranchOptions) (local
 // BranchPushFunc runs or fakes a local branch push.
 type BranchPushFunc func(context.Context, localgit.PushBranchOptions) (localgit.PushBranchResult, error)
 
+// BranchForcePushFunc runs or fakes a local branch force-push.
+type BranchForcePushFunc func(context.Context, localgit.ForcePushBranchOptions) (localgit.ForcePushBranchResult, error)
+
+// BranchFastForwardFunc runs or fakes a local branch fast-forward.
+type BranchFastForwardFunc func(context.Context, localgit.FastForwardBranchOptions) (localgit.FastForwardBranchResult, error)
+
 // BranchDeleteFunc runs or fakes a local branch deletion.
 type BranchDeleteFunc func(context.Context, localgit.DeleteBranchOptions) (localgit.DeleteBranchResult, error)
 
@@ -67,34 +73,38 @@ type ExecProcessFunc func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 
 // Options configures a Runner.
 type Options struct {
-	Client        Client
-	Config        *config.Config
-	InstanceURL   string
-	CWD           string
-	ShellRunner   shell.Runner
-	GitRunner     localgit.Runner
-	Checkout      CheckoutFunc
-	IssueCheckout IssueCheckoutFunc
-	BranchSwitch  BranchSwitchFunc
-	BranchPush    BranchPushFunc
-	BranchDelete  BranchDeleteFunc
-	ExecProcess   ExecProcessFunc
+	Client            Client
+	Config            *config.Config
+	InstanceURL       string
+	CWD               string
+	ShellRunner       shell.Runner
+	GitRunner         localgit.Runner
+	Checkout          CheckoutFunc
+	IssueCheckout     IssueCheckoutFunc
+	BranchSwitch      BranchSwitchFunc
+	BranchPush        BranchPushFunc
+	BranchForcePush   BranchForcePushFunc
+	BranchFastForward BranchFastForwardFunc
+	BranchDelete      BranchDeleteFunc
+	ExecProcess       ExecProcessFunc
 }
 
 // Runner executes actions and returns ResultMsg values for the UI.
 type Runner struct {
-	client        Client
-	cfg           *config.Config
-	instanceURL   string
-	cwd           string
-	shellRunner   shell.Runner
-	gitRunner     localgit.Runner
-	checkout      CheckoutFunc
-	issueCheckout IssueCheckoutFunc
-	branchSwitch  BranchSwitchFunc
-	branchPush    BranchPushFunc
-	branchDelete  BranchDeleteFunc
-	execProcess   ExecProcessFunc
+	client            Client
+	cfg               *config.Config
+	instanceURL       string
+	cwd               string
+	shellRunner       shell.Runner
+	gitRunner         localgit.Runner
+	checkout          CheckoutFunc
+	issueCheckout     IssueCheckoutFunc
+	branchSwitch      BranchSwitchFunc
+	branchPush        BranchPushFunc
+	branchForcePush   BranchForcePushFunc
+	branchFastForward BranchFastForwardFunc
+	branchDelete      BranchDeleteFunc
+	execProcess       ExecProcessFunc
 }
 
 // New constructs a Runner with production defaults for omitted runners.
@@ -123,6 +133,14 @@ func New(opts Options) Runner {
 	if branchPush == nil {
 		branchPush = localgit.PushBranch
 	}
+	branchForcePush := opts.BranchForcePush
+	if branchForcePush == nil {
+		branchForcePush = localgit.ForcePushBranch
+	}
+	branchFastForward := opts.BranchFastForward
+	if branchFastForward == nil {
+		branchFastForward = localgit.FastForwardBranch
+	}
 	branchDelete := opts.BranchDelete
 	if branchDelete == nil {
 		branchDelete = localgit.DeleteBranch
@@ -132,18 +150,20 @@ func New(opts Options) Runner {
 		execProcess = tea.ExecProcess
 	}
 	return Runner{
-		client:        opts.Client,
-		cfg:           cfg,
-		instanceURL:   opts.InstanceURL,
-		cwd:           opts.CWD,
-		shellRunner:   shellRunner,
-		gitRunner:     opts.GitRunner,
-		checkout:      checkout,
-		issueCheckout: issueCheckout,
-		branchSwitch:  branchSwitch,
-		branchPush:    branchPush,
-		branchDelete:  branchDelete,
-		execProcess:   execProcess,
+		client:            opts.Client,
+		cfg:               cfg,
+		instanceURL:       opts.InstanceURL,
+		cwd:               opts.CWD,
+		shellRunner:       shellRunner,
+		gitRunner:         opts.GitRunner,
+		checkout:          checkout,
+		issueCheckout:     issueCheckout,
+		branchSwitch:      branchSwitch,
+		branchPush:        branchPush,
+		branchForcePush:   branchForcePush,
+		branchFastForward: branchFastForward,
+		branchDelete:      branchDelete,
+		execProcess:       execProcess,
 	}
 }
 
@@ -251,6 +271,28 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			return "", err
 		}
 		return fmt.Sprintf("Pushed %s to %s in %s.", branch.Branch, branch.Remote, branch.RepoPath), nil
+	}
+	if intent.Kind == uiactions.KindForcePushBranch {
+		branch, err := r.branchForcePush(ctx, localgit.ForcePushBranchOptions{
+			RepoPath: intent.Target.RepositoryPath,
+			Branch:   intent.Target.Title,
+			Runner:   r.gitRunner,
+		})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Force-pushed %s to %s in %s.", branch.Branch, branch.Remote, branch.RepoPath), nil
+	}
+	if intent.Kind == uiactions.KindFastForwardBranch {
+		branch, err := r.branchFastForward(ctx, localgit.FastForwardBranchOptions{
+			RepoPath: intent.Target.RepositoryPath,
+			Branch:   intent.Target.Title,
+			Runner:   r.gitRunner,
+		})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Fast-forwarded %s from %s in %s.", branch.Branch, branch.Upstream, branch.RepoPath), nil
 	}
 	if intent.Kind == uiactions.KindDeleteBranch {
 		branch, err := r.branchDelete(ctx, localgit.DeleteBranchOptions{
@@ -664,6 +706,10 @@ func actionLabel(kind uiactions.Kind) string {
 		return "switch branch"
 	case uiactions.KindPushBranch:
 		return "push branch"
+	case uiactions.KindForcePushBranch:
+		return "force-push branch"
+	case uiactions.KindFastForwardBranch:
+		return "fast-forward branch"
 	case uiactions.KindDeleteBranch:
 		return "delete branch"
 	case uiactions.KindRerunRun:

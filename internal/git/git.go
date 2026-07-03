@@ -552,6 +552,98 @@ func PushBranch(ctx context.Context, opts PushBranchOptions) (PushBranchResult, 
 	return PushBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote}, nil
 }
 
+// FastForwardBranchOptions configures fast-forwarding a local branch from its
+// upstream tracking branch.
+type FastForwardBranchOptions struct {
+	RepoPath string
+	Branch   string
+	Runner   Runner
+}
+
+// FastForwardBranchResult is the local fast-forward that completed.
+type FastForwardBranchResult struct {
+	RepoPath string
+	Branch   string
+	Remote   string
+	Upstream string
+}
+
+// FastForwardBranch fetches the selected branch's upstream remote, switches to
+// the branch, and merges its upstream with --ff-only.
+func FastForwardBranch(ctx context.Context, opts FastForwardBranchOptions) (FastForwardBranchResult, error) {
+	repoPath := strings.TrimSpace(opts.RepoPath)
+	branch := strings.TrimSpace(opts.Branch)
+	if repoPath == "" {
+		return FastForwardBranchResult{}, errors.New("repository path is required")
+	}
+	if branch == "" {
+		return FastForwardBranchResult{}, errors.New("branch name is required")
+	}
+	runner := opts.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	upstream, remote, err := branchUpstream(ctx, runner, repoPath, branch)
+	if err != nil {
+		return FastForwardBranchResult{}, fmt.Errorf("branch %s has no upstream in %s; push it first or set an upstream: %w", branch, repoPath, err)
+	}
+	if _, err := runGit(ctx, runner, repoPath, "fetch", remote); err != nil {
+		return FastForwardBranchResult{}, fmt.Errorf("fetch %s in %s: %w", remote, repoPath, err)
+	}
+	if _, err := runGit(ctx, runner, repoPath, "switch", branch); err != nil {
+		return FastForwardBranchResult{}, switchBranchError(repoPath, branch, err)
+	}
+	if _, err := runGit(ctx, runner, repoPath, "merge", "--ff-only", upstream); err != nil {
+		return FastForwardBranchResult{}, fmt.Errorf("fast-forward %s from %s in %s: %w", branch, upstream, repoPath, err)
+	}
+	return FastForwardBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote, Upstream: upstream}, nil
+}
+
+// ForcePushBranchOptions configures force-pushing a local branch.
+type ForcePushBranchOptions struct {
+	RepoPath string
+	Branch   string
+	Remote   string
+	Runner   Runner
+}
+
+// ForcePushBranchResult is the local force-push that completed.
+type ForcePushBranchResult struct {
+	RepoPath string
+	Branch   string
+	Remote   string
+}
+
+// ForcePushBranch force-pushes branch with --force-with-lease. When Remote is
+// empty it uses the branch's upstream remote, falling back to origin.
+func ForcePushBranch(ctx context.Context, opts ForcePushBranchOptions) (ForcePushBranchResult, error) {
+	repoPath := strings.TrimSpace(opts.RepoPath)
+	branch := strings.TrimSpace(opts.Branch)
+	remote := strings.TrimSpace(opts.Remote)
+	if repoPath == "" {
+		return ForcePushBranchResult{}, errors.New("repository path is required")
+	}
+	if branch == "" {
+		return ForcePushBranchResult{}, errors.New("branch name is required")
+	}
+	runner := opts.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	if remote == "" {
+		if _, upstreamRemote, err := branchUpstream(ctx, runner, repoPath, branch); err == nil {
+			remote = upstreamRemote
+		}
+	}
+	if remote == "" {
+		remote = "origin"
+	}
+	if _, err := runGit(ctx, runner, repoPath, "push", "--force-with-lease", remote, branch); err != nil {
+		return ForcePushBranchResult{}, fmt.Errorf("force-push %s to %s in %s: %w", branch, remote, repoPath, err)
+	}
+	return ForcePushBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote}, nil
+}
+
 // DeleteBranchOptions configures deleting a local branch.
 type DeleteBranchOptions struct {
 	RepoPath string
@@ -591,6 +683,19 @@ func DeleteBranch(ctx context.Context, opts DeleteBranchOptions) (DeleteBranchRe
 		return DeleteBranchResult{}, fmt.Errorf("delete branch %s in %s: %w", branch, repoPath, err)
 	}
 	return DeleteBranchResult{RepoPath: repoPath, Branch: branch}, nil
+}
+
+func branchUpstream(ctx context.Context, runner Runner, repoPath, branch string) (string, string, error) {
+	res, err := runGit(ctx, runner, repoPath, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
+	if err != nil {
+		return "", "", err
+	}
+	upstream := strings.TrimSpace(res.Stdout)
+	remote, _, ok := strings.Cut(upstream, "/")
+	if upstream == "" || !ok || remote == "" {
+		return "", "", fmt.Errorf("unexpected upstream %q", upstream)
+	}
+	return upstream, remote, nil
 }
 
 func branchExists(ctx context.Context, runner Runner, dir, branch string) (bool, error) {

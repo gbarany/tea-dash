@@ -501,6 +501,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindReview)
 		case !m.scopedBuiltinOverridden("push") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.PushBranch):
 			return m, m.startAction(actions.KindPushBranch)
+		case !m.scopedBuiltinOverridden("forcePush") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.ForcePushBranch):
+			return m, m.startAction(actions.KindForcePushBranch)
+		case !m.scopedBuiltinOverridden("fastForward") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.FastForwardBranch):
+			return m, m.startAction(actions.KindFastForwardBranch)
 		case !m.scopedBuiltinOverridden("delete") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.DeleteBranch):
 			return m, m.startAction(actions.KindDeleteBranch)
 		case !m.scopedBuiltinOverridden("diff") && key.Matches(msg, m.keys.ExternalDiff):
@@ -658,7 +662,7 @@ func (m Model) helpLine() string {
 		case context.NotificationsView:
 			text += " · m mark read · u mark unread · M mark all read · b pin/unpin · B unpin"
 		case context.BranchesView:
-			text += " · C/space switch · P push · d/backspace delete"
+			text += " · C/space switch · P push · f fast-forward · F force-push · d/backspace delete"
 		case context.IssuesView:
 			text += " · c comment · a/A assign/unassign · L/U labels · M milestone · b/B subscribe/unsubscribe · x/X close/reopen"
 		default:
@@ -679,7 +683,7 @@ func (m Model) helpLine() string {
 	case context.NotificationsView:
 		text += " · m read · u unread · M all read · b pin · B unpin"
 	case context.BranchesView:
-		text += " · C/space switch · P push · d delete"
+		text += " · C/space switch · P push · f/F sync · d delete"
 	case context.IssuesView:
 		text += " · c comment · a/A assign · L/U labels · M milestone · b/B subscribe · x/X close/reopen"
 	default:
@@ -729,7 +733,9 @@ func (m Model) actionButtons() []actionButton {
 		buttons = []actionButton{
 			{Label: "Refresh", Builtin: "refresh"},
 			{Label: "Checkout", Builtin: "checkout"},
+			{Label: "Fast-forward", Builtin: "fastForward"},
 			{Label: "Push", Builtin: "push"},
+			{Label: "Force push", Builtin: "forcePush"},
 			{Label: "Delete", Builtin: "delete"},
 		}
 	case context.IssuesView:
@@ -1690,6 +1696,10 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindCheckout), true
 	case "push":
 		return m, m.startAction(actions.KindPushBranch), true
+	case "forcepush":
+		return m, m.startAction(actions.KindForcePushBranch), true
+	case "fastforward":
+		return m, m.startAction(actions.KindFastForwardBranch), true
 	case "delete":
 		return m, m.startAction(actions.KindDeleteBranch), true
 	case "rerun", "rerunrun":
@@ -1846,7 +1856,7 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 		if target.RowKind != actions.RowKindActionRun {
 			return fmt.Errorf("%s is only available for action runs.", actionLabel(kind))
 		}
-	case actions.KindSwitchBranch, actions.KindPushBranch, actions.KindDeleteBranch:
+	case actions.KindSwitchBranch, actions.KindPushBranch, actions.KindForcePushBranch, actions.KindFastForwardBranch, actions.KindDeleteBranch:
 		if target.RowKind != actions.RowKindBranch {
 			return fmt.Errorf("%s is only available for local branches.", actionLabel(kind))
 		}
@@ -1879,7 +1889,7 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 func promptConfigForAction(kind actions.Kind, target actions.Target) actionprompt.Config {
 	title := fmt.Sprintf("%s #%d", actionLabel(kind), target.Number)
 	message := fmt.Sprintf("%s - %s", target.Repo, target.Title)
-	if kind == actions.KindSwitchBranch || kind == actions.KindPushBranch || kind == actions.KindDeleteBranch {
+	if kind == actions.KindSwitchBranch || kind == actions.KindPushBranch || kind == actions.KindForcePushBranch || kind == actions.KindFastForwardBranch || kind == actions.KindDeleteBranch {
 		title = actionLabel(kind)
 	}
 	switch kind {
@@ -1990,6 +2000,10 @@ func actionLabel(kind actions.Kind) string {
 		return "Switch branch"
 	case actions.KindPushBranch:
 		return "Push branch"
+	case actions.KindForcePushBranch:
+		return "Force-push branch"
+	case actions.KindFastForwardBranch:
+		return "Fast-forward branch"
 	case actions.KindDeleteBranch:
 		return "Delete branch"
 	case actions.KindRerunRun:
@@ -2011,7 +2025,7 @@ func actionStartText(intent actions.Intent) string {
 		}
 		return fmt.Sprintf("Starting %s for %s.", label, intent.Target.Title)
 	}
-	if intent.Kind == actions.KindSwitchBranch || intent.Kind == actions.KindPushBranch || intent.Kind == actions.KindDeleteBranch {
+	if intent.Kind == actions.KindSwitchBranch || intent.Kind == actions.KindPushBranch || intent.Kind == actions.KindForcePushBranch || intent.Kind == actions.KindFastForwardBranch || intent.Kind == actions.KindDeleteBranch {
 		return fmt.Sprintf("Starting %s for %s.", actionLabel(intent.Kind), intent.Target.Title)
 	}
 	return fmt.Sprintf("Starting %s for %s#%d.", actionLabel(intent.Kind), intent.Target.Repo, intent.Target.Number)

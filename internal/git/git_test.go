@@ -485,6 +485,99 @@ func TestPushBranchRunsGitPushSetUpstream(t *testing.T) {
 	})
 }
 
+func TestFastForwardBranchFetchesSwitchesAndMergesUpstream(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{Stdout: "upstream/feature/local-ops\n", ExitCode: 0},
+		{ExitCode: 0},
+		{ExitCode: 0},
+		{ExitCode: 0},
+	}}
+
+	result, err := FastForwardBranch(context.Background(), FastForwardBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err != nil {
+		t.Fatalf("FastForwardBranch: %v", err)
+	}
+	if result.RepoPath != repo || result.Branch != "feature/local-ops" || result.Upstream != "upstream/feature/local-ops" || result.Remote != "upstream" {
+		t.Fatalf("result = %+v", result)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
+		{Dir: repo, Name: "git", Args: []string{"fetch", "upstream"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"merge", "--ff-only", "upstream/feature/local-ops"}},
+	})
+}
+
+func TestFastForwardBranchRequiresUpstream(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{{ExitCode: 128, Stderr: "fatal: no upstream configured"}}}
+
+	_, err := FastForwardBranch(context.Background(), FastForwardBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no upstream") {
+		t.Fatalf("FastForwardBranch upstream error = %v", err)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
+	})
+}
+
+func TestForcePushBranchUsesForceWithLease(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{Stdout: "upstream/feature/local-ops\n", ExitCode: 0},
+		{ExitCode: 0},
+	}}
+
+	result, err := ForcePushBranch(context.Background(), ForcePushBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err != nil {
+		t.Fatalf("ForcePushBranch: %v", err)
+	}
+	if result.RepoPath != repo || result.Branch != "feature/local-ops" || result.Remote != "upstream" {
+		t.Fatalf("result = %+v", result)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
+		{Dir: repo, Name: "git", Args: []string{"push", "--force-with-lease", "upstream", "feature/local-ops"}},
+	})
+}
+
+func TestForcePushBranchFallsBackToOriginWithoutUpstream(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{ExitCode: 128, Stderr: "fatal: no upstream configured"},
+		{ExitCode: 0},
+	}}
+
+	result, err := ForcePushBranch(context.Background(), ForcePushBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err != nil {
+		t.Fatalf("ForcePushBranch: %v", err)
+	}
+	if result.Remote != "origin" {
+		t.Fatalf("remote = %q, want origin fallback", result.Remote)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
+		{Dir: repo, Name: "git", Args: []string{"push", "--force-with-lease", "origin", "feature/local-ops"}},
+	})
+}
+
 func TestDeleteBranchRunsSafeGitBranchDelete(t *testing.T) {
 	repo := t.TempDir()
 	runner := &fakeRunner{results: []Result{

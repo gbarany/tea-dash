@@ -124,3 +124,11 @@ keybindings:
   branches:
     - key: enter
       builtin: checkout
+    - key: P
+      builtin: push
+    - key: f
+      builtin: fastForward
+    - key: F
+      builtin: forcePush
+    - key: d
+      builtin: delete

@@ -11,52 +11,54 @@ import (
 // keyMap defines the app-level key bindings. Row navigation is also forwarded
 // to the underlying table widget so configurable builtins reuse table behavior.
 type keyMap struct {
-	Refresh        key.Binding
-	RefreshAll     key.Binding
-	Open           key.Binding
-	Quit           key.Binding
-	Up             key.Binding
-	Down           key.Binding
-	NextSection    key.Binding
-	PrevSection    key.Binding
-	SwitchView     key.Binding
-	Search         key.Binding
-	TogglePreview  key.Binding
-	ToggleSmart    key.Binding
-	ScrollUp       key.Binding
-	ScrollDown     key.Binding
-	PrevSidebarTab key.Binding
-	NextSidebarTab key.Binding
-	Expand         key.Binding
-	Comment        key.Binding
-	Assign         key.Binding
-	Unassign       key.Binding
-	Subscribe      key.Binding
-	Unsubscribe    key.Binding
-	AddLabel       key.Binding
-	RemoveLabel    key.Binding
-	Milestone      key.Binding
-	Merge          key.Binding
-	UpdateBranch   key.Binding
-	MarkReady      key.Binding
-	WatchChecks    key.Binding
-	Close          key.Binding
-	Reopen         key.Binding
-	Review         key.Binding
-	ExternalDiff   key.Binding
-	Checkout       key.Binding
-	PushBranch     key.Binding
-	DeleteBranch   key.Binding
-	RerunRun       key.Binding
-	CancelRun      key.Binding
-	CopyNumber     key.Binding
-	CopyURL        key.Binding
-	Help           key.Binding
-	MarkRead       key.Binding
-	MarkUnread     key.Binding
-	MarkAllRead    key.Binding
-	Pin            key.Binding
-	Unpin          key.Binding
+	Refresh           key.Binding
+	RefreshAll        key.Binding
+	Open              key.Binding
+	Quit              key.Binding
+	Up                key.Binding
+	Down              key.Binding
+	NextSection       key.Binding
+	PrevSection       key.Binding
+	SwitchView        key.Binding
+	Search            key.Binding
+	TogglePreview     key.Binding
+	ToggleSmart       key.Binding
+	ScrollUp          key.Binding
+	ScrollDown        key.Binding
+	PrevSidebarTab    key.Binding
+	NextSidebarTab    key.Binding
+	Expand            key.Binding
+	Comment           key.Binding
+	Assign            key.Binding
+	Unassign          key.Binding
+	Subscribe         key.Binding
+	Unsubscribe       key.Binding
+	AddLabel          key.Binding
+	RemoveLabel       key.Binding
+	Milestone         key.Binding
+	Merge             key.Binding
+	UpdateBranch      key.Binding
+	MarkReady         key.Binding
+	WatchChecks       key.Binding
+	Close             key.Binding
+	Reopen            key.Binding
+	Review            key.Binding
+	ExternalDiff      key.Binding
+	Checkout          key.Binding
+	PushBranch        key.Binding
+	ForcePushBranch   key.Binding
+	FastForwardBranch key.Binding
+	DeleteBranch      key.Binding
+	RerunRun          key.Binding
+	CancelRun         key.Binding
+	CopyNumber        key.Binding
+	CopyURL           key.Binding
+	Help              key.Binding
+	MarkRead          key.Binding
+	MarkUnread        key.Binding
+	MarkAllRead       key.Binding
+	Pin               key.Binding
+	Unpin             key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -201,6 +203,14 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("P"),
 			key.WithHelp("P", "push branch"),
 		),
+		ForcePushBranch: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "force push branch"),
+		),
+		FastForwardBranch: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "fast-forward branch"),
+		),
 		DeleteBranch: key.NewBinding(
 			key.WithKeys("d", "backspace"),
 			key.WithHelp("d/backspace", "delete branch"),
@@ -336,6 +346,10 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Checkout = binding(keyName, "checkout")
 	case "push":
 		k.PushBranch = binding(keyName, "push branch")
+	case "forcepush":
+		k.ForcePushBranch = binding(keyName, "force push branch")
+	case "fastforward":
+		k.FastForwardBranch = binding(keyName, "fast-forward branch")
 	case "delete":
 		k.DeleteBranch = binding(keyName, "delete branch")
 	case "rerun", "rerunrun":
