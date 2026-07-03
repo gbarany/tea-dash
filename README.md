@@ -113,6 +113,8 @@ tea-dash --help
 | `?`             | show / hide full help   |
 | `q` / `ctrl+c`  | quit                    |
 
+The merge picker includes each merge strategy plus a `+ delete branch` variant.
+
 ## Configuration
 
 Optional. tea-dash reads the first config it finds in this order:

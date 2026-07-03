@@ -2041,6 +2041,26 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 	}
 }
 
+func TestMergePromptIncludesDeleteBranchOptions(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("merge key should open the merge picker")
+	}
+	view := m.actionPrompt.View(120)
+	for _, want := range []string{"Merge + delete branch", "Squash + delete branch", "Fast-forward only + delete branch"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("merge prompt missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestReviewRequestChangesPromptsForBodyBeforeDispatch(t *testing.T) {
 	var got []actions.Intent
 	m := New(&config.Config{}, nil)
