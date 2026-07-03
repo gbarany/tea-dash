@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gbarany/tea-dash/internal/config"
@@ -74,6 +75,61 @@ func TestParseArgsVersion(t *testing.T) {
 	}
 	if !opts.showVersion {
 		t.Fatal("showVersion should be true")
+	}
+}
+
+func TestParseArgsDebug(t *testing.T) {
+	opts, err := parseArgs([]string{"--debug", "--config", "custom.yml"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !opts.debug {
+		t.Fatal("debug should be true")
+	}
+	if opts.configPath != "custom.yml" {
+		t.Fatalf("configPath = %q, want custom.yml", opts.configPath)
+	}
+}
+
+func TestUsageMentionsDebugFlag(t *testing.T) {
+	if !strings.Contains(usage, "--debug") {
+		t.Fatalf("usage should mention --debug:\n%s", usage)
+	}
+}
+
+func TestStartDebugLogCreatesDebugLogInCurrentDirectory(t *testing.T) {
+	cwd := t.TempDir()
+	f, err := startDebugLog(true, cwd)
+	if err != nil {
+		t.Fatalf("startDebugLog: %v", err)
+	}
+	if f == nil {
+		t.Fatal("startDebugLog should return a file when enabled")
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close debug log: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(cwd, "debug.log"))
+	if err != nil {
+		t.Fatalf("read debug.log: %v", err)
+	}
+	if !strings.Contains(string(raw), "tea-dash debug log") {
+		t.Fatalf("debug.log = %q, want header", string(raw))
+	}
+}
+
+func TestStartDebugLogDisabledDoesNothing(t *testing.T) {
+	cwd := t.TempDir()
+	f, err := startDebugLog(false, cwd)
+	if err != nil {
+		t.Fatalf("startDebugLog: %v", err)
+	}
+	if f != nil {
+		t.Fatal("startDebugLog should return nil when disabled")
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "debug.log")); !os.IsNotExist(err) {
+		t.Fatalf("debug.log should not exist when debug is disabled, stat err=%v", err)
 	}
 }
 

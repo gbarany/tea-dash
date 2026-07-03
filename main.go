@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -43,6 +44,7 @@ func main() {
 
 type cliOptions struct {
 	configPath  string
+	debug       bool
 	showVersion bool
 	showHelp    bool
 }
@@ -52,6 +54,8 @@ func parseArgs(args []string) (cliOptions, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
+		case arg == "--debug":
+			opts.debug = true
 		case arg == "-v" || arg == "--version" || arg == "version":
 			opts.showVersion = true
 		case arg == "-h" || arg == "--help" || arg == "help":
@@ -76,6 +80,18 @@ func parseArgs(args []string) (cliOptions, error) {
 }
 
 func run(opts cliOptions) error {
+	cwd, _ := os.Getwd()
+	if cwd == "" {
+		cwd = "."
+	}
+	debugLog, err := startDebugLog(opts.debug, cwd)
+	if err != nil {
+		return err
+	}
+	if debugLog != nil {
+		defer debugLog.Close()
+	}
+
 	cfg, err := config.Load(opts.configPath)
 	if err != nil {
 		return err
@@ -104,7 +120,6 @@ func run(opts cliOptions) error {
 		return fmt.Errorf("connecting to %s: %w", authCfg.URL, err)
 	}
 
-	cwd, _ := os.Getwd()
 	model := ui.NewWithOptions(cfg, client, launchOptions(cfg, authCfg.URL, cwd))
 	runner := actionrunner.New(actionrunner.Options{
 		Client:      client,
@@ -117,6 +132,21 @@ func run(opts cliOptions) error {
 	p := tea.NewProgram(model)
 	_, err = p.Run()
 	return err
+}
+
+func startDebugLog(enabled bool, cwd string) (*os.File, error) {
+	if !enabled {
+		return nil, nil
+	}
+	f, err := os.OpenFile(filepath.Join(cwd, "debug.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening debug.log: %w", err)
+	}
+	if _, err := fmt.Fprintf(f, "tea-dash debug log started at %s\n", time.Now().Format(time.RFC3339)); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("writing debug.log: %w", err)
+	}
+	return f, nil
 }
 
 func launchOptions(cfg *config.Config, instanceURL, cwd string) ui.Options {
@@ -160,6 +190,7 @@ const usage = `tea-dash — a terminal dashboard for Gitea
 Usage:
   tea-dash                 start the dashboard
   tea-dash --config <path> use a specific config file
+  tea-dash --debug         append debug output to ./debug.log
   tea-dash --version       print version information
   tea-dash --help          show this help
 
