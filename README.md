@@ -49,6 +49,14 @@ See [`docs/architecture.md`](docs/architecture.md) for the details.
 
 ## Install
 
+Homebrew:
+
+```sh
+brew install --cask gbarany/tap/tea-dash
+```
+
+Or with Go:
+
 ```sh
 go install github.com/gbarany/tea-dash@latest
 ```

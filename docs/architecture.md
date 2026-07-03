@@ -78,8 +78,25 @@ is denormalized — each row from the cross-repo search carries its own
 | `internal/config` | loads `~/.config/tea-dash/config.yml` (instance block, repos)             |
 | `internal/build`  | version metadata injected at link time via `-ldflags`                     |
 
-## Roadmap (next steps)
+## Current feature surface
 
-1. Smart cwd repo detection to preselect or scaffold repo-scoped sections.
-2. Richer table columns / per-column layout configuration.
-3. Capability-probed fallbacks for version-sensitive Actions and review flows.
+- Configurable PR/issue sections with structured filters, repo fan-out,
+  current-repo smart filtering, progressive loading, and configurable table
+  columns.
+- Default-open preview panes with markdown bodies, comments, review summaries,
+  CI/check status, and Actions run detail.
+- Mutations for common PR, issue, notification, Actions, and local branch
+  workflows: comments, labels, assignment, milestones, subscriptions,
+  close/reopen, reviews, reviewer requests, merge variants, branch checkout,
+  branch push/delete, notification read/pin state, and Actions logs/rerun/cancel.
+- Keyboard and mouse interaction shaped after `gh-dash` and `lazygit`, plus
+  configurable built-in/custom keybindings.
+- Public distribution through GitHub releases and the Homebrew tap.
+
+## Future refinements
+
+- Deeper theme coverage beyond the current core text/background/border palette.
+- More capability probes for server-version differences that emerge in the
+  Forgejo/Gitea Actions and review APIs.
+- Optional multi-instance switching inside one running session; today a session
+  connects to one resolved instance.
