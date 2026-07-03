@@ -162,7 +162,7 @@ defaults:
   refetchIntervalMinutes: 0 # auto-refresh current view every N minutes (0/omitted -> manual only)
   preview:
     open: true           # initial preview pane state (omit to default true)
-    width: 84            # preview pane width in columns (0 or omit -> automatic, capped at 80)
+    width: 84            # preview pane width in columns (0 or omit -> automatic 50/50 split)
   prsLimit: 50           # PR page size; more rows load when you reach the bottom (0 -> 50)
   issuesLimit: 50        # issue page size; more rows load when you reach the bottom (0 -> 50)
   notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)

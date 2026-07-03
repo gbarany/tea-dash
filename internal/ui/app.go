@@ -2598,8 +2598,8 @@ func (m *Model) syncProgramContext() {
 
 // syncMainContentDimensions splits the content area between the section table
 // and the preview pane. When the preview is open it uses defaults.preview.width
-// when configured, otherwise the previous automatic half-width layout capped at
-// 80 columns. When closed, the table gets the full width.
+// when configured, otherwise an automatic near-50/50 split. When closed, the
+// table gets the full width.
 func (m *Model) syncMainContentDimensions() {
 	h := m.ctx.ScreenHeight - 7
 	if h < 3 {
@@ -2648,9 +2648,6 @@ func (m *Model) configuredPreviewWidth() int {
 	if pw > maxPreview {
 		pw = maxPreview
 	}
-	if configured == 0 && pw > 80 {
-		pw = 80
-	}
 	if pw < 0 {
 		pw = 0
 	}
@@ -2659,8 +2656,15 @@ func (m *Model) configuredPreviewWidth() int {
 
 func (m Model) statusLine() string {
 	s := m.getCurrSection()
-	if s == nil || s.GetIsLoading() || s.GetError() != nil {
+	if s == nil || s.GetError() != nil {
 		return ""
+	}
+	if s.GetIsLoading() {
+		title := strings.TrimSpace(s.GetTitle())
+		if title == "" {
+			title = strings.TrimSpace(s.GetItemPlural())
+		}
+		return m.ctx.Styles.DimText.Render("Loading " + title + "…")
 	}
 	total := s.GetTotalCount()
 	shown := s.NumRows()

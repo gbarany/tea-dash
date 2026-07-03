@@ -1582,6 +1582,28 @@ func TestPreviewStartsOpenAndToggles(t *testing.T) {
 	}
 }
 
+func TestAutomaticPreviewUsesHalfWidthOnWideScreens(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 220, Height: 40})
+
+	if m.ctx.PreviewWidth != 108 {
+		t.Fatalf("automatic preview width = %d, want half of available content width 108", m.ctx.PreviewWidth)
+	}
+	if m.ctx.MainContentWidth != 106 {
+		t.Fatalf("main content width = %d, want balanced 50/50 split after gutter", m.ctx.MainContentWidth)
+	}
+}
+
+func TestStatusLineShowsStartupLoadingState(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	status := m.statusLine()
+	if !strings.Contains(status, "Loading Open Pull Requests") {
+		t.Fatalf("startup status line = %q, want visible loading indicator for current section", status)
+	}
+}
+
 func TestPreviewCanStartClosedFromConfig(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{Preview: config.PreviewConfig{Open: boolPtr(false)}}}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
