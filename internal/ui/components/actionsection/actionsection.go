@@ -109,7 +109,7 @@ func actionEmptyHint(cfg config.SectionConfig) string {
 	if strings.TrimSpace(cfg.Repo) == "" {
 		return "Add actionsSections with repo: owner/name to your tea-dash config."
 	}
-	return "This board shows repo-scoped Gitea Actions workflow runs."
+	return "This board shows repo-scoped Gitea Actions workflow runs when the server exposes the Actions API."
 }
 
 func actionColumns(mainWidth int) []table.Column {
