@@ -736,16 +736,28 @@ func reviewEvent(value string) (data.PullReviewEvent, error) {
 
 func mergeOptions(value string) (data.MergeOptions, error) {
 	v := strings.TrimSpace(strings.ToLower(value))
+	parts := strings.Split(v, "+")
+	styleValue := parts[0]
 	deleteBranch := false
-	if strings.HasSuffix(v, "+delete") {
-		deleteBranch = true
-		v = strings.TrimSuffix(v, "+delete")
+	forceMerge := false
+	for _, flag := range parts[1:] {
+		switch strings.TrimSpace(flag) {
+		case "delete", "delete-branch", "delete_branch":
+			deleteBranch = true
+		case "force", "force-merge", "force_merge":
+			forceMerge = true
+		case "":
+			// Ignore empty components from accidental trailing separators; the
+			// style parser below still validates the action.
+		default:
+			return data.MergeOptions{}, fmt.Errorf("unsupported merge option %q", flag)
+		}
 	}
-	style, err := mergeStyle(v)
+	style, err := mergeStyle(styleValue)
 	if err != nil {
 		return data.MergeOptions{}, err
 	}
-	return data.MergeOptions{Style: style, DeleteBranch: deleteBranch}, nil
+	return data.MergeOptions{Style: style, DeleteBranch: deleteBranch, ForceMerge: forceMerge}, nil
 }
 
 func mergeStyle(value string) (data.MergeStyle, error) {
