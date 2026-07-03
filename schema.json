@@ -60,11 +60,11 @@
     "theme": { "$ref": "#/$defs/theme" },
     "prSections": {
       "type": "array",
-      "items": { "$ref": "#/$defs/section" }
+      "items": { "$ref": "#/$defs/prIssueSection" }
     },
     "issuesSections": {
       "type": "array",
-      "items": { "$ref": "#/$defs/section" }
+      "items": { "$ref": "#/$defs/prIssueSection" }
     },
     "notificationsSections": {
       "type": "array",
@@ -233,6 +233,31 @@
         "faint": { "$ref": "#/$defs/colorString" }
       }
     },
+    "prIssueSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Tab title."
+        },
+        "repo": {
+          "$ref": "#/$defs/repoName",
+          "description": "Optional owner/name repo scope for this section."
+        },
+        "filter": { "$ref": "#/$defs/filter" },
+        "columns": {
+          "type": "array",
+          "description": "Visible table columns for PR/issue sections. Use strings for default title/width, or objects with name/title/width.",
+          "items": { "$ref": "#/$defs/column" }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rows to fetch per page. 0 falls back to the per-view default."
+        }
+      }
+    },
     "section": {
       "type": "object",
       "additionalProperties": false,
@@ -283,6 +308,33 @@
         "headSha": { "type": "string" },
         "actor": { "type": "string" }
       }
+    },
+    "column": {
+      "oneOf": [
+        { "$ref": "#/$defs/columnName" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "$ref": "#/$defs/columnName" },
+            "title": {
+              "type": "string",
+              "description": "Optional display title for this table column."
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Optional fixed column width. 0 or omitted uses the default width."
+            }
+          },
+          "required": ["name"]
+        }
+      ]
+    },
+    "columnName": {
+      "type": "string",
+      "enum": ["number", "title", "repo", "author", "state", "updated"],
+      "description": "PR/issue table column name."
     },
     "keybindings": {
       "type": "object",

@@ -37,6 +37,62 @@ notARealTeaDashSetting: true
 	}
 }
 
+func TestConfigSchemaValidatesSectionColumns(t *testing.T) {
+	schema := loadConfigSchema(t)
+	doc := loadYAMLBytes(t, []byte(`
+prSections:
+  - title: Compact
+    columns:
+      - number
+      - name: title
+        title: Summary
+        width: 48
+      - repo
+    filter:
+      state: open
+`))
+
+	if err := schema.Validate(doc); err != nil {
+		t.Fatalf("schema should validate PR section columns: %v", err)
+	}
+}
+
+func TestConfigSchemaRejectsUnknownSectionColumn(t *testing.T) {
+	schema := loadConfigSchema(t)
+	doc := loadYAMLBytes(t, []byte(`
+issuesSections:
+  - title: Bad
+    columns:
+      - typo
+`))
+
+	err := schema.Validate(doc)
+	if err == nil {
+		t.Fatal("schema should reject unknown section columns")
+	}
+	if !strings.Contains(err.Error(), "/issuesSections/0/columns/0") {
+		t.Fatalf("schema error = %v, want it to identify the bad column entry", err)
+	}
+}
+
+func TestConfigSchemaRejectsColumnsOnUnsupportedSections(t *testing.T) {
+	schema := loadConfigSchema(t)
+	doc := loadYAMLBytes(t, []byte(`
+actionsSections:
+  - title: CI
+    columns:
+      - title
+`))
+
+	err := schema.Validate(doc)
+	if err == nil {
+		t.Fatal("schema should reject columns outside PR/issue sections")
+	}
+	if !strings.Contains(err.Error(), "columns") {
+		t.Fatalf("schema error = %v, want it to mention columns", err)
+	}
+}
+
 func TestConfigSchemaCoversDocumentedTopLevelKeys(t *testing.T) {
 	raw, err := os.ReadFile("schema.json")
 	if err != nil {

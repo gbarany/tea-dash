@@ -207,9 +207,89 @@ func (m *BaseModel) View() string {
 	return body
 }
 
-// DefaultColumns defines the shared column widths and title-grow formula for
-// every section (# / Title / Repo / Author / State / Updated).
-func DefaultColumns(mainWidth int) []table.Column {
+// ColumnDefinition is one known table column a section can expose.
+type ColumnDefinition struct {
+	Name  string
+	Title string
+	Width int
+}
+
+// ColumnsFromConfig turns a section's configured column list into table
+// columns. Unknown names are ignored defensively; config validation rejects
+// them before user config reaches the UI.
+func ColumnsFromConfig(configured []config.ColumnConfig, defaults []ColumnDefinition) []table.Column {
+	if len(configured) == 0 {
+		return columnsFromDefinitions(defaults)
+	}
+	byName := make(map[string]ColumnDefinition, len(defaults))
+	for _, def := range defaults {
+		byName[def.Name] = def
+	}
+	out := make([]table.Column, 0, len(configured))
+	for _, col := range configured {
+		def, ok := byName[col.Name]
+		if !ok {
+			continue
+		}
+		title := def.Title
+		if col.Title != "" {
+			title = col.Title
+		}
+		width := def.Width
+		if col.Width > 0 {
+			width = col.Width
+		}
+		out = append(out, table.Column{Title: title, Width: width})
+	}
+	if len(out) == 0 {
+		return columnsFromDefinitions(defaults)
+	}
+	return out
+}
+
+// ColumnNamesFromConfig returns configured column names in render order. It
+// falls back to defaults defensively when no configured names are valid.
+func ColumnNamesFromConfig(configured []config.ColumnConfig, defaults []ColumnDefinition) []string {
+	defaultNames := columnNamesFromDefinitions(defaults)
+	byName := make(map[string]bool, len(defaults))
+	for _, def := range defaults {
+		byName[def.Name] = true
+	}
+	if len(configured) == 0 {
+		return defaultNames
+	}
+	names := make([]string, 0, len(configured))
+	for _, col := range configured {
+		if byName[col.Name] {
+			names = append(names, col.Name)
+		}
+	}
+	if len(names) == 0 {
+		return defaultNames
+	}
+	return names
+}
+
+func columnNamesFromDefinitions(defs []ColumnDefinition) []string {
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		names = append(names, def.Name)
+	}
+	return names
+}
+
+func columnsFromDefinitions(defs []ColumnDefinition) []table.Column {
+	cols := make([]table.Column, 0, len(defs))
+	for _, def := range defs {
+		cols = append(cols, table.Column{Title: def.Title, Width: def.Width})
+	}
+	return cols
+}
+
+// DefaultColumnDefinitions defines the shared column widths and title-grow
+// formula for every PR/issue-like section (# / Title / Repo / Author / State /
+// Updated).
+func DefaultColumnDefinitions(mainWidth int) []ColumnDefinition {
 	const (
 		numW     = 6
 		repoW    = 22
@@ -221,14 +301,24 @@ func DefaultColumns(mainWidth int) []table.Column {
 	if titleW < 20 {
 		titleW = 20
 	}
-	return []table.Column{
-		{Title: "#", Width: numW},
-		{Title: "Title", Width: titleW},
-		{Title: "Repo", Width: repoW},
-		{Title: "Author", Width: authorW},
-		{Title: "State", Width: stateW},
-		{Title: "Updated", Width: updatedW},
+	return []ColumnDefinition{
+		{Name: "number", Title: "#", Width: numW},
+		{Name: "title", Title: "Title", Width: titleW},
+		{Name: "repo", Title: "Repo", Width: repoW},
+		{Name: "author", Title: "Author", Width: authorW},
+		{Name: "state", Title: "State", Width: stateW},
+		{Name: "updated", Title: "Updated", Width: updatedW},
 	}
+}
+
+// DefaultColumns defines the shared table columns for PR/issue-like sections.
+func DefaultColumns(mainWidth int) []table.Column {
+	return columnsFromDefinitions(DefaultColumnDefinitions(mainWidth))
+}
+
+// DefaultColumnNames returns the shared PR/issue column order.
+func DefaultColumnNames() []string {
+	return columnNamesFromDefinitions(DefaultColumnDefinitions(0))
 }
 
 // HumanizeTime renders a coarse "just now / Xm / Xh / Xd ago" relative time,

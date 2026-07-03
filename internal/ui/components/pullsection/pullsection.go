@@ -27,6 +27,7 @@ type SectionPullRequestsFetchedMsg = section.RowsFetchedMsg[data.PullRequest]
 // NewModel builds a pull-requests section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	programCtx := ctx
+	columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 	return section.New(section.Options[data.PullRequest]{
 		Id:           id,
 		Ctx:          ctx,
@@ -49,7 +50,12 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			}
 			return c.SearchPullsPage(fetchCtx, f, limit, page)
 		},
-		BuildRow: prBuildRow,
+		BuildRow: func(pr data.PullRequest) table.Row {
+			return prBuildRowWithColumns(pr, columnNames)
+		},
+		Columns: func(width int) []table.Column {
+			return section.ColumnsFromConfig(cfg.Columns, section.DefaultColumnDefinitions(width))
+		},
 	})
 }
 
@@ -74,18 +80,38 @@ func prState(pr data.PullRequest) string {
 	return pr.State
 }
 
-// prBuildRow maps a PR into the table's 6-cell row.
+// prBuildRow maps a PR into the default table row.
 func prBuildRow(pr data.PullRequest) table.Row {
+	return prBuildRowWithColumns(pr, section.DefaultColumnNames())
+}
+
+func prBuildRowWithColumns(pr data.PullRequest, columns []string) table.Row {
+	row := make(table.Row, 0, len(columns))
+	for _, column := range columns {
+		row = append(row, prColumnValue(pr, column))
+	}
+	return row
+}
+
+func prColumnValue(pr data.PullRequest, column string) string {
 	author := ""
 	if pr.Author != "" {
 		author = "@" + pr.Author
 	}
-	return table.Row{
-		fmt.Sprintf("#%d", pr.Number),
-		pr.Title,
-		pr.RepoNameWithOwner,
-		author,
-		prState(pr),
-		section.HumanizeTime(pr.UpdatedAt),
+	switch column {
+	case "number":
+		return fmt.Sprintf("#%d", pr.Number)
+	case "title":
+		return pr.Title
+	case "repo":
+		return pr.RepoNameWithOwner
+	case "author":
+		return author
+	case "state":
+		return prState(pr)
+	case "updated":
+		return section.HumanizeTime(pr.UpdatedAt)
+	default:
+		return ""
 	}
 }

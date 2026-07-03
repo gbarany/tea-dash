@@ -144,6 +144,39 @@ func TestFetchedMsgBuildsRows(t *testing.T) {
 	}
 }
 
+func TestConfiguredColumnsBuildPullRowsInConfiguredOrder(t *testing.T) {
+	ctx := &context.ProgramContext{Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20}
+	m := NewModel(0, ctx, config.SectionConfig{
+		Title: "Compact PRs",
+		Columns: []config.ColumnConfig{
+			{Name: "number", Width: 8},
+			{Name: "state", Title: "Status", Width: 12},
+			{Name: "title"},
+		},
+	})
+	if got := m.Columns; len(got) != 3 ||
+		got[0].Title != "#" || got[0].Width != 8 ||
+		got[1].Title != "Status" || got[1].Width != 12 ||
+		got[2].Title != "Title" {
+		t.Fatalf("columns = %+v", got)
+	}
+
+	m.SetLastFetchID("t1")
+	next, _ := m.Update(SectionPullRequestsFetchedMsg{
+		Rows: []data.PullRequest{{
+			Number: 128, Title: "Add wiki CLI", RepoNameWithOwner: "gitea/tea",
+			Author: "lunny", State: "open", UpdatedAt: time.Now().Add(-2 * time.Hour),
+		}},
+		TotalCount: 1, TaskId: "t1",
+	})
+	m = next.(*Model)
+	row := m.BuildRows()[0]
+	want := []string{"#128", "open", "Add wiki CLI"}
+	if strings.Join([]string(row), "|") != strings.Join(want, "|") {
+		t.Fatalf("row = %v, want %v", row, want)
+	}
+}
+
 func TestGetCurrRowNilBeforeFetch(t *testing.T) {
 	m := newModel(t)
 	if m.GetCurrRow() != nil {

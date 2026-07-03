@@ -47,6 +47,14 @@ git:
 
 prSections:
   - title: Open PRs
+    columns:
+      - number
+      - name: title
+        title: Summary
+        width: 52
+      - repo
+      - state
+      - updated
     filter:
       state: open
       createdBy: "@me"

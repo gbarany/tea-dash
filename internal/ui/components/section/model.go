@@ -47,6 +47,7 @@ type Options[T data.RowData] struct {
 
 	Fetch    func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int, int) ([]T, int, error)
 	BuildRow func(T) table.Row
+	Columns  func(int) []table.Column
 	Limit    func(*config.Config) int
 	Pageable bool
 }
@@ -58,6 +59,7 @@ type Model[T data.RowData] struct {
 	rows        []T
 	fetch       func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int, int) ([]T, int, error)
 	buildRow    func(T) table.Row
+	columns     func(int) []table.Column
 	limitFn     func(*config.Config) int
 	filterKind  string
 	page        int
@@ -82,13 +84,17 @@ func New[T data.RowData](o Options[T]) *Model[T] {
 	if o.Limit == nil {
 		panic("section.New: Options.Limit is required")
 	}
+	columns := o.Columns
+	if columns == nil {
+		columns = DefaultColumns
+	}
 	m := &Model[T]{}
 	m.BaseModel = NewBaseModel(NewOptions{
 		Id:           o.Id,
 		Type:         o.Type,
 		Ctx:          o.Ctx,
 		Config:       o.Config,
-		Columns:      DefaultColumns(o.Ctx.MainContentWidth),
+		Columns:      columns(o.Ctx.MainContentWidth),
 		LoadingText:  o.LoadingText,
 		EmptyText:    o.EmptyText,
 		EmptyHint:    o.EmptyHint,
@@ -97,6 +103,7 @@ func New[T data.RowData](o Options[T]) *Model[T] {
 	})
 	m.fetch = o.Fetch
 	m.buildRow = o.BuildRow
+	m.columns = columns
 	m.limitFn = o.Limit
 	m.filterKind = o.FilterKind
 	m.pageable = o.Pageable
@@ -237,7 +244,7 @@ func (m *Model[T]) Update(msg tea.Msg) (Section, tea.Cmd) {
 // UpdateProgramContext resizes the table and refreshes columns for the new width.
 func (m *Model[T]) UpdateProgramContext(ctx *appctx.ProgramContext) {
 	m.BaseModel.UpdateProgramContext(ctx)
-	m.Columns = DefaultColumns(ctx.MainContentWidth)
+	m.Columns = m.columns(ctx.MainContentWidth)
 	m.Table.SetColumns(m.Columns)
 }
 

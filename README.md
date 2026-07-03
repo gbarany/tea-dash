@@ -199,6 +199,14 @@ theme:
 # to get one open "@me"-authored issues section.
 prSections:
   - title: Open PRs
+    columns:
+      - number
+      - name: title
+        title: Summary
+        width: 52
+      - repo
+      - state
+      - updated
     filter:
       state: open          # open | closed | all (default open)
       createdBy: "@me"     # me-scoped author fields accept "@me" only
@@ -333,6 +341,10 @@ scalars replace the previous value.
 `assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),
 `sort`. PR and issue sections fetch one page at a time; reaching the loaded
 bottom automatically requests the next page until the server total is loaded.
+PR and issue sections can also set `columns` to choose table order and width.
+Supported column names are `number`, `title`, `repo`, `author`, `state`, and
+`updated`; each entry may be a plain string or an object with `name`, optional
+`title`, and optional non-negative `width`.
 When `repos:` is configured, sections without their own `repo:` use the
 repo-scoped endpoint for each listed repo and merge the results by updated time;
 sections with `repo:` query only that repo. With neither `repos:` nor `repo:`,

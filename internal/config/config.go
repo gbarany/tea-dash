@@ -261,10 +261,52 @@ type SectionConfig struct {
 	Title  string        `yaml:"title"`
 	Repo   string        `yaml:"repo"`
 	Filter PrIssueFilter `yaml:"filter"`
+	// Columns optionally selects and orders visible table columns for PR/issue
+	// sections. Entries may be YAML strings or objects with name/title/width.
+	Columns []ColumnConfig `yaml:"columns"`
 	// Limit caps this section's row fetch. 0 falls back to the per-view default
 	// (defaults.prsLimit / defaults.issuesLimit / etc.), which in turn falls back to 50.
 	// Precedence: section Limit -> per-view default -> 50.
 	Limit int `yaml:"limit"`
+}
+
+// ColumnConfig selects one visible PR/issue table column.
+type ColumnConfig struct {
+	Name  string `yaml:"name"`
+	Title string `yaml:"title"`
+	Width int    `yaml:"width"`
+}
+
+var prIssueColumnNames = []string{"number", "title", "repo", "author", "state", "updated"}
+
+var prIssueColumnNameSet = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(prIssueColumnNames))
+	for _, name := range prIssueColumnNames {
+		out[name] = struct{}{}
+	}
+	return out
+}()
+
+// UnmarshalYAML accepts either a terse string entry ("title") or an object:
+// {name: title, width: 42, title: Summary}.
+func (c *ColumnConfig) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		c.Name = strings.TrimSpace(value.Value)
+		return nil
+	case yaml.MappingNode:
+		type rawColumnConfig ColumnConfig
+		var raw rawColumnConfig
+		if err := value.Decode(&raw); err != nil {
+			return err
+		}
+		*c = ColumnConfig(raw)
+		c.Name = strings.TrimSpace(c.Name)
+		c.Title = strings.TrimSpace(c.Title)
+		return nil
+	default:
+		return fmt.Errorf("column must be a string or mapping")
+	}
 }
 
 // LocalRepoConfig describes one local git checkout to include in the branches
@@ -338,21 +380,47 @@ func (f PrIssueFilter) validate(repoScoped bool) error {
 	return nil
 }
 
-func validatePrIssueSection(kind string, s SectionConfig, hasGlobalRepos bool) error {
+func validatePrIssueSection(kind string, idx int, s SectionConfig, hasGlobalRepos bool) error {
 	if kind == "issuesSections" && strings.TrimSpace(s.Filter.ReviewRequested) != "" {
 		return fmt.Errorf("%s.filter.reviewRequested is only supported for PR sections", kind)
 	}
 	hasSectionRepo := strings.TrimSpace(s.Repo) != ""
 	if hasSectionRepo {
 		if _, err := ParseRepo(s.Repo); err != nil {
-			return fmt.Errorf("%s.repo: %w", kind, err)
+			return fmt.Errorf("%s[%d].repo: %w", kind, idx, err)
 		}
+	}
+	if err := validateSectionColumns(kind, idx, s.Columns); err != nil {
+		return err
 	}
 	repoScoped := hasSectionRepo || (hasGlobalRepos && strings.TrimSpace(s.Filter.ReviewRequested) == "")
 	if err := s.Filter.validate(repoScoped); err != nil {
-		return err
+		return fmt.Errorf("%s[%d].%w", kind, idx, err)
 	}
 	return nil
+}
+
+func validateSectionColumns(kind string, sectionIndex int, columns []ColumnConfig) error {
+	for i, col := range columns {
+		name := strings.TrimSpace(col.Name)
+		if name == "" {
+			return fmt.Errorf("%s[%d].columns[%d].name is required", kind, sectionIndex, i)
+		}
+		if _, ok := prIssueColumnNameSet[name]; !ok {
+			return fmt.Errorf("%s[%d].columns[%d].name = %q: supported columns are %s", kind, sectionIndex, i, col.Name, strings.Join(prIssueColumnNames, ", "))
+		}
+		if col.Width < 0 {
+			return fmt.Errorf("%s[%d].columns[%d].width must be >= 0", kind, sectionIndex, i)
+		}
+	}
+	return nil
+}
+
+func rejectUnsupportedColumns(kind string, sectionIndex int, columns []ColumnConfig) error {
+	if len(columns) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s[%d].columns is only supported for prSections and issuesSections", kind, sectionIndex)
 }
 
 // Validate checks the config for unsupported filter values and an invalid
@@ -363,22 +431,28 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("repos[%d]: %w", i, err)
 		}
 	}
-	for _, s := range c.PRSections {
-		if err := validatePrIssueSection("prSections", s, len(c.Repos) > 0); err != nil {
+	for i, s := range c.PRSections {
+		if err := validatePrIssueSection("prSections", i, s, len(c.Repos) > 0); err != nil {
 			return err
 		}
 	}
-	for _, s := range c.IssuesSections {
-		if err := validatePrIssueSection("issuesSections", s, len(c.Repos) > 0); err != nil {
+	for i, s := range c.IssuesSections {
+		if err := validatePrIssueSection("issuesSections", i, s, len(c.Repos) > 0); err != nil {
 			return err
 		}
 	}
-	for _, s := range c.NotificationsSections {
+	for i, s := range c.NotificationsSections {
+		if err := rejectUnsupportedColumns("notificationsSections", i, s.Columns); err != nil {
+			return err
+		}
 		if err := s.Filter.Validate(); err != nil {
 			return err
 		}
 	}
-	for _, s := range c.ActionsSections {
+	for i, s := range c.ActionsSections {
+		if err := rejectUnsupportedColumns("actionsSections", i, s.Columns); err != nil {
+			return err
+		}
 		if strings.TrimSpace(s.Repo) == "" {
 			continue
 		}
@@ -386,7 +460,10 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("actionsSections.repo: %w", err)
 		}
 	}
-	for _, s := range c.BranchSections {
+	for i, s := range c.BranchSections {
+		if err := rejectUnsupportedColumns("branchSections", i, s.Columns); err != nil {
+			return err
+		}
 		if err := s.Filter.Validate(); err != nil {
 			return err
 		}
