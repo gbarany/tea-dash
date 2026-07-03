@@ -2,6 +2,7 @@ package mockgitea
 
 import (
 	"context"
+	"net/url"
 	"testing"
 	"time"
 
@@ -57,6 +58,22 @@ func TestSearchIssuesAssigned(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Number != 4 {
 		t.Fatalf("want issue #4, got %+v", rows)
+	}
+}
+
+// TestFilterPullsStableTiesByID guards filterPulls' use of sort.SliceStable:
+// two pulls with an identical Updated timestamp must keep their input
+// (ID-ascending) relative order rather than being reordered arbitrarily.
+func TestFilterPullsStableTiesByID(t *testing.T) {
+	now := time.Now()
+	me := &User{Login: "gabor"}
+	pulls := []*Pull{
+		{ID: 101, Number: 1, Title: "a", State: "open", Author: me, Updated: now},
+		{ID: 102, Number: 2, Title: "b", State: "open", Author: me, Updated: now},
+	}
+	got := filterPulls(pulls, url.Values{"state": {"open"}}, "gabor")
+	if len(got) != 2 || got[0].ID != 101 || got[1].ID != 102 {
+		t.Fatalf("want stable ID-ascending order for equal Updated, got %+v", got)
 	}
 }
 

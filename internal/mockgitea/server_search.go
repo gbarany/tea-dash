@@ -29,19 +29,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	respondList(s, w, func() (rows []map[string]any, total int) {
 		me := s.store.meLocked().Login
 		if q.Get("type") == "issues" {
-			matched := filterIssues(s.store.allIssuesLocked(), q, me)
-			total = len(matched)
-			for _, i := range paginate(matched, limit, page) {
-				rows = append(rows, issueSearchRow(i))
-			}
-			return rows, total
+			return pageRows(filterIssues(s.store.allIssuesLocked(), q, me), limit, page, issueSearchRow)
 		}
-		matched := filterPulls(s.store.allPullsLocked(), q, me)
-		total = len(matched)
-		for _, p := range paginate(matched, limit, page) {
-			rows = append(rows, pullSearchRow(p))
-		}
-		return rows, total
+		return pageRows(filterPulls(s.store.allPullsLocked(), q, me), limit, page, pullSearchRow)
 	})
 }
 
@@ -65,17 +55,9 @@ func (s *Server) handleRepoIssues(w http.ResponseWriter, r *http.Request) {
 		var rows []map[string]any
 		var total int
 		if q.Get("type") == "pulls" {
-			matched := filterPulls(s.store.pullsLocked(full), q, me)
-			total = len(matched)
-			for _, p := range paginate(matched, limit, page) {
-				rows = append(rows, pullSearchRow(p))
-			}
+			rows, total = pageRows(filterPulls(s.store.pullsLocked(full), q, me), limit, page, pullSearchRow)
 		} else {
-			matched := filterIssues(s.store.issuesLocked(full), q, me)
-			total = len(matched)
-			for _, i := range paginate(matched, limit, page) {
-				rows = append(rows, issueSearchRow(i))
-			}
+			rows, total = pageRows(filterIssues(s.store.issuesLocked(full), q, me), limit, page, issueSearchRow)
 		}
 		writeList(w, total, rows)
 	})
@@ -245,7 +227,9 @@ func paginationParams(q url.Values) (limit, page int) {
 }
 
 // paginate slices rows to one page. limit <= 0 defaults to 50 (matching
-// internal/gitea's own default); page <= 0 defaults to 1.
+// internal/gitea's own default); page <= 0 defaults to 1. lo < 0 is also
+// treated as out of range — a page/limit combination from an untrusted query
+// string can overflow int multiplication into a negative offset.
 func paginate[T any](rows []T, limit, page int) []T {
 	if limit <= 0 {
 		limit = 50
@@ -254,11 +238,24 @@ func paginate[T any](rows []T, limit, page int) []T {
 		page = 1
 	}
 	lo := (page - 1) * limit
-	if lo >= len(rows) {
+	if lo < 0 || lo >= len(rows) {
 		return nil
 	}
 	hi := min(lo+limit, len(rows))
 	return rows[lo:hi]
+}
+
+// pageRows pages matched down to one page and marshals each row via row,
+// returning the pre-pagination total alongside it. rows is initialized to a
+// non-nil empty slice so an empty page encodes as JSON "[]", matching a real
+// Gitea server, instead of "null".
+func pageRows[T any](matched []T, limit, page int, row func(T) map[string]any) (rows []map[string]any, total int) {
+	rows = []map[string]any{}
+	total = len(matched)
+	for _, item := range paginate(matched, limit, page) {
+		rows = append(rows, row(item))
+	}
+	return rows, total
 }
 
 // pullSearchRow marshals a Pull into the row shape internal/gitea's tolerant
