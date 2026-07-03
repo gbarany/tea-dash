@@ -308,7 +308,9 @@ configured repository.
 and exactly one of `builtin` or `command`. Built-ins remap implemented tea-dash
 actions; commands run through your shell with row template fields such as
 `RepoName`, `RepoPath`, `PrIndex`/`PrNumber`, `IssueIndex`/`IssueNumber`,
-`RunID`, `Title`, `Author`, `Sha`, `InstanceURL`, and `Url`/`URL`.
+`RunID`, `Title`, `Author`, `Sha`, `HeadRefName`, `BaseRefName`,
+`InstanceURL`, and `Url`/`URL`. `HeadRefName` and `BaseRefName` are populated
+for PR rows once their preview detail has loaded.
 The universal `redraw` builtin asks Bubble Tea to clear and repaint the screen,
 which is useful if a terminal leaves visual artifacts.
 The universal `firstLine` and `lastLine` builtins jump to the first and last

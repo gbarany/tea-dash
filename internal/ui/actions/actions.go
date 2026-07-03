@@ -61,6 +61,8 @@ type Target struct {
 	URL            string
 	Author         string
 	SHA            string
+	HeadRefName    string
+	BaseRefName    string
 }
 
 // Prompt carries the prompt payload that was submitted with the intent.
