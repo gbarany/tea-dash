@@ -243,6 +243,12 @@ func key(repo string, num int64) string {
 func (s *Store) Me() *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.meLocked()
+}
+
+// meLocked is Me without taking the lock, for use from inside WithLock.
+// Callers must hold s.mu.
+func (s *Store) meLocked() *User {
 	return s.me
 }
 
@@ -282,6 +288,12 @@ func (s *Store) AddRepo(r *Repo) {
 func (s *Store) RepoByFullName(fullName string) *Repo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.repoByFullNameLocked(fullName)
+}
+
+// repoByFullNameLocked is RepoByFullName without taking the lock, for use
+// from inside WithLock. Callers must hold s.mu.
+func (s *Store) repoByFullNameLocked(fullName string) *Repo {
 	return s.repos[fullName]
 }
 
