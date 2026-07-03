@@ -1240,7 +1240,14 @@ func (m Model) selectRowFromMouse(x, y int) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	return m.selectCurrentSectionRow(i)
+}
+
+func (m Model) selectCurrentSectionRow(i int) (Model, tea.Cmd) {
 	s := m.getCurrSection()
+	if s == nil || s.GetIsLoading() || s.GetError() != nil || s.NumRows() == 0 {
+		return m, nil
+	}
 	before := m.selKey()
 	s.SelectRow(i)
 	moreCmd := s.MaybeFetchNextPage()
@@ -1494,6 +1501,15 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, tea.Quit, true
 	case "redraw":
 		return m, tea.ClearScreen, true
+	case "firstline":
+		next, cmd := m.selectCurrentSectionRow(0)
+		return next, cmd, true
+	case "lastline":
+		if s := m.getCurrSection(); s != nil {
+			next, cmd := m.selectCurrentSectionRow(s.NumRows() - 1)
+			return next, cmd, true
+		}
+		return m, nil, true
 	case "nextsection":
 		if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 			m.currSectionId++

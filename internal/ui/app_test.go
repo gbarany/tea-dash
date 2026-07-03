@@ -2538,6 +2538,30 @@ func TestGHDashFirstLastHotkeysMoveSelection(t *testing.T) {
 	}
 }
 
+func TestConfiguredFirstLastBuiltinsMoveSelection(t *testing.T) {
+	m := New(&config.Config{
+		Keybindings: config.Keybindings{Universal: []config.Keybinding{
+			{Key: "F", Builtin: "firstLine"},
+			{Key: "L", Builtin: "lastLine"},
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Middle row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 3, Title: "Last row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'L', Text: "L"})
+	if got := m.getCurrRowData().GetNumber(); got != 3 {
+		t.Fatalf("lastLine selected #%d, want #3", got)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'F', Text: "F"})
+	if got := m.getCurrRowData().GetNumber(); got != 1 {
+		t.Fatalf("firstLine selected #%d, want #1", got)
+	}
+}
+
 func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
 	var dispatched bool
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)

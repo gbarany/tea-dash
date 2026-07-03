@@ -221,6 +221,10 @@ keybindings:
       builtin: nextSection
     - key: ctrl+l
       builtin: redraw
+    - key: g
+      builtin: firstLine
+    - key: G
+      builtin: lastLine
     - key: H
       builtin: help
   prs:
@@ -303,6 +307,8 @@ actions; commands run through your shell with row template fields such as
 `RunID`, `Title`, `Author`, `Sha`, `InstanceURL`, and `Url`/`URL`.
 The universal `redraw` builtin asks Bubble Tea to clear and repaint the screen,
 which is useful if a terminal leaves visual artifacts.
+The universal `firstLine` and `lastLine` builtins jump to the first and last
+currently loaded row, matching gh-dash's `g`/`G` navigation behavior.
 
 > **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
 > `reviewRequested`) support the sentinel `"@me"` on cross-repo sections.
