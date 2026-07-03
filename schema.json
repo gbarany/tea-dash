@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gbarany/tea-dash/main/schema.json",
+  "title": "tea-dash configuration",
+  "description": "Configuration schema for tea-dash, a terminal dashboard for Gitea and Forgejo.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "instance": { "$ref": "#/$defs/instance" },
+    "login": {
+      "type": "string",
+      "description": "Deprecated alias for instance.login."
+    },
+    "smartFilteringAtLaunch": {
+      "type": "boolean",
+      "description": "Scope unpinned PR/issue sections to the launch checkout when its remote matches the Gitea instance."
+    },
+    "confirmQuit": {
+      "type": "boolean",
+      "description": "Ask before quitting with q or ctrl+c."
+    },
+    "defaults": { "$ref": "#/$defs/defaults" },
+    "repos": {
+      "type": "array",
+      "description": "Remote Gitea repositories to watch, as owner/name strings.",
+      "items": { "$ref": "#/$defs/repoName" },
+      "uniqueItems": true
+    },
+    "localRepos": {
+      "type": "array",
+      "description": "Local git checkouts shown in the branches view.",
+      "items": { "$ref": "#/$defs/localRepo" }
+    },
+    "pager": { "$ref": "#/$defs/pager" },
+    "repoPaths": {
+      "type": "object",
+      "description": "Map repo names or wildcard patterns to local checkout paths used by checkout and custom commands.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "git": { "$ref": "#/$defs/git" },
+    "theme": { "$ref": "#/$defs/theme" },
+    "prSections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "issuesSections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "notificationsSections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "actionsSections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "branchSections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "keybindings": { "$ref": "#/$defs/keybindings" }
+  },
+  "$defs": {
+    "instance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "login": {
+          "type": "string",
+          "description": "Named tea login profile to use. Empty means the default tea login."
+        },
+        "url": {
+          "type": "string",
+          "description": "Override the Gitea/Forgejo instance URL.",
+          "minLength": 1
+        },
+        "token": {
+          "type": "string",
+          "description": "Literal API token. Prefer tokenCommand or tokenEnv for shared configs."
+        },
+        "tokenCommand": {
+          "type": "string",
+          "description": "Shell command whose trimmed stdout is used as the API token."
+        },
+        "tokenEnv": {
+          "type": "string",
+          "description": "Environment variable name that contains the API token."
+        },
+        "insecureSkipVerify": {
+          "type": "boolean",
+          "description": "Disable TLS certificate verification."
+        },
+        "caCert": {
+          "type": "string",
+          "description": "Path to a private CA certificate bundle."
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "view": {
+          "type": "string",
+          "enum": ["prs", "issues", "notifications", "actions", "branches"],
+          "description": "Startup view."
+        },
+        "preview": { "$ref": "#/$defs/preview" },
+        "refetchIntervalMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Auto-refresh interval for the active view. 0 disables background refresh."
+        },
+        "prsLimit": { "$ref": "#/$defs/nonNegativeInteger" },
+        "issuesLimit": { "$ref": "#/$defs/nonNegativeInteger" },
+        "notificationsLimit": { "$ref": "#/$defs/nonNegativeInteger" },
+        "includeReadNotifications": {
+          "type": "boolean",
+          "description": "Include read notification threads in default notification sections."
+        },
+        "actionsLimit": { "$ref": "#/$defs/nonNegativeInteger" },
+        "branchesLimit": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "open": {
+          "type": "boolean",
+          "description": "Initial preview-pane state."
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Preview pane width in columns. 0 means automatic."
+        }
+      }
+    },
+    "localRepo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["path"]
+    },
+    "pager": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "type": "string",
+          "description": "Command that receives PR diff bytes on stdin."
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remote": { "type": "string" },
+        "prBranchTemplate": { "type": "string" },
+        "issueBranchTemplate": { "type": "string" }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "colors": { "$ref": "#/$defs/themeColors" }
+      }
+    },
+    "themeColors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": { "$ref": "#/$defs/themeTextColors" },
+        "background": { "$ref": "#/$defs/themeBackgroundColors" },
+        "border": { "$ref": "#/$defs/themeBorderColors" }
+      }
+    },
+    "themeTextColors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "$ref": "#/$defs/colorString" },
+        "secondary": { "$ref": "#/$defs/colorString" },
+        "inverted": { "$ref": "#/$defs/colorString" },
+        "faint": { "$ref": "#/$defs/colorString" },
+        "warning": { "$ref": "#/$defs/colorString" },
+        "success": { "$ref": "#/$defs/colorString" },
+        "actor": { "$ref": "#/$defs/colorString" }
+      }
+    },
+    "themeBackgroundColors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selected": { "$ref": "#/$defs/colorString" }
+      }
+    },
+    "themeBorderColors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "$ref": "#/$defs/colorString" },
+        "secondary": { "$ref": "#/$defs/colorString" },
+        "faint": { "$ref": "#/$defs/colorString" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Tab title."
+        },
+        "repo": {
+          "$ref": "#/$defs/repoName",
+          "description": "Optional owner/name repo scope for this section."
+        },
+        "filter": { "$ref": "#/$defs/filter" },
+        "limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rows to fetch per page. 0 falls back to the per-view default."
+        }
+      }
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["open", "closed", "all"],
+          "description": "Issue or pull-request state."
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "milestone": { "type": "string" },
+        "createdBy": { "$ref": "#/$defs/actorFilter" },
+        "assignedBy": { "$ref": "#/$defs/actorFilter" },
+        "mentioned": { "$ref": "#/$defs/actorFilter" },
+        "reviewRequested": { "$ref": "#/$defs/actorFilter" },
+        "since": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sort": { "type": "string" },
+        "status": { "type": "string" },
+        "branch": { "type": "string" },
+        "event": { "type": "string" },
+        "headSha": { "type": "string" },
+        "actor": { "type": "string" }
+      }
+    },
+    "keybindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "universal": { "$ref": "#/$defs/keybindingList" },
+        "prs": { "$ref": "#/$defs/keybindingList" },
+        "issues": { "$ref": "#/$defs/keybindingList" },
+        "notifications": { "$ref": "#/$defs/keybindingList" },
+        "actions": { "$ref": "#/$defs/keybindingList" },
+        "branches": { "$ref": "#/$defs/keybindingList" }
+      }
+    },
+    "keybindingList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/keybinding" }
+    },
+    "keybinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "builtin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["key", "builtin"],
+          "not": { "required": ["command"] }
+        },
+        {
+          "required": ["key", "command"],
+          "not": { "required": ["builtin"] }
+        }
+      ]
+    },
+    "repoName": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$"
+    },
+    "actorFilter": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Use @me for cross-repo sections. Plain logins require a repo-scoped section."
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "colorString": {
+      "type": "string",
+      "description": "Terminal color name/index or hex color."
+    }
+  }
+}

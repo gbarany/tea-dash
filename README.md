@@ -130,6 +130,8 @@ sections. A fuller copyable example lives at
 [`examples/tea-dash.yml`](examples/tea-dash.yml).
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/gbarany/tea-dash/main/schema.json
+
 instance:
   login: ""          # tea login profile to use (empty = your default tea login)
   # url:   ""        # override the instance URL (else taken from the tea login)
@@ -312,6 +314,10 @@ keybindings:
     - key: d
       builtin: delete
 ```
+
+tea-dash publishes a JSON Schema at
+[`schema.json`](schema.json). Add the `yaml-language-server` comment above to
+your config file to get editor validation and autocomplete in YAML-aware editors.
 
 `filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
 `assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),
