@@ -138,6 +138,7 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		user = client.Me()
 	}
 	view := context.PullsView
+	previewOpen := true
 	if cfg != nil {
 		switch cfg.Defaults.View {
 		case "issues":
@@ -149,13 +150,14 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		case "branches":
 			view = context.BranchesView
 		}
+		previewOpen = cfg.Defaults.Preview.PreviewOpen()
 	}
 	ctx := &context.ProgramContext{
 		Config:         cfg,
 		Client:         client,
 		User:           user,
 		View:           view,
-		PreviewOpen:    true,
+		PreviewOpen:    previewOpen,
 		Styles:         context.StylesForConfig(cfg),
 		CurrentRepo:    opts.CurrentRepo,
 		SmartFiltering: opts.SmartFiltering,
@@ -2134,10 +2136,10 @@ func (m *Model) syncProgramContext() {
 	m.sidebar.UpdateProgramContext(m.ctx)
 }
 
-// syncMainContentDimensions splits the content area between the section table and
-// the preview pane. When the preview is open the screen is divided in two (the
-// preview capped at 80 columns, with a 2-column gutter between the panes); when
-// it is closed the table gets the full width and the preview collapses to zero.
+// syncMainContentDimensions splits the content area between the section table
+// and the preview pane. When the preview is open it uses defaults.preview.width
+// when configured, otherwise the previous automatic half-width layout capped at
+// 80 columns. When closed, the table gets the full width.
 func (m *Model) syncMainContentDimensions() {
 	h := m.ctx.ScreenHeight - 7
 	if h < 3 {
@@ -2146,13 +2148,7 @@ func (m *Model) syncMainContentDimensions() {
 	m.ctx.MainContentHeight = h
 
 	if m.ctx.PreviewOpen {
-		pw := (m.ctx.ScreenWidth - 4) / 2
-		if pw > 80 {
-			pw = 80
-		}
-		if pw < 0 {
-			pw = 0
-		}
+		pw := m.configuredPreviewWidth()
 		m.ctx.PreviewWidth = pw
 		mw := m.ctx.ScreenWidth - 4 - pw - 2
 		if mw < 0 {
@@ -2165,6 +2161,40 @@ func (m *Model) syncMainContentDimensions() {
 	m.ctx.PreviewWidth = 0
 	m.ctx.PreviewHeight = 0
 	m.ctx.MainContentWidth = m.ctx.ScreenWidth - 4
+}
+
+func (m *Model) configuredPreviewWidth() int {
+	available := m.ctx.ScreenWidth - 4
+	if available < 0 {
+		available = 0
+	}
+	if available == 0 {
+		return 0
+	}
+
+	configured := 0
+	if m.ctx.Config != nil {
+		configured = m.ctx.Config.Defaults.Preview.PreviewWidth()
+	}
+	pw := available / 2
+	if configured > 0 {
+		pw = configured
+	}
+
+	maxPreview := available - 2 // reserve the gutter; the table may shrink to zero.
+	if maxPreview < 0 {
+		maxPreview = 0
+	}
+	if pw > maxPreview {
+		pw = maxPreview
+	}
+	if configured == 0 && pw > 80 {
+		pw = 80
+	}
+	if pw < 0 {
+		pw = 0
+	}
+	return pw
 }
 
 func (m Model) statusLine() string {

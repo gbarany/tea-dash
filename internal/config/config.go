@@ -69,13 +69,39 @@ func (c *Config) SmartFilteringEnabled() bool {
 // cap used when a section omits its own Limit. Precedence: section Limit ->
 // per-view default -> 50.
 type Defaults struct {
-	View                   string `yaml:"view"` // "prs" | "issues" | "notifications" | "actions" | "branches"
-	RefetchIntervalMinutes int    `yaml:"refetchIntervalMinutes"`
-	PRsLimit               int    `yaml:"prsLimit"`
-	IssuesLimit            int    `yaml:"issuesLimit"`
-	NotificationsLimit     int    `yaml:"notificationsLimit"`
-	ActionsLimit           int    `yaml:"actionsLimit"`
-	BranchesLimit          int    `yaml:"branchesLimit"`
+	View                   string        `yaml:"view"` // "prs" | "issues" | "notifications" | "actions" | "branches"
+	Preview                PreviewConfig `yaml:"preview"`
+	RefetchIntervalMinutes int           `yaml:"refetchIntervalMinutes"`
+	PRsLimit               int           `yaml:"prsLimit"`
+	IssuesLimit            int           `yaml:"issuesLimit"`
+	NotificationsLimit     int           `yaml:"notificationsLimit"`
+	ActionsLimit           int           `yaml:"actionsLimit"`
+	BranchesLimit          int           `yaml:"branchesLimit"`
+}
+
+// PreviewConfig controls the side preview pane. Open is a pointer so an omitted
+// value can preserve tea-dash's default-open behavior while open: false remains
+// expressible.
+type PreviewConfig struct {
+	Open  *bool `yaml:"open"`
+	Width int   `yaml:"width"`
+}
+
+// PreviewOpen returns the configured initial preview state. Omitted open
+// defaults to true.
+func (p PreviewConfig) PreviewOpen() bool {
+	if p.Open == nil {
+		return true
+	}
+	return *p.Open
+}
+
+// PreviewWidth returns the configured preview width. 0 means automatic width.
+func (p PreviewConfig) PreviewWidth() int {
+	if p.Width < 0 {
+		return 0
+	}
+	return p.Width
 }
 
 // RefetchInterval returns the configured automatic refetch interval. A zero or
