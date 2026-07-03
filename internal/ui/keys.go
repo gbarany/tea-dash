@@ -8,13 +8,15 @@ import (
 	"github.com/gbarany/tea-dash/internal/config"
 )
 
-// keyMap defines the app-level key bindings. Row navigation (↑/↓, j/k, page
-// keys) is handled by the underlying table widget.
+// keyMap defines the app-level key bindings. Row navigation is also forwarded
+// to the underlying table widget so configurable builtins reuse table behavior.
 type keyMap struct {
 	Refresh       key.Binding
 	RefreshAll    key.Binding
 	Open          key.Binding
 	Quit          key.Binding
+	Up            key.Binding
+	Down          key.Binding
 	NextSection   key.Binding
 	PrevSection   key.Binding
 	SwitchView    key.Binding
@@ -70,6 +72,14 @@ func defaultKeyMap() keyMap {
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
 			key.WithHelp("q", "quit"),
+		),
+		Up: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "move up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "move down"),
 		),
 		NextSection: key.NewBinding(
 			key.WithKeys("l", "right"),
@@ -244,6 +254,10 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Open = binding(keyName, "open in browser")
 	case "quit":
 		k.Quit = binding(keyName, "quit")
+	case "up":
+		k.Up = binding(keyName, "move up")
+	case "down":
+		k.Down = binding(keyName, "move down")
 	case "nextsection":
 		k.NextSection = binding(keyName, "next section")
 	case "prevsection", "previoussection":

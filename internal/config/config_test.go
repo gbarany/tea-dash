@@ -409,6 +409,8 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "R", Builtin: "refreshAll"},
 		{Key: "ctrl+l", Builtin: "redraw"},
 		{Key: "t", Builtin: "toggleSmartFiltering"},
+		{Key: "J", Builtin: "down"},
+		{Key: "K", Builtin: "up"},
 		{Key: "g", Builtin: "firstLine"},
 		{Key: "G", Builtin: "lastLine"},
 		{Key: "z", Command: "lazygit"},
