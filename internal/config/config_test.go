@@ -302,6 +302,10 @@ keybindings:
       command: git -C {{.RepoPath}} status
     - key: P
       builtin: push
+    - key: F
+      builtin: forcePush
+    - key: f
+      builtin: fastForward
     - key: d
       builtin: delete
 `
@@ -331,10 +335,12 @@ keybindings:
 		c.Keybindings.Notifications[2].Builtin != "unpin" ||
 		c.Keybindings.Notifications[3].Builtin != "markAllRead" ||
 		c.Keybindings.Actions[0].Key != "a" ||
-		len(c.Keybindings.Branches) != 3 ||
+		len(c.Keybindings.Branches) != 5 ||
 		c.Keybindings.Branches[0].Command == "" ||
 		c.Keybindings.Branches[1].Builtin != "push" ||
-		c.Keybindings.Branches[2].Builtin != "delete" {
+		c.Keybindings.Branches[2].Builtin != "forcePush" ||
+		c.Keybindings.Branches[3].Builtin != "fastForward" ||
+		c.Keybindings.Branches[4].Builtin != "delete" {
 		t.Fatalf("keybindings = %+v", c.Keybindings)
 	}
 }
@@ -442,6 +448,8 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "b", Builtin: "toggleBookmark"},
 	}, Branches: []Keybinding{
 		{Key: "P", Builtin: "push"},
+		{Key: "F", Builtin: "forcePush"},
+		{Key: "f", Builtin: "fastForward"},
 		{Key: "d", Builtin: "delete"},
 	}}}
 	if err := ok.Validate(); err != nil {
