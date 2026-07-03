@@ -535,7 +535,7 @@ func (d *demoBuilder) kettlePulls() {
 	})
 }
 
-const kettleIssue11Body = `The kettle overshoots the target temperature by about 2°C before the PID
+const kettleIssue12Body = `The kettle overshoots the target temperature by about 2°C before the PID
 loop settles, most noticeable on cold starts.
 
 Repro:
@@ -551,14 +551,14 @@ Kp: 2.0, Ki: 0.4, Kd: 0.1
 Might just need a lower ` + "`Kd`" + ` or an integral clamp — see #1 for a first attempt
 at the clamp.`
 
-const kettleIssue12Body = `Several vessels ship to US customers who expect °F. Add a per-user display
+const kettleIssue13Body = `Several vessels ship to US customers who expect °F. Add a per-user display
 preference and convert server-side values at render time.
 
 - [ ] Add ` + "`temperatureUnit`" + ` to user prefs (` + "`celsius`" + ` | ` + "`fahrenheit`" + `)
 - [ ] Convert on the dashboard, not in the API (API stays °C)
 - [ ] Round to nearest whole degree in the UI`
 
-const kettleIssue13Body = `` + "`internal/brew/steepcalc`" + ` has no tests yet (extracted in #5). Good first
+const kettleIssue14Body = `` + "`internal/brew/steepcalc`" + ` has no tests yet (extracted in #5). Good first
 task if you want to get familiar with the brew package.
 
 Cases worth covering:
@@ -566,7 +566,7 @@ Cases worth covering:
 - ` + "`Strong`" + ` strength multiplier
 - Water temp below the tea's ideal temp`
 
-const kettleIssue14Body = `Brew history entries show the *server's* timezone (UTC) instead of the
+const kettleIssue15Body = `Brew history entries show the *server's* timezone (UTC) instead of the
 viewer's local time, which is confusing for anyone outside UTC.
 
 ` + "```json" + `
@@ -576,14 +576,14 @@ viewer's local time, which is confusing for anyone outside UTC.
 The dashboard should convert ` + "`at`" + ` client-side before rendering, the same way
 steep's timer already does.`
 
-const kettleIssue15Body = `Requesting an outbound webhook when a brew finishes, so people can hook up
+const kettleIssue16Body = `Requesting an outbound webhook when a brew finishes, so people can hook up
 notifications (Slack, etc.) without polling the API.
 
 - [ ] ` + "`POST /v1/webhooks`" + ` to register a URL + secret
 - [ ] Sign the payload the same way GitHub does (HMAC-SHA256 header)
 - [ ] Retry with backoff on non-2xx, give up after 5 attempts`
 
-const kettleIssue16Body = `Getting the descale reminder push notification twice within a minute of
+const kettleIssue17Body = `Getting the descale reminder push notification twice within a minute of
 each other. Looks like both the scheduled job and the on-brew-complete
 check are firing for the same threshold crossing.
 
@@ -592,7 +592,7 @@ Steps to reproduce:
 2. Finish a brew that crosses it
 3. Two notifications arrive almost immediately`
 
-const kettleIssue17Body = `A firmware payload with a truncated CRC crashed the whole process instead
+const kettleIssue18Body = `A firmware payload with a truncated CRC crashed the whole process instead
 of just rejecting that message. Saw this twice in staging today.
 
 ` + "```" + `
@@ -605,7 +605,7 @@ github.com/teahouse/kettle/internal/firmware.parseFrame(...)
 
 This needs a bounds check before we touch production fleets — flagging urgent.`
 
-const kettleIssue18Body = `The ` + "`Kp`/`Ki`/`Kd`" + ` constants in ` + "`internal/kettle/pid.go`" + ` have no comment
+const kettleIssue19Body = `The ` + "`Kp`/`Ki`/`Kd`" + ` constants in ` + "`internal/kettle/pid.go`" + ` have no comment
 explaining how they were chosen. Would help future tuning work (see #11) to
 write down:
 
@@ -618,43 +618,43 @@ func (d *demoBuilder) kettleIssues() {
 	me := d.s.Me()
 
 	d.s.AddIssue(&Issue{Number: 12, RepoFullName: repo,
-		Title: "bug: kettle whistles past target temp by 2°C", Body: kettleIssue11Body,
+		Title: "bug: kettle whistles past target temp by 2°C", Body: kettleIssue12Body,
 		State: "open", Author: d.mei, Labels: []*Label{d.kettleBug}, Milestone: d.kettleV1,
 		Created: d.daysAgo(3), Updated: d.hoursAgo(12), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/12",
 	})
 	d.s.AddIssue(&Issue{Number: 13, RepoFullName: repo,
-		Title: "feature: support Fahrenheit display toggle", Body: kettleIssue12Body,
+		Title: "feature: support Fahrenheit display toggle", Body: kettleIssue13Body,
 		State: "open", Author: d.sofia, Labels: []*Label{d.kettleFeature}, Milestone: d.kettleV11,
 		Created: d.daysAgo(4), Updated: d.hoursAgo(20), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/13",
 	})
 	d.s.AddIssue(&Issue{Number: 14, RepoFullName: repo,
-		Title: "good-first-issue: add unit tests for steep-time calculator", Body: kettleIssue13Body,
+		Title: "good-first-issue: add unit tests for steep-time calculator", Body: kettleIssue14Body,
 		State: "open", Author: d.arjun, Labels: []*Label{d.kettleGoodFirst},
 		Created: d.daysAgo(2), Updated: d.daysAgo(2), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/14",
 	})
 	d.s.AddIssue(&Issue{Number: 15, RepoFullName: repo,
-		Title: "bug: brew log timestamps use server tz not user tz", Body: kettleIssue14Body,
+		Title: "bug: brew log timestamps use server tz not user tz", Body: kettleIssue15Body,
 		State: "open", Author: d.felix, Assignees: []*User{me},
 		Labels: []*Label{d.kettleBug, d.kettleUrgent}, Milestone: d.kettleV1,
 		Created: d.hoursAgo(6), Updated: d.hoursAgo(4), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/15",
 	})
 	d.s.AddIssue(&Issue{Number: 16, RepoFullName: repo,
-		Title: "feature: webhook on brew-complete event", Body: kettleIssue15Body,
+		Title: "feature: webhook on brew-complete event", Body: kettleIssue16Body,
 		State: "open", Author: d.mei, Labels: []*Label{d.kettleFeature},
 		Created: d.daysAgo(3), Updated: d.daysAgo(3), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/16",
 	})
 	d.s.AddIssue(&Issue{Number: 17, RepoFullName: repo,
-		Title: "bug: descale reminder fires twice", Body: kettleIssue16Body,
+		Title: "bug: descale reminder fires twice", Body: kettleIssue17Body,
 		State: "open", Author: d.sofia, Assignees: []*User{me}, Labels: []*Label{d.kettleBug},
 		Created: d.hoursAgo(11), Updated: d.hoursAgo(9), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/17",
 	})
 	d.s.AddIssue(&Issue{Number: 18, RepoFullName: repo,
-		Title: "urgent: kettle-api panics on malformed firmware payload", Body: kettleIssue17Body,
+		Title: "urgent: kettle-api panics on malformed firmware payload", Body: kettleIssue18Body,
 		State: "open", Author: d.arjun, Labels: []*Label{d.kettleBug, d.kettleUrgent}, Milestone: d.kettleV11,
 		Created: d.hoursAgo(3), Updated: d.hoursAgo(2), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/18",
 	})
 	d.s.AddIssue(&Issue{Number: 19, RepoFullName: repo,
-		Title: "chore: document PID tuning constants", Body: kettleIssue18Body,
+		Title: "chore: document PID tuning constants", Body: kettleIssue19Body,
 		State: "closed", Author: d.felix, Labels: []*Label{d.kettleGoodFirst},
 		Created: d.daysAgo(7), Updated: d.daysAgo(6), HTMLURL: "https://git.teahouse.dev/teahouse/kettle/issues/19",
 	})

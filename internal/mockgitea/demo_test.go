@@ -49,3 +49,44 @@ func TestDemoDataDeterministic(t *testing.T) {
 		t.Fatal("DemoData must be deterministic for a fixed now")
 	}
 }
+
+// TestDemoDataNoSharedIssueNumberBetweenPullAndIssue guards the invariant
+// AddComment's doc comment calls out: Gitea numbers pulls and issues out of
+// one shared per-repo index space, so a given (repo, number) must match at
+// most one row across all pulls and issues in that repo. If a future edit to
+// DemoData accidentally reuses a number across a pull and an issue in the
+// same repo, AddComment would (harmlessly, but wrongly) bump both — this
+// pins the fixture invariant rather than just AddComment's behavior.
+func TestDemoDataNoSharedIssueNumberBetweenPullAndIssue(t *testing.T) {
+	s := DemoData(time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC))
+	for _, repo := range []string{"teahouse/kettle", "teahouse/steep", "teahouse/infra"} {
+		seen := map[int64]string{}
+		for _, p := range s.Pulls(repo) {
+			if prev, ok := seen[p.Number]; ok {
+				t.Fatalf("%s: number %d reused (%s, then pull %q)", repo, p.Number, prev, p.Title)
+			}
+			seen[p.Number] = "pull " + p.Title
+		}
+		for _, i := range s.Issues(repo) {
+			if prev, ok := seen[i.Number]; ok {
+				t.Fatalf("%s: number %d reused (%s, then issue %q)", repo, i.Number, prev, i.Title)
+			}
+			seen[i.Number] = "issue " + i.Title
+		}
+	}
+}
+
+// TestDemoDataNoPinnedAndUnreadNotification guards the constraint noted on
+// demoBuilder.notifications: Pinned and Unread are independent booleans on
+// the store's Notification type, but MarkAllNotificationsRead sweeps every
+// row's Unread unconditionally, which only matches real single-NotifyStatus
+// -enum Gitea semantics (see notificationEffectiveStatus) when no row is
+// both pinned and unread.
+func TestDemoDataNoPinnedAndUnreadNotification(t *testing.T) {
+	s := DemoData(time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC))
+	for _, n := range s.Notifications() {
+		if n.Pinned && n.Unread {
+			t.Fatalf("notification %d (%q) is both pinned and unread", n.ID, n.Title)
+		}
+	}
+}
