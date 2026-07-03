@@ -458,7 +458,11 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		if err != nil {
 			return "", err
 		}
-		if _, err := r.client.SubmitPullReview(owner, repo, index, data.PullReviewOptions{Event: event}); err != nil {
+		body := strings.TrimSpace(intent.Prompt.Body)
+		if event != data.PullReviewEventApprove && body == "" {
+			return "", fmt.Errorf("review body cannot be empty for %s", event)
+		}
+		if _, err := r.client.SubmitPullReview(owner, repo, index, data.PullReviewOptions{Event: event, Body: body}); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Submitted review for %s#%d.", intent.Target.Repo, index), nil

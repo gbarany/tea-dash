@@ -76,6 +76,7 @@ type Prompt struct {
 	Mode  PromptMode
 	Value string
 	Label string
+	Body  string
 }
 
 // Intent is the value passed through the app-level dispatcher seam.

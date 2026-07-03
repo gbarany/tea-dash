@@ -4,6 +4,7 @@ package ui
 import (
 	stdctx "context"
 	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -1749,9 +1750,19 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	if !result.Submitted {
 		return cmd
 	}
+	if m.pendingAction.Kind == actions.KindReview && m.pendingAction.Prompt.Value == "" && reviewPromptNeedsBody(result.Value) {
+		m.pendingAction.Prompt.Value = result.Value
+		m.pendingAction.Prompt.Label = result.Label
+		m.actionPrompt = m.actionPrompt.Focus(reviewBodyPromptConfig(m.pendingAction.Target, result.Label))
+		return cmd
+	}
 	intent := m.pendingAction
-	intent.Prompt.Value = result.Value
-	intent.Prompt.Label = result.Label
+	if intent.Kind == actions.KindReview && intent.Prompt.Value != "" && reviewPromptNeedsBody(intent.Prompt.Value) {
+		intent.Prompt.Body = result.Value
+	} else {
+		intent.Prompt.Value = result.Value
+		intent.Prompt.Label = result.Label
+	}
 	m.pendingAction = actions.Intent{}
 	if m.actionDispatcher == nil {
 		m.notice = "Action not wired yet."
@@ -1765,6 +1776,27 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 		return cmd
 	}
 	return tea.Batch(cmd, dispatchCmd)
+}
+
+func reviewPromptNeedsBody(value string) bool {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "approve", "approved":
+		return false
+	default:
+		return true
+	}
+}
+
+func reviewBodyPromptConfig(target actions.Target, label string) actionprompt.Config {
+	if label == "" {
+		label = "Review"
+	}
+	return actionprompt.Config{
+		Mode:        actionprompt.ModeText,
+		Title:       fmt.Sprintf("Review message #%d", target.Number),
+		Message:     fmt.Sprintf("%s - %s", target.Repo, target.Title),
+		Placeholder: fmt.Sprintf("%s message", label),
+	}
 }
 
 func (m Model) quitOrConfirm() (Model, tea.Cmd) {
