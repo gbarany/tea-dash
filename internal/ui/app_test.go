@@ -698,6 +698,31 @@ func TestSwitchViewCyclesToActionsBranchesAndBackToPulls(t *testing.T) {
 	}
 }
 
+func TestScopedViewSwitchBuiltinsJumpBetweenPullsAndIssues(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			PRs:    []config.Keybinding{{Key: "i", Builtin: "viewIssues"}},
+			Issues: []config.Keybinding{{Key: "p", Builtin: "viewPrs"}},
+		},
+	}
+	m := New(cfg, nil)
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	m = next.(Model)
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("viewIssues builtin switched to %v, want IssuesView", m.ctx.View)
+	}
+	if cmd == nil {
+		t.Fatal("viewIssues should fetch issues on first visit")
+	}
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	m = next.(Model)
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("viewPrs builtin switched to %v, want PullsView", m.ctx.View)
+	}
+}
+
 func TestSectionSwitchWithTwoSections(t *testing.T) {
 	cfg := &config.Config{
 		PRSections: []config.SectionConfig{

@@ -427,12 +427,13 @@ var prBuiltins = builtinSet(
 	"comment", "assign", "unassign", "addLabel", "removeLabel", "merge",
 	"update", "updateBranch", "ready", "markReady", "draft", "markDraft",
 	"watch", "watchChecks", "checks", "close", "reopen", "diff", "checkout", "approve", "review",
-	"summaryViewMore", "expand",
+	"viewIssues", "summaryViewMore", "expand",
 )
 
 var issueBuiltins = builtinSet(
 	"comment", "assign", "unassign", "addLabel", "removeLabel", "close", "reopen",
 	"milestone", "setMilestone", "checkout", "subscribe", "unsubscribe",
+	"milestone", "setMilestone", "checkout", "subscribe", "unsubscribe", "viewPrs",
 )
 
 var notificationBuiltins = builtinSet(

@@ -228,6 +228,8 @@ keybindings:
     - key: H
       builtin: help
   prs:
+    - key: I
+      builtin: viewIssues
     - key: O
       builtin: checkout
     - key: a
@@ -248,6 +250,8 @@ keybindings:
       name: lazygit
       command: cd {{.RepoPath}} && lazygit
   issues:
+    - key: P
+      builtin: viewPrs
     - key: C
       builtin: checkout
     - key: a
@@ -309,6 +313,9 @@ The universal `redraw` builtin asks Bubble Tea to clear and repaint the screen,
 which is useful if a terminal leaves visual artifacts.
 The universal `firstLine` and `lastLine` builtins jump to the first and last
 currently loaded row, matching gh-dash's `g`/`G` navigation behavior.
+Scoped `viewIssues` and `viewPrs` built-ins jump directly between the PRs and
+Issues views, while the universal `switchView` cycles through every top-level
+view.
 
 > **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
 > `reviewRequested`) support the sentinel `"@me"` on cross-repo sections.

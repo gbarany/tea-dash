@@ -379,7 +379,9 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "W", Builtin: "ready"},
 		{Key: "D", Builtin: "draft"},
 		{Key: "w", Builtin: "watchChecks"},
+		{Key: "i", Builtin: "viewIssues"},
 	}, Issues: []Keybinding{
+		{Key: "p", Builtin: "viewPrs"},
 		{Key: "A", Builtin: "unassign"},
 		{Key: "U", Builtin: "removeLabel"},
 	}}}
