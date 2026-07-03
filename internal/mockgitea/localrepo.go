@@ -17,7 +17,8 @@ import (
 // which only fires for a branch that has an upstream configured at all — has
 // something real to report: feature/steamer ends up genuinely 1 commit
 // ahead of main ("ahead 1"), fix/slow-pour genuinely level with it
-// ("synced"), and main itself is "current". Without this, every branch would
+// ("synced"), and main itself renders "current · local" (Current, but with
+// no upstream of its own). Without the upstream trick, every branch would
 // read "local" (Branch.Status()'s ahead/behind branches never trigger).
 // Setting up a real second remote (e.g. a bare clone) would show the same
 // variety but needs careful two-repo sequencing for no functional gain here,
@@ -32,15 +33,16 @@ func SeedLocalRepo(parent string) (string, error) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		// Pin the commit identity (so this works on a machine with no git
-		// user.name/user.email configured) and point GIT_CONFIG_GLOBAL at
-		// the null device to isolate the invoking user's global git config
-		// — their personal hooks/aliases/signing setup (commit.gpgsign and
-		// friends) must not be able to interfere with, slow down, or block
-		// seeding a throwaway demo repo. GIT_CONFIG_GLOBAL over redirecting
-		// HOME: it isolates exactly the one file that matters here without
-		// also relocating unrelated HOME-rooted lookups.
+		// user.name/user.email configured) and isolate both the global and
+		// system git config — the invoking user's personal hooks/aliases/
+		// signing setup (commit.gpgsign and friends) or a machine-wide
+		// system gitconfig must not be able to interfere with, slow down, or
+		// block seeding a throwaway demo repo. GIT_CONFIG_GLOBAL over
+		// redirecting HOME: it isolates exactly the one file that matters
+		// here without also relocating unrelated HOME-rooted lookups.
 		cmd.Env = append(os.Environ(),
 			"GIT_CONFIG_GLOBAL="+os.DevNull,
+			"GIT_CONFIG_NOSYSTEM=1",
 			"GIT_AUTHOR_NAME=demo", "GIT_AUTHOR_EMAIL=demo@teahouse.local",
 			"GIT_COMMITTER_NAME=demo", "GIT_COMMITTER_EMAIL=demo@teahouse.local",
 		)
