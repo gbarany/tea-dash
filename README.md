@@ -85,6 +85,7 @@ tea-dash --help
 | `t`             | toggle current-repo smart filtering (when launched from a matching git checkout) |
 | `p`             | show / hide preview panel |
 | `e`             | expand / fold preview body |
+| `[` / `]`       | previous / next preview tab |
 | `ctrl+u` / `ctrl+d` | scroll preview       |
 | `o` / `enter`   | open in browser         |
 | `y` / `Y`       | copy row number / URL   |
@@ -250,6 +251,10 @@ keybindings:
       builtin: ready
     - key: w
       builtin: watchChecks
+    - key: "["
+      builtin: prevSidebarTab
+    - key: "]"
+      builtin: nextSidebarTab
     - key: g
       name: lazygit
       command: cd {{.RepoPath}} && lazygit
@@ -325,6 +330,9 @@ The universal `up` and `down` builtins move the selected row and can be rebound
 independently of the default `j`/`k` and arrow-key navigation.
 The universal `firstLine` and `lastLine` builtins jump to the first and last
 currently loaded row, matching gh-dash's `g`/`G` navigation behavior.
+PR-scoped `prevSidebarTab` and `nextSidebarTab` switch the preview pane through
+its Overview, Checks, Reviews, and Comments tabs, matching gh-dash's `[`/`]`
+preview navigation.
 Scoped `viewIssues` and `viewPrs` built-ins jump directly between the PRs and
 Issues views, while the universal `switchView` cycles through every top-level
 view.

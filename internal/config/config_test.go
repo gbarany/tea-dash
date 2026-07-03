@@ -431,6 +431,8 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "W", Builtin: "ready"},
 		{Key: "D", Builtin: "draft"},
 		{Key: "w", Builtin: "watchChecks"},
+		{Key: "[", Builtin: "prevSidebarTab"},
+		{Key: "]", Builtin: "nextSidebarTab"},
 		{Key: "i", Builtin: "viewIssues"},
 	}, Issues: []Keybinding{
 		{Key: "p", Builtin: "viewPrs"},
