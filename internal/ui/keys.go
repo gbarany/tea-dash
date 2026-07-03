@@ -51,6 +51,7 @@ type keyMap struct {
 	DeleteBranch      key.Binding
 	RerunRun          key.Binding
 	CancelRun         key.Binding
+	ViewLogs          key.Binding
 	CopyNumber        key.Binding
 	CopyURL           key.Binding
 	Help              key.Binding
@@ -223,6 +224,10 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("!"),
 			key.WithHelp("!", "cancel run"),
 		),
+		ViewLogs: key.NewBinding(
+			key.WithKeys("L"),
+			key.WithHelp("L", "view logs"),
+		),
 		CopyNumber: key.NewBinding(
 			key.WithKeys("y"),
 			key.WithHelp("y", "copy number"),
@@ -356,6 +361,8 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.RerunRun = binding(keyName, "rerun")
 	case "cancel", "cancelrun":
 		k.CancelRun = binding(keyName, "cancel run")
+	case "logs", "viewlogs":
+		k.ViewLogs = binding(keyName, "view logs")
 	case "copyurl":
 		k.CopyURL = binding(keyName, "copy URL")
 	case "copynumber":

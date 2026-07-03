@@ -107,7 +107,7 @@ tea-dash --help
 | `P`             | push branch in Branches view   |
 | `f` / `F`       | fast-forward / force-push branch in Branches view |
 | `d` / `backspace` | delete branch in Branches view |
-| `R` / `!`       | rerun / cancel Actions run |
+| `L` / `R` / `!` | view logs / rerun / cancel Actions run |
 | `r` / `R`       | refresh section / all sections (`ctrl+r` refreshes all in Actions view) |
 | `?`             | show / hide full help   |
 | `q` / `ctrl+c`  | quit                    |
@@ -288,6 +288,8 @@ keybindings:
     - key: D
       builtin: markAllRead
   actions:
+    - key: L
+      builtin: viewLogs
     - key: a
       command: echo run {{.RunID}} in {{.RepoName}}
   branches:

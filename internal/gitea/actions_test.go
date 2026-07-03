@@ -211,6 +211,40 @@ func TestListActionJobsMapsWrappedResponse(t *testing.T) {
 	}
 }
 
+func TestGetActionJobLogsDownloadsPlainText(t *testing.T) {
+	const want = "log line one\nlog line two\n"
+	var called bool
+	srv := actionServer(t, func(mux *http.ServeMux) {
+		mux.HandleFunc("/api/v1/repos/acme/widgets/actions/jobs/201/logs", func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			if r.Method != http.MethodGet {
+				t.Fatalf("method = %s, want GET", r.Method)
+			}
+			if r.Header.Get("Authorization") != "token t" {
+				t.Fatalf("Authorization header = %q, want token auth", r.Header.Get("Authorization"))
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w, want)
+		})
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	got, err := c.GetActionJobLogs(context.Background(), "acme", "widgets", 201)
+	if err != nil {
+		t.Fatalf("GetActionJobLogs: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("logs = %q, want %q", string(got), want)
+	}
+	if !called {
+		t.Fatal("logs endpoint was not called")
+	}
+}
+
 func TestRerunActionRunPostsRunControlEndpoint(t *testing.T) {
 	called := false
 	srv := actionServer(t, func(mux *http.ServeMux) {

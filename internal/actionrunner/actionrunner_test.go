@@ -357,6 +357,50 @@ func TestDispatchExternalDiffRunsConfiguredPager(t *testing.T) {
 	}
 }
 
+func TestDispatchActionLogsOpensFirstJobLogInPager(t *testing.T) {
+	client := &fakeClient{logBytes: []byte("job log token\n")}
+	execProcess := &fakeExecProcess{}
+	r := New(Options{
+		Client:      client,
+		Config:      &config.Config{Pager: config.Pager{Diff: "less -R"}},
+		CWD:         "/tmp/repo",
+		ExecProcess: execProcess.Run,
+	})
+
+	got := runDispatch(t, r, actionRunIntent(uiactions.KindViewLogs))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("logs result = %+v", got)
+	}
+	if client.listJobsRunID != 101 || client.logJobID != 201 {
+		t.Fatalf("listJobsRunID=%d logJobID=%d, want run 101 job 201", client.listJobsRunID, client.logJobID)
+	}
+	if execProcess.cmd == nil {
+		t.Fatal("exec process was not called")
+	}
+	if !reflect.DeepEqual(execProcess.cmd.Args[1:], []string{"-c", "less -R"}) {
+		t.Fatalf("shell args = %#v, want shell -c less -R", execProcess.cmd.Args)
+	}
+	stdin, err := io.ReadAll(execProcess.cmd.Stdin)
+	if err != nil {
+		t.Fatalf("read pager stdin: %v", err)
+	}
+	if string(stdin) != "job log token\n" || execProcess.cmd.Dir != "/tmp/repo" {
+		t.Fatalf("exec command stdin=%q dir=%q, want logs in /tmp/repo", string(stdin), execProcess.cmd.Dir)
+	}
+	if !strings.Contains(got.Message, "Viewed logs for acme/widgets run #77 job build") {
+		t.Fatalf("message = %q, want logs confirmation", got.Message)
+	}
+}
+
+func TestDispatchActionLogsErrorsWhenRunHasNoJobs(t *testing.T) {
+	client := &fakeClient{jobs: []data.ActionJob{}}
+	got := runDispatch(t, New(Options{Client: client}), actionRunIntent(uiactions.KindViewLogs))
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "no jobs found") {
+		t.Fatalf("logs result = %+v, want no-jobs error", got)
+	}
+}
+
 func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
 	execProcess := &fakeExecProcess{}
 	r := New(Options{
@@ -612,6 +656,10 @@ type fakeClient struct {
 	markReady        int64
 	markDraft        int64
 	diff             []byte
+	jobs             []data.ActionJob
+	listJobsRunID    int64
+	logJobID         int64
+	logBytes         []byte
 	rerunRunID       int64
 	cancelRunID      int64
 	assignPull       int64
@@ -719,6 +767,19 @@ func (f *fakeClient) MarkPullDraft(_, _ string, index int64) (bool, error) {
 
 func (f *fakeClient) GetPullDiff(_, _ string, _ int64) ([]byte, error) {
 	return f.diff, f.err
+}
+
+func (f *fakeClient) ListActionJobs(_ context.Context, _, _ string, runID int64) ([]data.ActionJob, error) {
+	f.listJobsRunID = runID
+	if f.jobs != nil {
+		return f.jobs, f.err
+	}
+	return []data.ActionJob{{ID: 201, RunID: runID, Name: "build"}}, f.err
+}
+
+func (f *fakeClient) GetActionJobLogs(_ context.Context, _, _ string, jobID int64) ([]byte, error) {
+	f.logJobID = jobID
+	return f.logBytes, f.err
 }
 
 func (f *fakeClient) RerunActionRun(_ context.Context, _, _ string, runID int64) error {

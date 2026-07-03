@@ -119,6 +119,8 @@ keybindings:
     - key: D
       builtin: markAllRead
   actions:
+    - key: L
+      builtin: viewLogs
     - key: R
       builtin: rerun
   branches:

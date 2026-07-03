@@ -497,6 +497,36 @@ func (c *Client) rawGet(ctx context.Context, path string, out any) (http.Header,
 	return resp.Header, nil
 }
 
+// rawGetBytes issues an authenticated GET against {baseURL}/api/v1{path} and
+// returns the response body without JSON decoding it. It is used for endpoints
+// such as Actions job logs that serve text/plain or archive payloads.
+func (c *Client) rawGetBytes(ctx context.Context, path string, accept string) ([]byte, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1"+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "token "+c.token)
+	if accept == "" {
+		accept = "*/*"
+	}
+	req.Header.Set("Accept", accept)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, nil, fmt.Errorf("gitea GET %s: %s: %s", path, resp.Status, truncate(body, 500))
+	}
+	return body, resp.Header, nil
+}
+
 // rawPost issues an authenticated POST against {baseURL}/api/v1{path} using the
 // shared HTTP client and token. It accepts any 2xx response and ignores the
 // body, which matches control endpoints that often return 202 or 204.

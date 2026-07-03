@@ -142,6 +142,15 @@ func (c *Client) ListActionJobs(ctx context.Context, owner, repo string, runID i
 	return jobs, nil
 }
 
+// GetActionJobLogs downloads the plain-text log payload for one Actions job.
+func (c *Client) GetActionJobLogs(ctx context.Context, owner, repo string, jobID int64) ([]byte, error) {
+	body, _, err := c.rawGetBytes(ctx, actionJobLogsPath(owner, repo, jobID), "text/plain, */*")
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
 // RerunActionRun asks the server to rerun one repo-scoped Actions workflow run.
 func (c *Client) RerunActionRun(ctx context.Context, owner, repo string, runID int64) error {
 	if err := c.rawPost(ctx, actionRunControlPath(owner, repo, runID, "rerun")); err != nil {
@@ -328,6 +337,10 @@ func actionRunPath(owner, repo string, runID int64) string {
 
 func actionJobsPath(owner, repo string, runID int64) string {
 	return actionRunPath(owner, repo, runID) + "/jobs"
+}
+
+func actionJobLogsPath(owner, repo string, jobID int64) string {
+	return "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/actions/jobs/" + strconv.FormatInt(jobID, 10) + "/logs"
 }
 
 func actionRunControlPath(owner, repo string, runID int64, control string) string {

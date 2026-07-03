@@ -468,6 +468,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindRerunRun)
 		case !m.scopedBuiltinOverridden("cancel") && m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.CancelRun):
 			return m, m.startAction(actions.KindCancelRun)
+		case !m.scopedBuiltinOverridden("logs") && m.ctx.View == context.ActionsView && key.Matches(msg, m.keys.ViewLogs):
+			return m, m.startAction(actions.KindViewLogs)
 		case !m.scopedBuiltinOverridden("comment") && key.Matches(msg, m.keys.Comment):
 			return m, m.startAction(actions.KindComment)
 		case !m.scopedBuiltinOverridden("assign") && key.Matches(msg, m.keys.Assign):
@@ -726,6 +728,7 @@ func (m Model) actionButtons() []actionButton {
 		buttons = append(buttons, actionButton{Label: "All read", Builtin: "markAllRead"})
 	case context.ActionsView:
 		buttons = append(buttons,
+			actionButton{Label: "Logs", Builtin: "viewLogs"},
 			actionButton{Label: "Rerun", Builtin: "rerun"},
 			actionButton{Label: "Cancel", Builtin: "cancel"},
 		)
@@ -1706,6 +1709,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindRerunRun), true
 	case "cancel", "cancelrun":
 		return m, m.startAction(actions.KindCancelRun), true
+	case "logs", "viewlogs":
+		return m, m.startAction(actions.KindViewLogs), true
 	default:
 		m.notice = fmt.Sprintf("Unknown builtin keybinding %q.", binding.Builtin)
 		return m, nil, true
@@ -1852,7 +1857,7 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 		if target.RowKind != actions.RowKindIssue {
 			return fmt.Errorf("%s is only available for issues.", actionLabel(kind))
 		}
-	case actions.KindRerunRun, actions.KindCancelRun:
+	case actions.KindRerunRun, actions.KindCancelRun, actions.KindViewLogs:
 		if target.RowKind != actions.RowKindActionRun {
 			return fmt.Errorf("%s is only available for action runs.", actionLabel(kind))
 		}
@@ -1868,6 +1873,7 @@ func validateActionTarget(kind actions.Kind, target actions.Target) error {
 
 func actionDispatchesDirectly(kind actions.Kind) bool {
 	return kind == actions.KindRerunRun ||
+		kind == actions.KindViewLogs ||
 		kind == actions.KindSubscribe ||
 		kind == actions.KindUnsubscribe ||
 		kind == actions.KindExternalDiff
@@ -2010,6 +2016,8 @@ func actionLabel(kind actions.Kind) string {
 		return "Rerun"
 	case actions.KindCancelRun:
 		return "Cancel run"
+	case actions.KindViewLogs:
+		return "View logs"
 	case actions.KindCustomCommand:
 		return "Custom command"
 	default:
