@@ -578,6 +578,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncSidebar()
 			}
 			return m, nil
+		case !m.scopedBuiltinOverridden("prevSidebarTab") && key.Matches(msg, m.keys.PrevSidebarTab) && m.ctx.PreviewOpen:
+			m.sidebar.PrevTab()
+			return m, nil
+		case !m.scopedBuiltinOverridden("nextSidebarTab") && key.Matches(msg, m.keys.NextSidebarTab) && m.ctx.PreviewOpen:
+			m.sidebar.NextTab()
+			return m, nil
 		case (!m.scopedBuiltinOverridden("scrollUp") && key.Matches(msg, m.keys.ScrollUp) ||
 			!m.scopedBuiltinOverridden("scrollDown") && key.Matches(msg, m.keys.ScrollDown)) && m.ctx.PreviewOpen:
 			var cmd tea.Cmd
@@ -639,13 +645,13 @@ func (m Model) View() tea.View {
 
 func (m Model) helpLine() string {
 	if m.showHelp {
-		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
+		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
 		if m.ctx.CurrentRepo != "" {
 			text += " · t current repo"
 		}
 		switch m.ctx.View {
 		case context.ActionsView:
-			text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · ctrl+u/d scroll · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
+			text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
 			if m.ctx.CurrentRepo != "" {
 				text += " · t current repo"
 			}
@@ -660,13 +666,13 @@ func (m Model) helpLine() string {
 		}
 		return text + " · q quit"
 	}
-	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r/R refresh"
+	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · [/] tabs · r/R refresh"
 	if m.ctx.CurrentRepo != "" {
 		text += " · t current repo"
 	}
 	switch m.ctx.View {
 	case context.ActionsView:
-		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · r refresh · R rerun · ! cancel"
+		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · [/] tabs · r refresh · R rerun · ! cancel"
 		if m.ctx.CurrentRepo != "" {
 			text += " · t current repo"
 		}
@@ -998,13 +1004,15 @@ func (m *Model) syncSidebar() {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		rendered = prview.RenderPull(r, m.pullDetails[key], w, m.expanded)
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderPullTabs(r, m.pullDetails[key], w, m.expanded)))
+		return
 	case data.Issue:
 		if err := m.issueEnrichErr[key]; err != nil {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		rendered = prview.RenderIssue(r, m.issueDetails[key], w, m.expanded)
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderIssueTabs(r, m.issueDetails[key], w, m.expanded)))
+		return
 	case data.Notification:
 		rendered = prview.RenderNotification(r, w)
 	case data.ActionRun:
@@ -1012,12 +1020,21 @@ func (m *Model) syncSidebar() {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		rendered = prview.RenderAction(r, m.actionDetails[key], w)
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderActionTabs(r, m.actionDetails[key], w)))
+		return
 	default:
 		m.sidebar.SetContent("")
 		return
 	}
 	m.sidebar.SetContent(rendered)
+}
+
+func sidebarTabs(tabs []prview.Tab) []sidebar.Tab {
+	out := make([]sidebar.Tab, 0, len(tabs))
+	for _, t := range tabs {
+		out = append(out, sidebar.Tab{Title: t.Title, Content: t.Content})
+	}
+	return out
 }
 
 func (m *Model) setEnrichErr(sectionType, key string, err error) {
@@ -1583,6 +1600,16 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		if m.ctx.PreviewOpen {
 			m.expanded = !m.expanded
 			m.syncSidebar()
+		}
+		return m, nil, true
+	case "prevsidebartab", "previoussidebartab":
+		if m.ctx.PreviewOpen {
+			m.sidebar.PrevTab()
+		}
+		return m, nil, true
+	case "nextsidebartab":
+		if m.ctx.PreviewOpen {
+			m.sidebar.NextTab()
 		}
 		return m, nil, true
 	case "pageup", "scrollup":

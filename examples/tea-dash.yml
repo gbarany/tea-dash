@@ -102,6 +102,10 @@ keybindings:
       builtin: addLabel
     - key: U
       builtin: removeLabel
+    - key: "["
+      builtin: prevSidebarTab
+    - key: "]"
+      builtin: nextSidebarTab
   issues:
     - key: a
       builtin: assign

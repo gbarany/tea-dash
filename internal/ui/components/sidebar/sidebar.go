@@ -1,7 +1,6 @@
-// Package sidebar is a dumb, scrollable preview pane: a viewport wrapper that
-// renders a pre-formatted string and offers half-page scrolling plus a
-// bottom-right scroll indicator. It owns no content of its own — callers push a
-// rendered string via SetContent — and it draws nothing while the preview is
+// Package sidebar is a scrollable preview pane: a viewport wrapper that renders
+// pre-formatted content, optionally split into tabs, with half-page scrolling
+// and a bottom-right scroll indicator. It draws nothing while the preview is
 // closed.
 package sidebar
 
@@ -17,8 +16,17 @@ import (
 
 // Model wraps a viewport bound to the shared program context.
 type Model struct {
-	vp  viewport.Model
-	ctx *context.ProgramContext
+	vp      viewport.Model
+	ctx     *context.ProgramContext
+	tabs    []Tab
+	tab     int
+	content string
+}
+
+// Tab is one selectable sidebar page.
+type Tab struct {
+	Title   string
+	Content string
 }
 
 // New builds a sidebar sized to the context's current preview dimensions.
@@ -31,12 +39,49 @@ func New(ctx *context.ProgramContext) Model {
 // SetContent replaces the previewed text and scrolls back to the top so a newly
 // selected row starts at its header.
 func (m *Model) SetContent(s string) {
-	m.vp.SetContent(s)
+	m.SetTabs([]Tab{{Title: "Overview", Content: s}})
+}
+
+// SetTabs replaces the preview tabs and scrolls back to the top. Empty tabs
+// clear the viewport.
+func (m *Model) SetTabs(tabs []Tab) {
+	m.tabs = compactTabs(tabs)
+	m.tab = 0
+	m.resize()
+	m.syncViewport()
 	m.vp.GotoTop()
 }
 
 // ScrollToTop resets the viewport to the first line.
 func (m *Model) ScrollToTop() { m.vp.GotoTop() }
+
+// CurrentTabTitle returns the selected tab title, or "" when no tab exists.
+func (m Model) CurrentTabTitle() string {
+	if len(m.tabs) == 0 || m.tab < 0 || m.tab >= len(m.tabs) {
+		return ""
+	}
+	return m.tabs[m.tab].Title
+}
+
+// NextTab selects the next sidebar tab, wrapping at the end.
+func (m *Model) NextTab() {
+	if len(m.tabs) <= 1 {
+		return
+	}
+	m.tab = (m.tab + 1) % len(m.tabs)
+	m.syncViewport()
+	m.vp.GotoTop()
+}
+
+// PrevTab selects the previous sidebar tab, wrapping at the beginning.
+func (m *Model) PrevTab() {
+	if len(m.tabs) <= 1 {
+		return
+	}
+	m.tab = (m.tab - 1 + len(m.tabs)) % len(m.tabs)
+	m.syncViewport()
+	m.vp.GotoTop()
+}
 
 // Update handles only half-page scrolling (ctrl+u / ctrl+d); every other
 // message is ignored so the pane never steals navigation or quit keys.
@@ -71,20 +116,74 @@ func (m Model) View() string {
 		Width(m.ctx.PreviewWidth).
 		Align(lipgloss.Right).
 		Render(pct)
-	return lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), indicator)
+	parts := []string{}
+	if tabs := m.tabBar(); tabs != "" {
+		parts = append(parts, tabs)
+	}
+	parts = append(parts, m.vp.View(), indicator)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // resize sizes the viewport to the preview area, reserving one row for the
-// scroll indicator so View()'s total height stays within PreviewHeight.
+// scroll indicator and, when present, one row for tabs so View()'s total height
+// stays within PreviewHeight.
 func (m *Model) resize() {
 	w := m.ctx.PreviewWidth
 	if w < 0 {
 		w = 0
 	}
 	h := m.ctx.PreviewHeight - 1 // reserve the last row for the scroll indicator
+	if len(m.tabs) > 1 {
+		h--
+	}
 	if h < 1 {
 		h = 1
 	}
 	m.vp.SetWidth(w)
 	m.vp.SetHeight(h)
+}
+
+func (m *Model) syncViewport() {
+	if len(m.tabs) == 0 {
+		m.content = ""
+		m.vp.SetContent("")
+		return
+	}
+	if m.tab < 0 || m.tab >= len(m.tabs) {
+		m.tab = 0
+	}
+	m.content = m.tabs[m.tab].Content
+	m.vp.SetContent(m.content)
+}
+
+func (m Model) tabBar() string {
+	if len(m.tabs) <= 1 {
+		return ""
+	}
+	parts := make([]string, 0, len(m.tabs)*2-1)
+	for i, t := range m.tabs {
+		if i > 0 {
+			parts = append(parts, m.ctx.Styles.TabSeparator.Render(" "))
+		}
+		style := m.ctx.Styles.Tab
+		if i == m.tab {
+			style = m.ctx.Styles.ActiveTab
+		}
+		parts = append(parts, style.Render(t.Title))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
+}
+
+func compactTabs(tabs []Tab) []Tab {
+	out := make([]Tab, 0, len(tabs))
+	for _, t := range tabs {
+		if t.Title == "" && t.Content == "" {
+			continue
+		}
+		if t.Title == "" {
+			t.Title = "Preview"
+		}
+		out = append(out, t)
+	}
+	return out
 }

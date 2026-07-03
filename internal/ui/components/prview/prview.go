@@ -36,6 +36,13 @@ const (
 	maxActionSteps = 12
 )
 
+// Tab is one rendered preview tab. The UI adapts this to the stateful sidebar
+// component so this pure rendering package stays Bubble Tea-free.
+type Tab struct {
+	Title   string
+	Content string
+}
+
 var (
 	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	titleStyle = lipgloss.NewStyle().Bold(true)
@@ -50,26 +57,7 @@ var (
 // string. When detail is nil the body is a "Loading…" placeholder; when present
 // the body is the rendered Markdown, folded to foldLines unless expanded.
 func RenderPull(row data.PullRequest, detail *data.PullDetail, width int, expanded bool) string {
-	var header []string
-	header = append(header,
-		locator(row.RepoNameWithOwner, row.Number),
-		titleLine(row.Title, width),
-	)
-
-	if row.Draft {
-		header = append(header, pill("DRAFT", colDraft))
-	} else {
-		header = append(header, pill(stateLabel(row.State), stateColor(row.State)))
-	}
-
-	if detail != nil {
-		header = append(header,
-			subtleRef.Render(fmt.Sprintf("%s ← %s", detail.BaseRef, detail.HeadRef)),
-			dimStyle.Render(fmt.Sprintf("+%d -%d, %d files",
-				detail.Additions, detail.Deletions, detail.ChangedFiles)),
-		)
-	}
-
+	header := pullHeader(row, detail, width)
 	var body string
 	var extras []string
 	if detail != nil {
@@ -83,15 +71,38 @@ func RenderPull(row data.PullRequest, detail *data.PullDetail, width int, expand
 	return compose(header, body, detail == nil, width, expanded, extras)
 }
 
+// RenderPullTabs renders a pull request preview as gh-dash-style sidebar tabs:
+// overview, checks, reviews, and comments. Loading rows stay as one Overview
+// tab so tab navigation does not cycle through empty placeholders.
+func RenderPullTabs(row data.PullRequest, detail *data.PullDetail, width int, expanded bool) []Tab {
+	if detail == nil {
+		return []Tab{{Title: "Overview", Content: RenderPull(row, nil, width, expanded)}}
+	}
+	header := pullHeader(row, detail, width)
+	checks := renderCI(detail.CI, width)
+	if checks == "" {
+		checks = dimStyle.Render("No checks reported.")
+	}
+	reviews := renderReviews(detail.Reviews)
+	if reviews == "" {
+		reviews = dimStyle.Render("No reviews yet.")
+	}
+	comments := renderComments(detail.Comments, width)
+	if comments == "" {
+		comments = dimStyle.Render("No comments yet.")
+	}
+	return []Tab{
+		{Title: "Overview", Content: compose(header, detail.Body, false, width, expanded, nil)},
+		{Title: "Checks", Content: composePreformatted(header, checks)},
+		{Title: "Reviews", Content: composePreformatted(header, reviews)},
+		{Title: "Comments", Content: composePreformatted(header, comments)},
+	}
+}
+
 // RenderIssue renders an issue row and optional detail into the preview string,
 // mirroring RenderPull without the PR-only base/head and diffstat lines.
 func RenderIssue(row data.Issue, detail *data.IssueDetail, width int, expanded bool) string {
-	header := []string{
-		locator(row.RepoNameWithOwner, row.Number),
-		titleLine(row.Title, width),
-		pill(stateLabel(row.State), stateColor(row.State)),
-	}
-
+	header := issueHeader(row, width)
 	var body string
 	var extras []string
 	if detail != nil {
@@ -99,6 +110,23 @@ func RenderIssue(row data.Issue, detail *data.IssueDetail, width int, expanded b
 		extras = []string{renderComments(detail.Comments, width)}
 	}
 	return compose(header, body, detail == nil, width, expanded, extras)
+}
+
+// RenderIssueTabs renders an issue preview as overview/comments tabs. Loading
+// rows stay as one Overview tab.
+func RenderIssueTabs(row data.Issue, detail *data.IssueDetail, width int, expanded bool) []Tab {
+	if detail == nil {
+		return []Tab{{Title: "Overview", Content: RenderIssue(row, nil, width, expanded)}}
+	}
+	header := issueHeader(row, width)
+	comments := renderComments(detail.Comments, width)
+	if comments == "" {
+		comments = dimStyle.Render("No comments yet.")
+	}
+	return []Tab{
+		{Title: "Overview", Content: compose(header, detail.Body, false, width, expanded, nil)},
+		{Title: "Comments", Content: composePreformatted(header, comments)},
+	}
 }
 
 // RenderNotification renders a notification row into the preview. Notifications
@@ -131,36 +159,8 @@ func RenderAction(row data.ActionRun, detail *data.ActionRunDetail, width int) s
 	if detail != nil {
 		run = mergeActionRun(row, detail.Run)
 	}
-	header := []string{
-		locator(run.RepoNameWithOwner, run.GetNumber()),
-		titleLine(run.GetTitle(), width),
-	}
-	if status := actionRunStatus(run); status != "" {
-		header = append(header, pill(strings.ToUpper(status), actionRunColor(run)))
-	}
-
-	var body []string
-	if run.WorkflowName != "" {
-		body = append(body, "Workflow: "+run.WorkflowName)
-	}
-	if status := actionRunStatus(run); status != "" {
-		body = append(body, "Status: "+status)
-	}
-	if run.Event != "" {
-		body = append(body, "Event: "+run.Event)
-	}
-	if run.Actor != "" {
-		body = append(body, "Actor: @"+run.Actor)
-	}
-	if run.HeadBranch != "" {
-		body = append(body, "Branch: "+run.HeadBranch)
-	}
-	if run.HeadSHA != "" {
-		body = append(body, "SHA: "+shortSHA(run.HeadSHA))
-	}
-	if rel := section.HumanizeTime(run.GetUpdatedAt()); rel != "" {
-		body = append(body, "Updated: "+rel)
-	}
+	header := actionHeader(run, width)
+	body := actionBody(run)
 	if len(body) == 0 {
 		body = append(body, "Open this action run in Gitea to inspect jobs and logs.")
 	}
@@ -171,6 +171,27 @@ func RenderAction(row data.ActionRun, detail *data.ActionRunDetail, width int) s
 		extras = []string{renderActionJobs(detail.Jobs, width)}
 	}
 	return compose(header, strings.Join(body, "\n"), false, width, true, extras)
+}
+
+// RenderActionTabs renders an action run preview as overview/jobs tabs.
+func RenderActionTabs(row data.ActionRun, detail *data.ActionRunDetail, width int) []Tab {
+	if detail == nil {
+		return []Tab{{Title: "Overview", Content: RenderAction(row, nil, width)}}
+	}
+	run := mergeActionRun(row, detail.Run)
+	header := actionHeader(run, width)
+	body := actionBody(run)
+	if len(body) == 0 {
+		body = append(body, "Open this action run in Gitea to inspect jobs and logs.")
+	}
+	jobs := renderActionJobs(detail.Jobs, width)
+	if jobs == "" {
+		jobs = dimStyle.Render("No jobs reported.")
+	}
+	return []Tab{
+		{Title: "Overview", Content: compose(header, strings.Join(body, "\n"), false, width, true, nil)},
+		{Title: "Jobs", Content: composePreformatted(header, jobs)},
+	}
 }
 
 // compose joins the header block with the rendered body, then appends any
@@ -196,6 +217,79 @@ func compose(header []string, rawBody string, loading bool, width int, expanded 
 		parts = append(parts, "", e)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func composePreformatted(header []string, body string) string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.JoinVertical(lipgloss.Left, header...),
+		"",
+		body,
+	)
+}
+
+func pullHeader(row data.PullRequest, detail *data.PullDetail, width int) []string {
+	header := []string{
+		locator(row.RepoNameWithOwner, row.Number),
+		titleLine(row.Title, width),
+	}
+	if row.Draft {
+		header = append(header, pill("DRAFT", colDraft))
+	} else {
+		header = append(header, pill(stateLabel(row.State), stateColor(row.State)))
+	}
+	if detail != nil {
+		header = append(header,
+			subtleRef.Render(fmt.Sprintf("%s ← %s", detail.BaseRef, detail.HeadRef)),
+			dimStyle.Render(fmt.Sprintf("+%d -%d, %d files",
+				detail.Additions, detail.Deletions, detail.ChangedFiles)),
+		)
+	}
+	return header
+}
+
+func issueHeader(row data.Issue, width int) []string {
+	return []string{
+		locator(row.RepoNameWithOwner, row.Number),
+		titleLine(row.Title, width),
+		pill(stateLabel(row.State), stateColor(row.State)),
+	}
+}
+
+func actionHeader(run data.ActionRun, width int) []string {
+	header := []string{
+		locator(run.RepoNameWithOwner, run.GetNumber()),
+		titleLine(run.GetTitle(), width),
+	}
+	if status := actionRunStatus(run); status != "" {
+		header = append(header, pill(strings.ToUpper(status), actionRunColor(run)))
+	}
+	return header
+}
+
+func actionBody(run data.ActionRun) []string {
+	var body []string
+	if run.WorkflowName != "" {
+		body = append(body, "Workflow: "+run.WorkflowName)
+	}
+	if status := actionRunStatus(run); status != "" {
+		body = append(body, "Status: "+status)
+	}
+	if run.Event != "" {
+		body = append(body, "Event: "+run.Event)
+	}
+	if run.Actor != "" {
+		body = append(body, "Actor: @"+run.Actor)
+	}
+	if run.HeadBranch != "" {
+		body = append(body, "Branch: "+run.HeadBranch)
+	}
+	if run.HeadSHA != "" {
+		body = append(body, "SHA: "+shortSHA(run.HeadSHA))
+	}
+	if rel := section.HumanizeTime(run.GetUpdatedAt()); rel != "" {
+		body = append(body, "Updated: "+rel)
+	}
+	return body
 }
 
 // foldBody truncates a rendered body to foldLines (plus a hint) unless expanded

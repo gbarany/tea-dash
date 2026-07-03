@@ -153,6 +153,86 @@ func TestRenderPullCommentsCIReviews(t *testing.T) {
 	}
 }
 
+func TestRenderPullTabsSeparatesOverviewChecksReviewsAndComments(t *testing.T) {
+	detail := &data.PullDetail{
+		Body:    "overview-tab-token",
+		BaseRef: "main",
+		HeadRef: "feature",
+		CI: data.CIStatus{
+			State: data.CIStateFailure,
+			Checks: []data.Check{{
+				Context: "checks-tab-token",
+				State:   data.CheckStateFailure,
+			}},
+		},
+		Reviews: []data.Review{{
+			Author: "reviews-tab-token",
+			State:  data.ReviewStateApproved,
+		}},
+		Comments: []data.Comment{{
+			Author: "comments-author-token",
+			Body:   "comments-tab-token",
+		}},
+	}
+
+	tabs := RenderPullTabs(samplePull(), detail, 60, false)
+	if len(tabs) != 4 {
+		t.Fatalf("len(RenderPullTabs) = %d, want 4 tabs: %+v", len(tabs), tabs)
+	}
+	wantTitles := []string{"Overview", "Checks", "Reviews", "Comments"}
+	for i, want := range wantTitles {
+		if tabs[i].Title != want {
+			t.Fatalf("tab %d title = %q, want %q", i, tabs[i].Title, want)
+		}
+	}
+	if !strings.Contains(tabs[0].Content, "overview-tab-token") ||
+		strings.Contains(tabs[0].Content, "checks-tab-token") ||
+		strings.Contains(tabs[0].Content, "reviews-tab-token") ||
+		strings.Contains(tabs[0].Content, "comments-tab-token") {
+		t.Fatalf("overview tab should contain only overview detail:\n%s", tabs[0].Content)
+	}
+	if !strings.Contains(tabs[1].Content, "checks-tab-token") || strings.Contains(tabs[1].Content, "overview-tab-token") {
+		t.Fatalf("checks tab should contain checks only:\n%s", tabs[1].Content)
+	}
+	if !strings.Contains(tabs[2].Content, "reviews-tab-token") || strings.Contains(tabs[2].Content, "checks-tab-token") {
+		t.Fatalf("reviews tab should contain reviews only:\n%s", tabs[2].Content)
+	}
+	if !strings.Contains(tabs[3].Content, "comments-tab-token") || strings.Contains(tabs[3].Content, "reviews-tab-token") {
+		t.Fatalf("comments tab should contain comments only:\n%s", tabs[3].Content)
+	}
+}
+
+func TestRenderIssueTabsSeparatesOverviewAndComments(t *testing.T) {
+	row := data.Issue{
+		Number:            7,
+		Title:             "Something broke",
+		RepoNameWithOwner: "gbarany/tea-dash",
+		State:             "open",
+	}
+	tabs := RenderIssueTabs(row, &data.IssueDetail{
+		Body: "issue-overview-token",
+		Comments: []data.Comment{{
+			Author: "issue-commenter-token",
+			Body:   "issue-comment-token",
+		}},
+	}, 60, false)
+
+	if len(tabs) != 2 {
+		t.Fatalf("len(RenderIssueTabs) = %d, want 2 tabs: %+v", len(tabs), tabs)
+	}
+	if tabs[0].Title != "Overview" || tabs[1].Title != "Comments" {
+		t.Fatalf("issue tab titles = %+v, want Overview/Comments", tabs)
+	}
+	if !strings.Contains(tabs[0].Content, "issue-overview-token") ||
+		strings.Contains(tabs[0].Content, "issue-comment-token") {
+		t.Fatalf("issue overview tab should not include comments:\n%s", tabs[0].Content)
+	}
+	if !strings.Contains(tabs[1].Content, "issue-comment-token") ||
+		strings.Contains(tabs[1].Content, "issue-overview-token") {
+		t.Fatalf("issue comments tab should not include overview body:\n%s", tabs[1].Content)
+	}
+}
+
 // TestRenderIssueSingleComment verifies the issue comments block uses the
 // singular "1 comment" header and shows the comment body.
 func TestRenderIssueSingleComment(t *testing.T) {

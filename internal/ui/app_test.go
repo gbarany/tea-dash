@@ -1446,9 +1446,21 @@ func TestActionsPreviewFetchesAndCachesRunDetail(t *testing.T) {
 		t.Fatalf("actionDetails should contain %q after enrichedMsg", key)
 	}
 	view := m.View().Content
-	for _, want := range []string{"Jobs:", "build", "ubuntu-latest", "checkout"} {
+	for _, want := range []string{"Overview", "Jobs", "CI passed", "Workflow:"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("action detail preview missing %q:\n%s", want, view)
+		}
+	}
+	for _, absent := range []string{"Jobs:", "build", "ubuntu-latest", "checkout"} {
+		if strings.Contains(view, absent) {
+			t.Fatalf("action overview tab should not include job detail %q:\n%s", absent, view)
+		}
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
+	view = m.View().Content
+	for _, want := range []string{"Jobs:", "build", "ubuntu-latest", "checkout"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("action jobs tab missing %q:\n%s", want, view)
 		}
 	}
 	if runCalls != 1 || jobCalls != 1 {
@@ -1553,6 +1565,103 @@ func TestEnrichedMsgPopulatesSidebar(t *testing.T) {
 	}
 	if strings.Contains(view, "Loading") {
 		t.Fatalf("sidebar should no longer show Loading after enrichment:\n%s", view)
+	}
+}
+
+func TestPreviewSidebarTabsSwitchWithDefaultKeys(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Tabbed PR", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	key := m.selKey()
+	m.pullDetails[key] = &data.PullDetail{
+		Body:      "overview-token",
+		BaseRef:   "main",
+		HeadRef:   "feature",
+		HeadSHA:   "abc123",
+		Additions: 2, Deletions: 1, ChangedFiles: 1,
+		CI: data.CIStatus{
+			State: data.CIStateFailure,
+			Total: 1,
+			Checks: []data.Check{{
+				Context: "unit-check-token",
+				State:   data.CheckStateFailure,
+			}},
+		},
+		Reviews: []data.Review{{
+			Author: "reviewer-token",
+			State:  data.ReviewStateApproved,
+		}},
+		Comments: []data.Comment{{
+			Author: "commenter-token",
+			Body:   "comment-token",
+		}},
+	}
+	m.syncSidebar()
+
+	view := m.View().Content
+	for _, want := range []string{"Overview", "Checks", "Reviews", "Comments", "overview-token"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("overview tab missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "unit-check-token") {
+		t.Fatalf("overview tab should not include check details before switching tabs:\n%s", view)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
+	view = m.View().Content
+	if !strings.Contains(view, "unit-check-token") || strings.Contains(view, "overview-token") {
+		t.Fatalf("next sidebar tab should show checks without overview body:\n%s", view)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
+	view = m.View().Content
+	if !strings.Contains(view, "reviewer-token") || strings.Contains(view, "unit-check-token") {
+		t.Fatalf("second next sidebar tab should show reviews only:\n%s", view)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: '[', Text: "["})
+	view = m.View().Content
+	if !strings.Contains(view, "unit-check-token") || strings.Contains(view, "reviewer-token") {
+		t.Fatalf("previous sidebar tab should return to checks:\n%s", view)
+	}
+}
+
+func TestConfiguredNextSidebarTabBuiltinSwitchesPreviewTab(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			PRs: []config.Keybinding{{Key: "T", Builtin: "nextSidebarTab"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 43, Title: "Configured tab key", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	key := m.selKey()
+	m.pullDetails[key] = &data.PullDetail{
+		Body:    "configured-overview-token",
+		BaseRef: "main",
+		HeadRef: "feature",
+		CI: data.CIStatus{
+			State: data.CIStateSuccess,
+			Total: 1,
+			Checks: []data.Check{{
+				Context: "configured-check-token",
+				State:   data.CheckStateSuccess,
+			}},
+		},
+	}
+	m.syncSidebar()
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'T', Text: "T"})
+	view := m.View().Content
+	if !strings.Contains(view, "configured-check-token") || strings.Contains(view, "configured-overview-token") {
+		t.Fatalf("configured nextSidebarTab key should switch to checks tab:\n%s", view)
 	}
 }
 

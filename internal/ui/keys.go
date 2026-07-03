@@ -11,50 +11,52 @@ import (
 // keyMap defines the app-level key bindings. Row navigation is also forwarded
 // to the underlying table widget so configurable builtins reuse table behavior.
 type keyMap struct {
-	Refresh       key.Binding
-	RefreshAll    key.Binding
-	Open          key.Binding
-	Quit          key.Binding
-	Up            key.Binding
-	Down          key.Binding
-	NextSection   key.Binding
-	PrevSection   key.Binding
-	SwitchView    key.Binding
-	Search        key.Binding
-	TogglePreview key.Binding
-	ToggleSmart   key.Binding
-	ScrollUp      key.Binding
-	ScrollDown    key.Binding
-	Expand        key.Binding
-	Comment       key.Binding
-	Assign        key.Binding
-	Unassign      key.Binding
-	Subscribe     key.Binding
-	Unsubscribe   key.Binding
-	AddLabel      key.Binding
-	RemoveLabel   key.Binding
-	Milestone     key.Binding
-	Merge         key.Binding
-	UpdateBranch  key.Binding
-	MarkReady     key.Binding
-	WatchChecks   key.Binding
-	Close         key.Binding
-	Reopen        key.Binding
-	Review        key.Binding
-	ExternalDiff  key.Binding
-	Checkout      key.Binding
-	PushBranch    key.Binding
-	DeleteBranch  key.Binding
-	RerunRun      key.Binding
-	CancelRun     key.Binding
-	CopyNumber    key.Binding
-	CopyURL       key.Binding
-	Help          key.Binding
-	MarkRead      key.Binding
-	MarkUnread    key.Binding
-	MarkAllRead   key.Binding
-	Pin           key.Binding
-	Unpin         key.Binding
+	Refresh        key.Binding
+	RefreshAll     key.Binding
+	Open           key.Binding
+	Quit           key.Binding
+	Up             key.Binding
+	Down           key.Binding
+	NextSection    key.Binding
+	PrevSection    key.Binding
+	SwitchView     key.Binding
+	Search         key.Binding
+	TogglePreview  key.Binding
+	ToggleSmart    key.Binding
+	ScrollUp       key.Binding
+	ScrollDown     key.Binding
+	PrevSidebarTab key.Binding
+	NextSidebarTab key.Binding
+	Expand         key.Binding
+	Comment        key.Binding
+	Assign         key.Binding
+	Unassign       key.Binding
+	Subscribe      key.Binding
+	Unsubscribe    key.Binding
+	AddLabel       key.Binding
+	RemoveLabel    key.Binding
+	Milestone      key.Binding
+	Merge          key.Binding
+	UpdateBranch   key.Binding
+	MarkReady      key.Binding
+	WatchChecks    key.Binding
+	Close          key.Binding
+	Reopen         key.Binding
+	Review         key.Binding
+	ExternalDiff   key.Binding
+	Checkout       key.Binding
+	PushBranch     key.Binding
+	DeleteBranch   key.Binding
+	RerunRun       key.Binding
+	CancelRun      key.Binding
+	CopyNumber     key.Binding
+	CopyURL        key.Binding
+	Help           key.Binding
+	MarkRead       key.Binding
+	MarkUnread     key.Binding
+	MarkAllRead    key.Binding
+	Pin            key.Binding
+	Unpin          key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -114,6 +116,14 @@ func defaultKeyMap() keyMap {
 		ScrollDown: key.NewBinding(
 			key.WithKeys("ctrl+d"),
 			key.WithHelp("ctrl+d", "scroll preview down"),
+		),
+		PrevSidebarTab: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "previous preview tab"),
+		),
+		NextSidebarTab: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "next preview tab"),
 		),
 		Expand: key.NewBinding(
 			key.WithKeys("e"),
@@ -284,6 +294,10 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.ScrollUp = binding(keyName, "scroll preview up")
 	case "pagedown", "scrolldown":
 		k.ScrollDown = binding(keyName, "scroll preview down")
+	case "prevsidebartab", "previoussidebartab":
+		k.PrevSidebarTab = binding(keyName, "previous preview tab")
+	case "nextsidebartab":
+		k.NextSidebarTab = binding(keyName, "next preview tab")
 	case "summaryviewmore", "expand":
 		k.Expand = binding(keyName, "expand")
 	case "comment":
