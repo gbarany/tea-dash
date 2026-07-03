@@ -752,20 +752,27 @@ func (s *Store) RemovePullReviewers(repo string, num int64, logins []string) err
 	return nil
 }
 
-// AddReview appends a submitted review to a pull, assigning it an ID if it
-// doesn't already have one. Errors if the pull is unknown.
-func (s *Store) AddReview(repo string, num int64, review *Review) error {
+// AddReview creates and appends a submitted review to a pull, resolving the
+// reviewer by login the same way comment authors are (a registered user, the
+// authenticated user, or a bare User with just the login set) and stamping
+// an ID and a Created (submitted-at) time — mirroring AddComment's shape.
+// Errors if the pull is unknown.
+func (s *Store) AddReview(repo string, num int64, login, state, body string) (*Review, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.pullLocked(repo, num)
 	if p == nil {
-		return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+		return nil, fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
 	}
-	if review.ID == 0 {
-		review.ID = s.id()
+	review := &Review{
+		ID:       s.id(),
+		State:    state,
+		Body:     body,
+		Reviewer: s.resolveUserLocked(login),
+		Created:  time.Now(),
 	}
 	p.Reviews = append(p.Reviews, review)
-	return nil
+	return review, nil
 }
 
 // SetSubscription sets whether login is subscribed to the issue at (repo,

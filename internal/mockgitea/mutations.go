@@ -314,7 +314,11 @@ func (s *Server) handleRemovePullReviewers(w http.ResponseWriter, r *http.Reques
 // handleCreatePullReview serves POST .../pulls/{index}/reviews. Review's own
 // JSON tags already match what internal/gitea's mapReviews reads
 // (id/state/body/user/submitted_at), so the created review marshals directly
-// with no map builder needed.
+// with no map builder needed. No re-fetch-inside-WithLock step is needed
+// before marshaling: AddReview just created and returned this exact object,
+// so unlike a re-fetch of a pre-existing row, there's no stale-read race to
+// guard against (same reasoning as handleCreateComment's direct marshal of
+// AddComment's return value, above).
 func (s *Server) handleCreatePullReview(w http.ResponseWriter, r *http.Request) {
 	full := r.PathValue("owner") + "/" + r.PathValue("repo")
 	idx, ok := parsePathInt64(r.PathValue("index"))
@@ -331,31 +335,15 @@ func (s *Server) handleCreatePullReview(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var me *User
-	s.store.WithLock(func() { me = s.store.meLocked() })
+	var me string
+	s.store.WithLock(func() { me = s.store.meLocked().Login })
 
-	review := &Review{
-		State:    body.Event,
-		Body:     body.Body,
-		Reviewer: me,
-	}
-	if err := s.store.AddReview(full, idx, review); err != nil {
+	review, err := s.store.AddReview(full, idx, me, body.Event, body.Body)
+	if err != nil {
 		notFound(w, r)
 		return
 	}
-
-	respondOr404(s, w, r, func() *Review {
-		p := s.store.pullLocked(full, idx)
-		if p == nil {
-			return nil
-		}
-		for _, rv := range p.Reviews {
-			if rv.ID == review.ID {
-				return rv
-			}
-		}
-		return nil
-	})
+	writeJSON(w, review)
 }
 
 // handleAddIssueLabels serves POST .../issues/{index}/labels {"labels":[ids]},

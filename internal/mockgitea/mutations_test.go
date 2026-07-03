@@ -2,6 +2,8 @@ package mockgitea
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +94,94 @@ func TestMergeRemovesFromOpenSearch(t *testing.T) {
 		if r.Number == 1 {
 			t.Fatal("merged PR still in open search")
 		}
+	}
+}
+
+// TestSubscribeIssueTwiceSurfacesAlreadySubscribedError locks in the SDK's
+// inverted-looking status contract for AddIssueSubscription: a redundant
+// re-subscribe gets HTTP 200 from the mock (no state change happened), which
+// the SDK itself turns into an "already subscribed" error — the caller sees
+// a failure, not a silent no-op, on the second call.
+func TestSubscribeIssueTwiceSurfacesAlreadySubscribedError(t *testing.T) {
+	s := detailStore(time.Now())
+	c := newTestClient(t, s)
+	if err := c.SubscribeIssue("teahouse", "kettle", 4); err != nil {
+		t.Fatal(err)
+	}
+	err := c.SubscribeIssue("teahouse", "kettle", 4)
+	if err == nil || !strings.Contains(err.Error(), "already subscribed") {
+		t.Fatalf("redundant re-subscribe error = %v, want \"already subscribed\"", err)
+	}
+}
+
+// TestEditIssueAssigneesOmittedVsExplicitEmpty pins the nilable-slice
+// convention handleEditIssue/handleEditPull rely on: a PATCH body with no
+// "assignees" key at all must leave the current assignee list untouched,
+// while an explicit "assignees": [] must clear it. Both look similar at the
+// call site (neither one sets a *new* assignee), so this only distinguishes
+// them by decoding straight off the wire, which is what the bug would break.
+func TestEditIssueAssigneesOmittedVsExplicitEmpty(t *testing.T) {
+	s := detailStore(time.Now())
+	srv := NewServer(s)
+	defer srv.Close()
+
+	patch := func(body string) *http.Response {
+		req, err := http.NewRequest(http.MethodPatch,
+			srv.URL()+"/api/v1/repos/teahouse/kettle/issues/4", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// Precondition from the searchStore fixture: issue #4 starts assigned to
+	// gabor (me).
+	if got := s.Issue("teahouse/kettle", 4).Assignees; len(got) != 1 {
+		t.Fatalf("fixture precondition: want 1 assignee, got %+v", got)
+	}
+
+	if resp := patch(`{"state":"closed"}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("state-only patch status = %d, want 200", resp.StatusCode)
+	}
+	if got := s.Issue("teahouse/kettle", 4).Assignees; len(got) != 1 {
+		t.Fatalf("assignees after omitted-key patch = %+v, want untouched (1)", got)
+	}
+
+	if resp := patch(`{"assignees":[]}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("explicit-empty patch status = %d, want 200", resp.StatusCode)
+	}
+	if got := s.Issue("teahouse/kettle", 4).Assignees; len(got) != 0 {
+		t.Fatalf("assignees after explicit-empty patch = %+v, want cleared", got)
+	}
+}
+
+// TestAddIssueLabelsBadIDIs400UnknownItemIs404 pins the two distinct failure
+// modes handleAddIssueLabels' pre-check split exists to separate: a label ID
+// that doesn't resolve on an otherwise-known item is a client error in an
+// otherwise well-formed body (400), while targeting a nonexistent item at
+// all is a missing resource (404) — regardless of whether the label ID in
+// that second request happens to be valid.
+func TestAddIssueLabelsBadIDIs400UnknownItemIs404(t *testing.T) {
+	s := detailStore(time.Now())
+	srv := NewServer(s)
+	defer srv.Close()
+
+	post := func(path, body string) *http.Response {
+		resp, err := http.Post(srv.URL()+path, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	if resp := post("/api/v1/repos/teahouse/kettle/issues/4/labels", `{"labels":[99999]}`); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad label id on known item: status = %d, want 400", resp.StatusCode)
+	}
+	if resp := post("/api/v1/repos/teahouse/kettle/issues/9999/labels", `{"labels":[11]}`); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("valid label id on unknown item: status = %d, want 404", resp.StatusCode)
 	}
 }
