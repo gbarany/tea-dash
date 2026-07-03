@@ -77,6 +77,7 @@ type Prompt struct {
 	Mode  PromptMode
 	Value string
 	Label string
+	Title string
 	Body  string
 }
 

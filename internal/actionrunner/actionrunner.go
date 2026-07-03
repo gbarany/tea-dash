@@ -445,6 +445,8 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		if err != nil {
 			return "", err
 		}
+		opt.Title = strings.TrimSpace(intent.Prompt.Title)
+		opt.Message = strings.TrimSpace(intent.Prompt.Body)
 		merged, err := r.client.MergePullRequest(owner, repo, index, opt)
 		if err != nil {
 			return "", err
@@ -746,6 +748,8 @@ func mergeOptions(value string) (data.MergeOptions, error) {
 			deleteBranch = true
 		case "force", "force-merge", "force_merge":
 			forceMerge = true
+		case "message", "edit-message", "edit_message":
+			// UI-only flag: the submitted Prompt carries the actual title/body.
 		case "":
 			// Ignore empty components from accidental trailing separators; the
 			// style parser below still validates the action.
