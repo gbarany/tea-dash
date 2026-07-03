@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -488,6 +489,34 @@ func TestSubmitPullReviewPostsEventAndMapsResponse(t *testing.T) {
 	wantSubmitted := time.Date(2026, 7, 1, 11, 0, 0, 0, time.UTC)
 	if got.Author != "reviewer" || got.State != data.ReviewStateRequestChanges || got.Body != "needs work" || !got.SubmittedAt.Equal(wantSubmitted) {
 		t.Fatalf("review = %+v", got)
+	}
+}
+
+func TestRequestPullReviewersPostsReviewerList(t *testing.T) {
+	var reviewers []string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/45/requested_reviewers" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		body := decodeMutationBody(t, r)
+		raw, ok := body["reviewers"].([]any)
+		if !ok {
+			t.Fatalf("body = %#v, want reviewers array", body)
+		}
+		for _, v := range raw {
+			reviewers = append(reviewers, v.(string))
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	if err := c.RequestPullReviewers("acme", "widgets", 45, []string{"alice", "bob"}); err != nil {
+		t.Fatalf("RequestPullReviewers: %v", err)
+	}
+	if !reflect.DeepEqual(reviewers, []string{"alice", "bob"}) {
+		t.Fatalf("reviewers = %#v, want alice/bob", reviewers)
 	}
 }
 

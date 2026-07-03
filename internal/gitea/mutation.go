@@ -443,6 +443,23 @@ func (c *Client) SubmitPullReview(owner, repo string, index int64, opt data.Pull
 	return mapped[0], nil
 }
 
+// RequestPullReviewers asks Gitea to request review from the given usernames.
+func (c *Client) RequestPullReviewers(owner, repo string, index int64, reviewers []string) error {
+	if len(reviewers) == 0 {
+		return fmt.Errorf("reviewer usernames cannot be empty")
+	}
+	err := c.call(func() error {
+		_, e := c.sdk.CreateReviewRequests(owner, repo, index, sdk.PullReviewRequestOptions{
+			Reviewers: reviewers,
+		})
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("request reviewers on %s/%s#%d: %w", owner, repo, index, err)
+	}
+	return nil
+}
+
 func mapPullReviewEvent(event data.PullReviewEvent) (sdk.ReviewStateType, error) {
 	switch event {
 	case data.PullReviewEventApprove:

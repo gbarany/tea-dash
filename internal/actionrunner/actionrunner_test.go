@@ -286,6 +286,38 @@ func TestDispatchMergeAndReview(t *testing.T) {
 	}
 }
 
+func TestDispatchRequestReviewersParsesCommaSeparatedReviewers(t *testing.T) {
+	client := &fakeClient{}
+	r := New(Options{Client: client})
+	intent := pullIntent(uiactions.KindRequestReviewers)
+	intent.Prompt.Value = " alice, bob, alice "
+
+	got := runDispatch(t, r, intent)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("request reviewers result = %+v", got)
+	}
+	if client.reviewRequestIndex != 7 {
+		t.Fatalf("reviewRequestIndex = %d, want 7", client.reviewRequestIndex)
+	}
+	if !reflect.DeepEqual(client.requestedReviewers, []string{"alice", "bob"}) {
+		t.Fatalf("requestedReviewers = %#v, want alice/bob", client.requestedReviewers)
+	}
+	if !strings.Contains(got.Message, "Requested review from alice, bob on acme/widgets#7") {
+		t.Fatalf("message = %q, want reviewer confirmation", got.Message)
+	}
+}
+
+func TestDispatchRequestReviewersRejectsEmptyInput(t *testing.T) {
+	intent := pullIntent(uiactions.KindRequestReviewers)
+	intent.Prompt.Value = " , "
+
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), intent)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "reviewer usernames cannot be empty") {
+		t.Fatalf("empty request reviewers result = %+v", got)
+	}
+}
+
 func TestDispatchUpdatePullRequest(t *testing.T) {
 	client := &fakeClient{}
 	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindUpdateBranch))
@@ -646,35 +678,37 @@ func TestDispatchReturnsErrorResult(t *testing.T) {
 }
 
 type fakeClient struct {
-	err              error
-	commentBody      string
-	issueState       data.ItemState
-	pullState        data.ItemState
-	merge            data.MergeOptions
-	review           data.PullReviewOptions
-	updatePull       int64
-	markReady        int64
-	markDraft        int64
-	diff             []byte
-	jobs             []data.ActionJob
-	listJobsRunID    int64
-	logJobID         int64
-	logBytes         []byte
-	rerunRunID       int64
-	cancelRunID      int64
-	assignPull       int64
-	assignIssue      int64
-	unassignPull     int64
-	unassignIssue    int64
-	labelIndex       int64
-	addLabels        []string
-	removeLabels     []string
-	milestoneIndex   int64
-	milestoneTitle   string
-	subscribeIssue   int64
-	unsubscribeIssue int64
-	markReadyChanged bool
-	markDraftChanged bool
+	err                error
+	commentBody        string
+	issueState         data.ItemState
+	pullState          data.ItemState
+	merge              data.MergeOptions
+	review             data.PullReviewOptions
+	updatePull         int64
+	markReady          int64
+	markDraft          int64
+	diff               []byte
+	jobs               []data.ActionJob
+	listJobsRunID      int64
+	logJobID           int64
+	logBytes           []byte
+	rerunRunID         int64
+	cancelRunID        int64
+	assignPull         int64
+	assignIssue        int64
+	unassignPull       int64
+	unassignIssue      int64
+	labelIndex         int64
+	addLabels          []string
+	removeLabels       []string
+	milestoneIndex     int64
+	milestoneTitle     string
+	reviewRequestIndex int64
+	requestedReviewers []string
+	subscribeIssue     int64
+	unsubscribeIssue   int64
+	markReadyChanged   bool
+	markDraftChanged   bool
 }
 
 func (f *fakeClient) AddComment(_, _ string, _ int64, body string) (data.Comment, error) {
@@ -748,6 +782,12 @@ func (f *fakeClient) MergePullRequest(_, _ string, _ int64, opt data.MergeOption
 func (f *fakeClient) SubmitPullReview(_, _ string, _ int64, opt data.PullReviewOptions) (data.Review, error) {
 	f.review = opt
 	return data.Review{State: data.ReviewState(opt.Event)}, f.err
+}
+
+func (f *fakeClient) RequestPullReviewers(_, _ string, index int64, reviewers []string) error {
+	f.reviewRequestIndex = index
+	f.requestedReviewers = append([]string(nil), reviewers...)
+	return f.err
 }
 
 func (f *fakeClient) UpdatePullRequest(_, _ string, index int64) error {
