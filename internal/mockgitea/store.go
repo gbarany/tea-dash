@@ -6,6 +6,7 @@ package mockgitea
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -176,6 +177,14 @@ type ActionJob struct {
 // Store is an in-memory, mutex-guarded fake of a Gitea server's data. It has
 // no HTTP surface of its own; handlers built on top of it (later tasks) speak
 // the Gitea REST API and translate to/from these methods.
+//
+// Getter methods (Pull, Issue, Runs, ...) return live pointers into the
+// store's interior, not copies. Mutator methods (MergePull, SetPullState,
+// AddComment, ...) mutate that same interior in place and take the lock
+// themselves for the duration of the mutation only. A caller that reads or
+// serializes a getter's result (notably an HTTP handler marshaling a
+// response) must do so inside WithLock, or a concurrent mutation can race
+// with that read.
 type Store struct {
 	mu            sync.Mutex
 	me            *User
@@ -204,6 +213,18 @@ func NewStore() *Store {
 		milestones: make(map[string][]*Milestone),
 		nextID:     1000,
 	}
+}
+
+// WithLock runs fn while holding the store lock. Getter results are live
+// references into the store; callers that read or marshal them (notably the
+// HTTP handlers) must do so inside WithLock. Mutator methods take the lock
+// themselves and must NOT be called from inside fn (deadlock) — use the
+// unexported "*Locked" lookups (e.g. pullLocked) instead, which assume the
+// lock is already held.
+func (s *Store) WithLock(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn()
 }
 
 // id returns the next synthetic ID, monotonically increasing across all
@@ -278,6 +299,12 @@ func (s *Store) AddPull(p *Pull) {
 func (s *Store) Pull(repo string, num int64) *Pull {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.pullLocked(repo, num)
+}
+
+// pullLocked is Pull without taking the lock, for use from inside WithLock.
+// Callers must hold s.mu.
+func (s *Store) pullLocked(repo string, num int64) *Pull {
 	for _, p := range s.pulls[repo] {
 		if p.Number == num {
 			return p
@@ -293,7 +320,10 @@ func (s *Store) Pulls(repo string) []*Pull {
 	return s.pulls[repo]
 }
 
-// AllPulls returns every pull request across every repo.
+// AllPulls returns every pull request across every repo, sorted by ID
+// ascending. The sort makes the result deterministic across identically
+// seeded stores: iteration over the repo-keyed map is otherwise randomized by
+// Go, which would make two seed runs compare unequal element-by-element.
 func (s *Store) AllPulls() []*Pull {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -301,15 +331,21 @@ func (s *Store) AllPulls() []*Pull {
 	for _, ps := range s.pulls {
 		out = append(out, ps...)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
-// AddIssue registers an issue under its repo.
+// AddIssue registers an issue under its repo. Subscribers is initialized to
+// an empty (non-nil) map when the caller didn't set one, so the subscription
+// handler can always write into it without a nil-map panic.
 func (s *Store) AddIssue(i *Issue) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if i.ID == 0 {
 		i.ID = s.id()
+	}
+	if i.Subscribers == nil {
+		i.Subscribers = make(map[string]bool)
 	}
 	s.issues[i.RepoFullName] = append(s.issues[i.RepoFullName], i)
 }
@@ -333,7 +369,10 @@ func (s *Store) Issues(repo string) []*Issue {
 	return s.issues[repo]
 }
 
-// AllIssues returns every issue across every repo.
+// AllIssues returns every issue across every repo, sorted by ID ascending.
+// The sort makes the result deterministic across identically seeded stores:
+// iteration over the repo-keyed map is otherwise randomized by Go, which
+// would make two seed runs compare unequal element-by-element.
 func (s *Store) AllIssues() []*Issue {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -341,6 +380,7 @@ func (s *Store) AllIssues() []*Issue {
 	for _, is := range s.issues {
 		out = append(out, is...)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -348,16 +388,22 @@ func (s *Store) AllIssues() []*Issue {
 // the matching pull/issue's comment count and updated time. The author is
 // resolved by login among registered users and the authenticated user,
 // falling back to a bare User with just the login set.
+//
+// Gitea numbers issues and pull requests out of one shared per-repo index
+// space, so a given (repo, num) matches at most one row across s.pulls and
+// s.issues — never both. Seed/demo data must respect that invariant, or this
+// method will (harmlessly, but wrongly) bump both.
 func (s *Store) AddComment(repo string, num int64, login, body string) *Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now()
 	c := &Comment{
 		ID:      s.id(),
 		Body:    body,
 		Author:  s.resolveUserLocked(login),
-		Created: time.Now(),
-		Updated: time.Now(),
+		Created: now,
+		Updated: now,
 	}
 	k := key(repo, num)
 	s.comments[k] = append(s.comments[k], c)
@@ -365,13 +411,13 @@ func (s *Store) AddComment(repo string, num int64, login, body string) *Comment 
 	for _, p := range s.pulls[repo] {
 		if p.Number == num {
 			p.CommentCount++
-			p.Updated = time.Now()
+			p.Updated = now
 		}
 	}
 	for _, i := range s.issues[repo] {
 		if i.Number == num {
 			i.CommentCount++
-			i.Updated = time.Now()
+			i.Updated = now
 		}
 	}
 	return c
@@ -467,12 +513,12 @@ func (s *Store) MarkAllNotificationsRead() {
 }
 
 // MergePull marks a pull request merged and closed. It errors if the pull is
-// unknown.
+// unknown. style and deleteBranch are accepted (and currently unused) for
+// later tasks — e.g. an HTTP handler that echoes the merge style back, or
+// simulated branch deletion.
 func (s *Store) MergePull(repo string, num int64, style string, deleteBranch bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = style
-	_ = deleteBranch
 	for _, p := range s.pulls[repo] {
 		if p.Number == num {
 			p.Merged = true
