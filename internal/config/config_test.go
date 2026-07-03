@@ -693,3 +693,24 @@ func TestLoadUsesRepoRootConfig(t *testing.T) {
 		t.Fatalf("Defaults.View = %q, want issues from repo-local config", cfg.Defaults.View)
 	}
 }
+
+func TestExampleConfigParsesAndValidates(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "examples", "tea-dash.yml"))
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal example config: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("example config should validate: %v", err)
+	}
+	if cfg.Instance.TokenEnv != "TEA_DASH_TOKEN" {
+		t.Fatalf("example should prefer tokenEnv over literal secrets, got %+v", cfg.Instance)
+	}
+	if len(cfg.PRSections) == 0 || len(cfg.IssuesSections) == 0 || len(cfg.NotificationsSections) == 0 ||
+		len(cfg.ActionsSections) == 0 || len(cfg.BranchSections) == 0 {
+		t.Fatalf("example should cover all top-level views: %+v", cfg)
+	}
+}
