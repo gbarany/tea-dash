@@ -64,3 +64,50 @@ func TestNotificationLifecycle(t *testing.T) {
 		t.Fatal("unread after mark-all")
 	}
 }
+
+// TestFilterNotificationsByStatusType is a discriminating test for the
+// read-side status-types filter: each bucket must exclude the others, not
+// just "include the right one" (a filter that matched everything would also
+// pass a same-bucket-only assertion).
+func TestFilterNotificationsByStatusType(t *testing.T) {
+	all := []*Notification{
+		{ID: 1, Unread: true, Title: "unread one"},
+		{ID: 2, Pinned: true, Title: "pinned one"},
+		{ID: 3, Title: "read one"}, // Unread: false, Pinned: false -> "read"
+	}
+
+	pinned := filterNotifications(all, []string{"pinned"})
+	if len(pinned) != 1 || pinned[0].ID != 2 {
+		t.Fatalf("status-types=[pinned] = %+v, want only #2", pinned)
+	}
+
+	unread := filterNotifications(all, []string{"unread"})
+	if len(unread) != 1 || unread[0].ID != 1 {
+		t.Fatalf("status-types=[unread] = %+v, want only #1 (pinned/read excluded)", unread)
+	}
+
+	read := filterNotifications(all, []string{"read"})
+	if len(read) != 1 || read[0].ID != 3 {
+		t.Fatalf("status-types=[read] = %+v, want only #3 (pinned/unread excluded)", read)
+	}
+}
+
+// TestSetNotificationStatusWriteReadRoundTrip pins that the write side
+// (SetNotificationStatus) and read side (notificationEffectiveStatus) agree
+// on the same three-bucket encoding: writing status X and then computing the
+// effective status of the result must yield X again, for every X.
+func TestSetNotificationStatusWriteReadRoundTrip(t *testing.T) {
+	for _, status := range []string{"read", "unread", "pinned"} {
+		t.Run(status, func(t *testing.T) {
+			s := NewStore()
+			s.AddNotification(&Notification{ID: 42})
+			if err := s.SetNotificationStatus(42, status); err != nil {
+				t.Fatal(err)
+			}
+			n := s.NotificationByID(42)
+			if got := notificationEffectiveStatus(n); got != status {
+				t.Fatalf("wrote status %q, effective status = %q (n=%+v)", status, got, n)
+			}
+		})
+	}
+}

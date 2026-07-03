@@ -48,6 +48,18 @@ func (s *Server) handleMarkAllNotificationsRead(w http.ResponseWriter, r *http.R
 // and UnpinNotification alike (only the to-status value differs). An unknown
 // thread id 404s loudly; an unsupported to-status value (none of the real
 // client's read/unread/pinned) is a 400, distinct from "unknown resource".
+//
+// The existence check, the mutation, and the re-fetch-for-response are three
+// separate WithLock/self-locking critical sections rather than one — this is
+// deliberate, not an oversight. It's what lets "unknown id" (404) and "known
+// id, bad status" (400) return different responses without duplicating the
+// existence check inside SetNotificationStatus's own error path. It's safe
+// here because nothing in this package ever deletes a notification once
+// added and --mock never has two goroutines racing a write to the same id,
+// so no thread can vanish between the three sections. Tasks 6 and 7 reuse
+// this same check-then-mutate-then-respond shape for the same reasons; if a
+// future task adds deletion or concurrent same-id writes, this pattern needs
+// re-examining (e.g. re-check existence after the mutation, not just before).
 func (s *Server) handleMarkNotification(w http.ResponseWriter, r *http.Request) {
 	id, ok := parsePathInt64(r.PathValue("id"))
 	if !ok {
