@@ -274,7 +274,7 @@ keybindings:
       command: echo issue {{.IssueNumber}} in {{.RepoName}}
   notifications:
     - key: b
-      builtin: togglePin
+      builtin: togglePin      # gh-dash-compatible alias: toggleBookmark
     - key: B
       builtin: unpin
     - key: D

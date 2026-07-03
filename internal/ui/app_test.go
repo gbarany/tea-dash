@@ -1165,11 +1165,26 @@ func TestToggleNotificationPinRefreshesNotifications(t *testing.T) {
 		pinned     bool
 		unread     bool
 		key        tea.KeyPressMsg
+		cfg        *config.Config
 		wantStatus string
 		wantNotice string
 	}{
 		{name: "pin", key: tea.KeyPressMsg{Code: 'b', Text: "b"}, pinned: false, unread: true, wantStatus: "pinned", wantNotice: "Pinned notification"},
 		{name: "toggle unpin unread", key: tea.KeyPressMsg{Code: 'b', Text: "b"}, pinned: true, unread: true, wantStatus: "unread", wantNotice: "Unpinned notification"},
+		{
+			name: "configured toggleBookmark alias pins",
+			key:  tea.KeyPressMsg{Code: 't', Text: "t"},
+			cfg: &config.Config{
+				Defaults: config.Defaults{View: "notifications"},
+				Keybindings: config.Keybindings{Notifications: []config.Keybinding{
+					{Key: "t", Builtin: "toggleBookmark"},
+				}},
+			},
+			pinned:     false,
+			unread:     true,
+			wantStatus: "pinned",
+			wantNotice: "Pinned notification",
+		},
 		{name: "explicit unpin read", key: tea.KeyPressMsg{Code: 'B', Text: "B"}, pinned: true, unread: false, wantStatus: "read", wantNotice: "Unpinned notification"},
 	}
 
@@ -1187,7 +1202,11 @@ func TestToggleNotificationPinRefreshesNotifications(t *testing.T) {
 				},
 				nil,
 			)
-			m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, client)
+			cfg := tt.cfg
+			if cfg == nil {
+				cfg = &config.Config{Defaults: config.Defaults{View: "notifications"}}
+			}
+			m := New(cfg, client)
 			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 			m = update(t, m, notificationFetchedMsg([]data.Notification{{
 				ID: 12, Number: 42, SubjectTitle: "Review the new dashboard",

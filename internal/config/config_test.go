@@ -288,6 +288,8 @@ keybindings:
   notifications:
     - key: b
       builtin: togglePin
+    - key: t
+      builtin: toggleBookmark
     - key: B
       builtin: unpin
     - key: D
@@ -319,10 +321,11 @@ keybindings:
 		c.Keybindings.Issues[4].Builtin != "unsubscribe" {
 		t.Fatalf("issues keybindings = %+v", c.Keybindings.Issues)
 	}
-	if len(c.Keybindings.Notifications) != 3 ||
+	if len(c.Keybindings.Notifications) != 4 ||
 		c.Keybindings.Notifications[0].Builtin != "togglePin" ||
-		c.Keybindings.Notifications[1].Builtin != "unpin" ||
-		c.Keybindings.Notifications[2].Builtin != "markAllRead" ||
+		c.Keybindings.Notifications[1].Builtin != "toggleBookmark" ||
+		c.Keybindings.Notifications[2].Builtin != "unpin" ||
+		c.Keybindings.Notifications[3].Builtin != "markAllRead" ||
 		c.Keybindings.Actions[0].Key != "a" ||
 		c.Keybindings.Branches[0].Command == "" {
 		t.Fatalf("keybindings = %+v", c.Keybindings)
@@ -426,6 +429,8 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "p", Builtin: "viewPrs"},
 		{Key: "A", Builtin: "unassign"},
 		{Key: "U", Builtin: "removeLabel"},
+	}, Notifications: []Keybinding{
+		{Key: "b", Builtin: "toggleBookmark"},
 	}}}
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("Validate() rejected valid keybindings: %v", err)

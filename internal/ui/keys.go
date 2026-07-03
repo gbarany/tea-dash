@@ -326,7 +326,7 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.MarkUnread = binding(keyName, "mark unread")
 	case "markallasread", "markallread":
 		k.MarkAllRead = binding(keyName, "mark all read")
-	case "pin", "togglepin", "togglepinned":
+	case "pin", "togglepin", "togglepinned", "togglebookmark":
 		k.Pin = binding(keyName, "pin")
 	case "unpin":
 		k.Unpin = binding(keyName, "unpin")
