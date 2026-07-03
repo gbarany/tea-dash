@@ -2004,6 +2004,11 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 				{Label: "Rebase", Value: string(data.MergeStyleRebase)},
 				{Label: "Rebase merge", Value: string(data.MergeStyleRebaseMerge)},
 				{Label: "Fast-forward only", Value: string(data.MergeStyleFastForwardOnly)},
+				{Label: "Merge + delete branch", Value: string(data.MergeStyleMerge) + "+delete"},
+				{Label: "Squash + delete branch", Value: string(data.MergeStyleSquash) + "+delete"},
+				{Label: "Rebase + delete branch", Value: string(data.MergeStyleRebase) + "+delete"},
+				{Label: "Rebase merge + delete branch", Value: string(data.MergeStyleRebaseMerge) + "+delete"},
+				{Label: "Fast-forward only + delete branch", Value: string(data.MergeStyleFastForwardOnly) + "+delete"},
 			},
 		}
 	case actions.KindCancelRun:

@@ -441,11 +441,11 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		return fmt.Sprintf("Set milestone %q on %s#%d.", title, intent.Target.Repo, index), nil
 
 	case uiactions.KindMerge:
-		style, err := mergeStyle(intent.Prompt.Value)
+		opt, err := mergeOptions(intent.Prompt.Value)
 		if err != nil {
 			return "", err
 		}
-		merged, err := r.client.MergePullRequest(owner, repo, index, data.MergeOptions{Style: style})
+		merged, err := r.client.MergePullRequest(owner, repo, index, opt)
 		if err != nil {
 			return "", err
 		}
@@ -732,6 +732,20 @@ func reviewEvent(value string) (data.PullReviewEvent, error) {
 	default:
 		return "", fmt.Errorf("unsupported review action %q", value)
 	}
+}
+
+func mergeOptions(value string) (data.MergeOptions, error) {
+	v := strings.TrimSpace(strings.ToLower(value))
+	deleteBranch := false
+	if strings.HasSuffix(v, "+delete") {
+		deleteBranch = true
+		v = strings.TrimSuffix(v, "+delete")
+	}
+	style, err := mergeStyle(v)
+	if err != nil {
+		return data.MergeOptions{}, err
+	}
+	return data.MergeOptions{Style: style, DeleteBranch: deleteBranch}, nil
 }
 
 func mergeStyle(value string) (data.MergeStyle, error) {
