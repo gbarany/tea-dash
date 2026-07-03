@@ -441,7 +441,7 @@ func (k Keybindings) Validate() error {
 var universalBuiltins = builtinSet(
 	"refresh", "refreshAll", "openGithub", "open", "search", "togglePreview",
 	"toggleSmartFiltering", "toggleSmartFilter", "currentRepo",
-	"firstLine", "lastLine",
+	"up", "down", "firstLine", "lastLine",
 	"pageUp", "pageDown", "scrollUp", "scrollDown", "prevSection",
 	"previousSection", "nextSection", "switchView", "copyurl", "copyNumber",
 	"help", "quit", "redraw", "expand", "summaryViewMore",

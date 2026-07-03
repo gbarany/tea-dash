@@ -315,6 +315,8 @@ actions; commands run through your shell with row template fields such as
 for PR rows once their preview detail has loaded.
 The universal `redraw` builtin asks Bubble Tea to clear and repaint the screen,
 which is useful if a terminal leaves visual artifacts.
+The universal `up` and `down` builtins move the selected row and can be rebound
+independently of the default `j`/`k` and arrow-key navigation.
 The universal `firstLine` and `lastLine` builtins jump to the first and last
 currently loaded row, matching gh-dash's `g`/`G` navigation behavior.
 Scoped `viewIssues` and `viewPrs` built-ins jump directly between the PRs and

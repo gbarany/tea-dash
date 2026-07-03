@@ -2644,6 +2644,30 @@ func TestConfiguredFirstLastBuiltinsMoveSelection(t *testing.T) {
 	}
 }
 
+func TestConfiguredUpDownBuiltinsMoveSelection(t *testing.T) {
+	m := New(&config.Config{
+		Keybindings: config.Keybindings{Universal: []config.Keybinding{
+			{Key: "J", Builtin: "down"},
+			{Key: "K", Builtin: "up"},
+		}},
+	}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 3, Title: "Third row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'J', Text: "J"})
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("down selected #%d, want #2", got)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'K', Text: "K"})
+	if got := m.getCurrRowData().GetNumber(); got != 1 {
+		t.Fatalf("up selected #%d, want #1", got)
+	}
+}
+
 func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
 	var dispatched bool
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)

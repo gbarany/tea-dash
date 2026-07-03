@@ -450,6 +450,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch {
+		case !m.scopedBuiltinOverridden("up") && key.Matches(msg, m.keys.Up):
+			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
+		case !m.scopedBuiltinOverridden("down") && key.Matches(msg, m.keys.Down):
+			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyDown})
 		case !m.scopedBuiltinOverridden("markRead") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkRead):
 			return m.markSelectedNotificationRead()
 		case !m.scopedBuiltinOverridden("markUnread") && m.ctx.View == context.NotificationsView && key.Matches(msg, m.keys.MarkUnread):
@@ -581,13 +585,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Fall-through: forward to the current section (row navigation, etc.). When
 	// the preview is open, moving the cursor to a new row re-renders the pane and
 	// lazily fetches that row's detail.
-	before := m.selKey()
-	cmd := m.updateCurrentSection(msg)
-	if m.ctx.PreviewOpen && m.selKey() != before {
-		m.syncSidebar()
-		cmd = tea.Batch(cmd, m.enrichCurrRow())
-	}
-	return m, cmd
+	return m.updateCurrentSectionWithPreview(msg)
 }
 
 // View composes the same shell as before: title, (tab bar), section body,
@@ -1301,21 +1299,14 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 	if !m.inMainListPane(msg.X, msg.Y) {
 		return m, nil
 	}
-	before := m.selKey()
-	var cmd tea.Cmd
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		cmd = m.updateCurrentSection(tea.KeyPressMsg{Code: tea.KeyUp})
+		return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
 	case tea.MouseWheelDown:
-		cmd = m.updateCurrentSection(tea.KeyPressMsg{Code: tea.KeyDown})
+		return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyDown})
 	default:
 		return m, nil
 	}
-	if m.ctx.PreviewOpen && m.selKey() != before {
-		m.syncSidebar()
-		cmd = tea.Batch(cmd, m.enrichCurrRow())
-	}
-	return m, cmd
 }
 
 func (m Model) failedPreview(row data.RowData, err error) string {
@@ -1512,6 +1503,12 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return next, cmd, true
 	case "redraw":
 		return m, tea.ClearScreen, true
+	case "up":
+		next, cmd := m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
+		return next, cmd, true
+	case "down":
+		next, cmd := m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyDown})
+		return next, cmd, true
 	case "firstline":
 		next, cmd := m.selectCurrentSectionRow(0)
 		return next, cmd, true
@@ -2200,6 +2197,16 @@ func (m *Model) updateCurrentSection(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	return m.updateSection(s.GetId(), s.GetType(), msg)
+}
+
+func (m Model) updateCurrentSectionWithPreview(msg tea.Msg) (Model, tea.Cmd) {
+	before := m.selKey()
+	cmd := m.updateCurrentSection(msg)
+	if m.ctx.PreviewOpen && m.selKey() != before {
+		m.syncSidebar()
+		cmd = tea.Batch(cmd, m.enrichCurrRow())
+	}
+	return m, cmd
 }
 
 func (m *Model) syncProgramContext() {
