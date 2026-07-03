@@ -774,6 +774,127 @@ func TestLoadUsesRepoRootConfig(t *testing.T) {
 	}
 }
 
+func TestLoadMergesIncludesBeforeCurrentFile(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "shared.yml")
+	if err := os.WriteFile(shared, []byte(`
+defaults:
+  view: issues
+  preview:
+    open: false
+    width: 72
+repos:
+  - acme/shared
+repoPaths:
+  "acme/*": "~/src/acme/{{.Repo}}"
+keybindings:
+  universal:
+    - key: H
+      builtin: help
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(dir, "tea-dash.yml")
+	if err := os.WriteFile(current, []byte(`
+include:
+  - ./shared.yml
+defaults:
+  view: prs
+  preview:
+    width: 90
+repos:
+  - acme/current
+keybindings:
+  universal:
+    - key: tab
+      builtin: nextSection
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(current)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Defaults.View != "prs" {
+		t.Fatalf("Defaults.View = %q, want current file to override include", cfg.Defaults.View)
+	}
+	if cfg.Defaults.Preview.Open == nil || *cfg.Defaults.Preview.Open {
+		t.Fatalf("Defaults.Preview.Open = %v, want included open=false to survive recursive map merge", cfg.Defaults.Preview.Open)
+	}
+	if cfg.Defaults.Preview.Width != 90 {
+		t.Fatalf("Defaults.Preview.Width = %d, want current file override", cfg.Defaults.Preview.Width)
+	}
+	if len(cfg.Repos) != 1 || cfg.Repos[0] != "acme/current" {
+		t.Fatalf("Repos = %v, want arrays to be replaced by the current file", cfg.Repos)
+	}
+	if got := cfg.RepoPaths["acme/*"]; got != "~/src/acme/{{.Repo}}" {
+		t.Fatalf("RepoPaths[acme/*] = %q, want included map value", got)
+	}
+	if len(cfg.Keybindings.Universal) != 1 || cfg.Keybindings.Universal[0].Key != "tab" {
+		t.Fatalf("Keybindings.Universal = %+v, want arrays to be replaced by current file", cfg.Keybindings.Universal)
+	}
+}
+
+func TestLoadIncludesLaterIncludeOverridesEarlierInclude(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.yml"), []byte(`
+defaults:
+  view: issues
+repoPaths:
+  "acme/*": "~/src/base/{{.Repo}}"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "later.yml"), []byte(`
+defaults:
+  view: notifications
+repoPaths:
+  "acme/*": "~/src/later/{{.Repo}}"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(dir, "tea-dash.yml")
+	if err := os.WriteFile(current, []byte(`
+include:
+  - ./base.yml
+  - ./later.yml
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(current)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Defaults.View != "notifications" {
+		t.Fatalf("Defaults.View = %q, want later include to override earlier include", cfg.Defaults.View)
+	}
+	if got := cfg.RepoPaths["acme/*"]; got != "~/src/later/{{.Repo}}" {
+		t.Fatalf("RepoPaths[acme/*] = %q, want later include override", got)
+	}
+}
+
+func TestLoadIncludeCycleErrors(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.yml")
+	b := filepath.Join(dir, "b.yml")
+	if err := os.WriteFile(a, []byte("include:\n  - ./b.yml\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("include:\n  - ./a.yml\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(a)
+	if err == nil {
+		t.Fatal("Load should reject include cycles")
+	}
+	if !strings.Contains(err.Error(), "include cycle") {
+		t.Fatalf("Load error = %v, want include cycle", err)
+	}
+}
+
 func TestExampleConfigParsesAndValidates(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "examples", "tea-dash.yml"))
 	if err != nil {

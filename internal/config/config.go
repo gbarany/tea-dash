@@ -18,6 +18,9 @@ import (
 
 // Config is the user configuration for tea-dash.
 type Config struct {
+	// Include lists YAML files to load before this file. Paths are relative to
+	// the file declaring them unless they are absolute or start with "~".
+	Include []string `yaml:"include"`
 	// Instance overrides / selects the Gitea login (else tea's config is reused).
 	Instance Instance `yaml:"instance"`
 	// Login is a deprecated alias for Instance.Login (tea login profile name).
@@ -684,16 +687,133 @@ func Load(configPath ...string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return &Config{}, nil
-	}
+	raw, err := loadConfigMap(path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
+		if errors.Is(err, os.ErrNotExist) {
+			if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+				return &Config{}, nil
+			}
+		}
+		return nil, err
+	}
+	data, err := yaml.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("preparing %s: %w", path, err)
 	}
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+func loadConfigMap(file string, stack []string) (map[string]any, error) {
+	path, err := resolveConfigPath(file)
+	if err != nil {
+		return nil, err
+	}
+	for _, seen := range stack {
+		if seen == path {
+			return nil, fmt.Errorf("include cycle: %s", strings.Join(append(stack, path), " -> "))
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	var current map[string]any
+	if err := yaml.Unmarshal(data, &current); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	if current == nil {
+		current = map[string]any{}
+	}
+
+	includes, err := includePaths(current["include"])
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	merged := map[string]any{}
+	nextStack := append(stack, path)
+	for _, include := range includes {
+		includePath, err := resolveIncludePath(include, filepath.Dir(path))
+		if err != nil {
+			return nil, fmt.Errorf("%s include %q: %w", path, include, err)
+		}
+		included, err := loadConfigMap(includePath, nextStack)
+		if err != nil {
+			return nil, err
+		}
+		merged = mergeYAMLMaps(merged, included)
+	}
+	return mergeYAMLMaps(merged, current), nil
+}
+
+func resolveConfigPath(file string) (string, error) {
+	expanded, err := ExpandPath(file)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(expanded)
+}
+
+func resolveIncludePath(include, baseDir string) (string, error) {
+	include = strings.TrimSpace(include)
+	if include == "" {
+		return "", errors.New("path is required")
+	}
+	expanded, err := ExpandPath(include)
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(expanded) {
+		return expanded, nil
+	}
+	return filepath.Join(baseDir, expanded), nil
+}
+
+func includePaths(v any) ([]string, error) {
+	switch v := v.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil, nil
+		}
+		return []string{v}, nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for i, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("include[%d] must be a string", i)
+			}
+			if strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		return out, nil
+	case []string:
+		return v, nil
+	default:
+		return nil, fmt.Errorf("include must be a string or list of strings")
+	}
+}
+
+func mergeYAMLMaps(base, overlay map[string]any) map[string]any {
+	out := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		if baseMap, ok := out[k].(map[string]any); ok {
+			if overlayMap, ok := v.(map[string]any); ok {
+				out[k] = mergeYAMLMaps(baseMap, overlayMap)
+				continue
+			}
+		}
+		out[k] = v
+	}
+	return out
 }

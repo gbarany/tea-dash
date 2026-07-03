@@ -52,6 +52,7 @@ func TestConfigSchemaCoversDocumentedTopLevelKeys(t *testing.T) {
 		t.Fatalf("schema properties = %#v, want object", schema["properties"])
 	}
 	for _, key := range []string{
+		"include",
 		"instance",
 		"smartFilteringAtLaunch",
 		"confirmQuit",
