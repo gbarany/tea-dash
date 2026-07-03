@@ -366,11 +366,13 @@ func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
 		ExecProcess: execProcess.Run,
 	})
 	intent := pullIntent(uiactions.KindCustomCommand)
-	intent.Command = "cd {{.RepoPath}} && echo {{.RepoName}} {{.PrNumber}}/{{.PrIndex}} {{.Title}} {{.Author}} {{.InstanceURL}} {{.Url}}"
+	intent.Command = "cd {{.RepoPath}} && echo {{.RepoName}} {{.PrNumber}}/{{.PrIndex}} {{.Title}} {{.Author}} {{.HeadRefName}} {{.BaseRefName}} {{.InstanceURL}} {{.Url}}"
 	intent.Name = "lazygit"
 	intent.Target.RepositoryPath = "/src/widgets"
 	intent.Target.URL = "https://git.example/acme/widgets/pulls/7"
 	intent.Target.Author = "alice"
+	intent.Target.HeadRefName = "feature/ref-fields"
+	intent.Target.BaseRefName = "main"
 
 	got := runDispatch(t, r, intent)
 	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
@@ -382,7 +384,7 @@ func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
 	if len(execProcess.cmd.Args) != 3 || execProcess.cmd.Args[1] != "-c" {
 		t.Fatalf("shell args = %#v, want shell -c", execProcess.cmd.Args)
 	}
-	want := "cd /src/widgets && echo acme/widgets 7/7 PR title alice https://git.example https://git.example/acme/widgets/pulls/7"
+	want := "cd /src/widgets && echo acme/widgets 7/7 PR title alice feature/ref-fields main https://git.example https://git.example/acme/widgets/pulls/7"
 	if execProcess.cmd.Args[2] != want {
 		t.Fatalf("rendered command = %q, want %q", execProcess.cmd.Args[2], want)
 	}

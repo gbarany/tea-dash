@@ -424,6 +424,8 @@ type customCommandContext struct {
 	Title       string
 	IssueTitle  string
 	BranchName  string
+	HeadRefName string
+	BaseRefName string
 	Author      string
 	Sha         string
 	SHA         string
@@ -450,6 +452,8 @@ func (r Runner) renderCustomCommand(command string, target uiactions.Target) (st
 		Title:       target.Title,
 		IssueTitle:  target.Title,
 		BranchName:  target.Title,
+		HeadRefName: target.HeadRefName,
+		BaseRefName: target.BaseRefName,
 		Author:      target.Author,
 		Sha:         target.SHA,
 		SHA:         target.SHA,

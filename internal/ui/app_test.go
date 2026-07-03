@@ -2311,6 +2311,24 @@ func TestConfigCustomKeybindingDispatchesSelectedRowCommand(t *testing.T) {
 	}
 }
 
+func TestSelectedPullTargetIncludesLoadedRefNames(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 12, Title: "Custom command row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open", HTMLURL: "https://git.example/gbarany/tea-dash/pulls/12",
+	}}))
+	m.pullDetails[m.selKey()] = &data.PullDetail{BaseRef: "main", HeadRef: "feature/ref-fields"}
+
+	target, ok := m.selectedActionTarget()
+	if !ok {
+		t.Fatal("expected selected PR target")
+	}
+	if target.BaseRefName != "main" || target.HeadRefName != "feature/ref-fields" {
+		t.Fatalf("target refs = base %q head %q, want main / feature/ref-fields", target.BaseRefName, target.HeadRefName)
+	}
+}
+
 func TestScopedBuiltinKeybindingRunsInActiveView(t *testing.T) {
 	cfg := &config.Config{
 		Defaults: config.Defaults{View: "issues"},

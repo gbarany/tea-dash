@@ -1708,6 +1708,9 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 	case data.PullRequest:
 		rowKind = actions.RowKindPullRequest
 		author = r.Author
+		if detail := m.pullDetails[m.selKey()]; detail != nil {
+			sha = detail.HeadSHA
+		}
 	case data.Issue:
 		rowKind = actions.RowKindIssue
 		author = r.Author
@@ -1730,6 +1733,12 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 		URL:         row.GetURL(),
 		Author:      author,
 		SHA:         sha,
+	}
+	if target.RowKind == actions.RowKindPullRequest {
+		if detail := m.pullDetails[m.selKey()]; detail != nil {
+			target.HeadRefName = detail.HeadRef
+			target.BaseRefName = detail.BaseRef
+		}
 	}
 	if branch, ok := row.(localgit.Branch); ok {
 		target.RepositoryPath = branch.RepositoryPath
