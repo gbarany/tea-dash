@@ -446,6 +446,8 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "U", Builtin: "removeLabel"},
 	}, Notifications: []Keybinding{
 		{Key: "b", Builtin: "toggleBookmark"},
+	}, Actions: []Keybinding{
+		{Key: "L", Builtin: "viewLogs"},
 	}, Branches: []Keybinding{
 		{Key: "P", Builtin: "push"},
 		{Key: "F", Builtin: "forcePush"},

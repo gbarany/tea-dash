@@ -2341,6 +2341,25 @@ func TestBranchActionButtonsIncludeLocalOps(t *testing.T) {
 	}
 }
 
+func TestActionsActionButtonsIncludeRunControlsAndLogs(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "actions"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, actionFetchedMsg([]data.ActionRun{{
+		ID: 101, RunNumber: 77, DisplayTitle: "Action row", WorkflowName: "CI",
+		RepoNameWithOwner: "gbarany/tea-dash",
+	}}))
+
+	found := map[string]bool{}
+	for _, b := range m.actionButtons() {
+		found[b.Label] = true
+	}
+	for _, label := range []string{"Logs", "Rerun", "Cancel"} {
+		if !found[label] {
+			t.Fatalf("actions action button %q not found in %+v", label, m.actionButtons())
+		}
+	}
+}
+
 func TestActionsViewRunControlKeysDispatchExpectedIntents(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2353,6 +2372,12 @@ func TestActionsViewRunControlKeysDispatchExpectedIntents(t *testing.T) {
 			name:   "rerun",
 			key:    tea.KeyPressMsg{Code: 'R', Text: "R"},
 			kind:   actions.KindRerunRun,
+			direct: true,
+		},
+		{
+			name:   "logs",
+			key:    tea.KeyPressMsg{Code: 'L', Text: "L"},
+			kind:   actions.KindViewLogs,
 			direct: true,
 		},
 		{

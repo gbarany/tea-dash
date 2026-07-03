@@ -42,6 +42,8 @@ type Client interface {
 	MarkPullDraft(owner, repo string, index int64) (bool, error)
 	SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error)
 	GetPullDiff(owner, repo string, index int64) ([]byte, error)
+	ListActionJobs(ctx context.Context, owner, repo string, runID int64) ([]data.ActionJob, error)
+	GetActionJobLogs(ctx context.Context, owner, repo string, jobID int64) ([]byte, error)
 	RerunActionRun(ctx context.Context, owner, repo string, runID int64) error
 	CancelActionRun(ctx context.Context, owner, repo string, runID int64) error
 }
@@ -176,6 +178,9 @@ func (r Runner) Dispatch(intent uiactions.Intent) tea.Cmd {
 	if intent.Kind == uiactions.KindExternalDiff {
 		return r.dispatchExternalDiff(intent)
 	}
+	if intent.Kind == uiactions.KindViewLogs {
+		return r.dispatchActionLogs(intent)
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 		defer cancel()
@@ -211,6 +216,45 @@ func (r Runner) dispatchExternalDiff(intent uiactions.Intent) tea.Cmd {
 				Intent:  intent,
 				Status:  uiactions.ResultSucceeded,
 				Message: fmt.Sprintf("Viewed diff for %s#%d.", intent.Target.Repo, intent.Target.Number),
+			}
+		})()
+	}
+}
+
+func (r Runner) dispatchActionLogs(intent uiactions.Intent) tea.Cmd {
+	return func() tea.Msg {
+		if r.client == nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: fmt.Errorf("%s is unavailable: no Gitea client", actionLabel(intent.Kind))}
+		}
+		owner, repo, err := splitRepo(intent.Target.Repo)
+		if err != nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		defer cancel()
+		runID := targetRunID(intent.Target)
+		jobs, err := r.client.ListActionJobs(ctx, owner, repo, runID)
+		if err != nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: err}
+		}
+		if len(jobs) == 0 {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: fmt.Errorf("no jobs found for %s run #%d", intent.Target.Repo, intent.Target.Number)}
+		}
+		job := jobs[0]
+		logs, err := r.client.GetActionJobLogs(ctx, owner, repo, job.ID)
+		if err != nil {
+			return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: err}
+		}
+		command := r.cfg.Pager.DiffCommand()
+		cmd := shell.BuildExecCommand(command, logs, r.cwd)
+		return r.execProcess(cmd, func(err error) tea.Msg {
+			if err != nil {
+				return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultErrored, Err: fmt.Errorf("run logs pager %q: %w", command, err)}
+			}
+			return uiactions.ResultMsg{
+				Intent:  intent,
+				Status:  uiactions.ResultSucceeded,
+				Message: fmt.Sprintf("Viewed logs for %s run #%d job %s.", intent.Target.Repo, intent.Target.Number, displayJobName(job)),
 			}
 		})()
 	}
@@ -497,6 +541,13 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 	}
 }
 
+func displayJobName(job data.ActionJob) string {
+	if strings.TrimSpace(job.Name) != "" {
+		return job.Name
+	}
+	return fmt.Sprintf("#%d", job.ID)
+}
+
 type customCommandContext struct {
 	RepoName    string
 	RepoPath    string
@@ -716,6 +767,8 @@ func actionLabel(kind uiactions.Kind) string {
 		return "rerun"
 	case uiactions.KindCancelRun:
 		return "cancel run"
+	case uiactions.KindViewLogs:
+		return "view logs"
 	default:
 		return string(kind)
 	}

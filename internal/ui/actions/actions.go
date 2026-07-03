@@ -30,6 +30,7 @@ const (
 	KindDeleteBranch      Kind = "delete_branch"
 	KindRerunRun          Kind = "rerun_run"
 	KindCancelRun         Kind = "cancel_run"
+	KindViewLogs          Kind = "view_logs"
 	KindCustomCommand     Kind = "custom_command"
 )
 

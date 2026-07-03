@@ -466,7 +466,7 @@ var notificationBuiltins = builtinSet(
 	"markAllAsDone", "markAllDone", "pin", "unpin", "togglePin", "togglePinned", "toggleBookmark",
 )
 
-var actionBuiltins = builtinSet("rerun", "rerunRun", "cancel", "cancelRun")
+var actionBuiltins = builtinSet("rerun", "rerunRun", "cancel", "cancelRun", "logs", "viewLogs")
 
 var branchBuiltins = builtinSet("checkout", "push", "forcePush", "fastForward", "delete")
 

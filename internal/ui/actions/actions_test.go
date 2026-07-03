@@ -25,6 +25,7 @@ func TestKindConstants(t *testing.T) {
 		KindDeleteBranch:      "delete_branch",
 		KindRerunRun:          "rerun_run",
 		KindCancelRun:         "cancel_run",
+		KindViewLogs:          "view_logs",
 	}
 	for got, want := range tests {
 		if string(got) != want {
