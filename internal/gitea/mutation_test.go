@@ -520,6 +520,34 @@ func TestRequestPullReviewersPostsReviewerList(t *testing.T) {
 	}
 }
 
+func TestRemovePullReviewersDeletesReviewerList(t *testing.T) {
+	var reviewers []string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/45/requested_reviewers" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		body := decodeMutationBody(t, r)
+		raw, ok := body["reviewers"].([]any)
+		if !ok {
+			t.Fatalf("body = %#v, want reviewers array", body)
+		}
+		for _, v := range raw {
+			reviewers = append(reviewers, v.(string))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := c.RemovePullReviewers("acme", "widgets", 45, []string{"alice", "bob"}); err != nil {
+		t.Fatalf("RemovePullReviewers: %v", err)
+	}
+	if !reflect.DeepEqual(reviewers, []string{"alice", "bob"}) {
+		t.Fatalf("reviewers = %#v, want alice/bob", reviewers)
+	}
+}
+
 func TestAddCommentWrapsServerError(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/repos/acme/widgets/issues/7/comments" {

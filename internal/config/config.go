@@ -452,6 +452,7 @@ var prBuiltins = builtinSet(
 	"update", "updateBranch", "ready", "markReady", "draft", "markDraft",
 	"watch", "watchChecks", "checks", "close", "reopen", "diff", "checkout", "approve", "review",
 	"requestReview", "requestReviewer", "requestReviewers",
+	"removeReview", "removeReviewer", "removeReviewers", "removeRequestedReviewers",
 	"viewIssues", "summaryViewMore", "expand", "prevSidebarTab", "nextSidebarTab",
 )
 

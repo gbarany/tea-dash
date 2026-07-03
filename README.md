@@ -255,6 +255,8 @@ keybindings:
       builtin: watchChecks
     - key: "@"
       builtin: requestReviewers
+    - key: "#"
+      builtin: removeReviewers
     - key: "["
       builtin: prevSidebarTab
     - key: "]"

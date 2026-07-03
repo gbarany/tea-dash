@@ -345,6 +345,38 @@ func TestDispatchRequestReviewersRejectsEmptyInput(t *testing.T) {
 	}
 }
 
+func TestDispatchRemoveReviewersParsesCommaSeparatedReviewers(t *testing.T) {
+	client := &fakeClient{}
+	r := New(Options{Client: client})
+	intent := pullIntent(uiactions.KindRemoveReviewers)
+	intent.Prompt.Value = " alice, bob, alice "
+
+	got := runDispatch(t, r, intent)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("remove reviewers result = %+v", got)
+	}
+	if client.reviewRequestIndex != 7 {
+		t.Fatalf("reviewRequestIndex = %d, want 7", client.reviewRequestIndex)
+	}
+	if !reflect.DeepEqual(client.removedReviewers, []string{"alice", "bob"}) {
+		t.Fatalf("removedReviewers = %#v, want alice/bob", client.removedReviewers)
+	}
+	if !strings.Contains(got.Message, "Removed review requests for alice, bob on acme/widgets#7") {
+		t.Fatalf("message = %q, want reviewer removal confirmation", got.Message)
+	}
+}
+
+func TestDispatchRemoveReviewersRejectsEmptyInput(t *testing.T) {
+	intent := pullIntent(uiactions.KindRemoveReviewers)
+	intent.Prompt.Value = " , "
+
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), intent)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "reviewer usernames cannot be empty") {
+		t.Fatalf("empty remove reviewers result = %+v", got)
+	}
+}
+
 func TestDispatchUpdatePullRequest(t *testing.T) {
 	client := &fakeClient{}
 	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindUpdateBranch))
@@ -732,6 +764,7 @@ type fakeClient struct {
 	milestoneTitle     string
 	reviewRequestIndex int64
 	requestedReviewers []string
+	removedReviewers   []string
 	subscribeIssue     int64
 	unsubscribeIssue   int64
 	markReadyChanged   bool
@@ -814,6 +847,12 @@ func (f *fakeClient) SubmitPullReview(_, _ string, _ int64, opt data.PullReviewO
 func (f *fakeClient) RequestPullReviewers(_, _ string, index int64, reviewers []string) error {
 	f.reviewRequestIndex = index
 	f.requestedReviewers = append([]string(nil), reviewers...)
+	return f.err
+}
+
+func (f *fakeClient) RemovePullReviewers(_, _ string, index int64, reviewers []string) error {
+	f.reviewRequestIndex = index
+	f.removedReviewers = append([]string(nil), reviewers...)
 	return f.err
 }
 

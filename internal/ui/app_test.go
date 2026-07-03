@@ -233,7 +233,7 @@ func TestActionBarRendersCommonPullRequestButtons(t *testing.T) {
 	}}))
 
 	view := m.View().Content
-	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Request review]", "[Diff]", "[Checkout]", "[Merge]", "[Close]"} {
+	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Request review]", "[Remove reviewers]", "[Diff]", "[Checkout]", "[Merge]", "[Close]"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("action bar missing %q:\n%s", want, view)
 		}
@@ -301,6 +301,27 @@ func TestMouseClickReadyActionButtonStartsPromptAction(t *testing.T) {
 	}
 	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindMarkReady {
 		t.Fatalf("ready button prompt active=%v pending=%s, want mark-ready prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
+	}
+}
+
+func TestMouseClickRemoveReviewersActionButtonStartsPromptAction(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	x := actionButtonClickX(t, m, "Remove reviewers")
+	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatalf("remove-reviewers button should open the prompt synchronously, got cmd %v", cmd)
+	}
+	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindRemoveReviewers {
+		t.Fatalf("remove-reviewers button prompt active=%v pending=%s, want remove-reviewers prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
+	}
+	if !strings.Contains(m.actionPrompt.View(120), "Remove reviewers") {
+		t.Fatalf("remove-reviewers prompt should name the action:\n%s", m.actionPrompt.View(120))
 	}
 }
 
@@ -2725,6 +2746,25 @@ func TestRequestReviewerAliasReplacesDefaultHotkey(t *testing.T) {
 	m = update(t, m, tea.KeyPressMsg{Code: 'Q', Text: "Q"})
 	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Request reviewers") {
 		t.Fatalf("configured requestReviewer alias should open request-reviewers prompt, got:\n%s", m.actionPrompt.View(120))
+	}
+}
+
+func TestRemoveReviewersScopedBuiltinOpensPrompt(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			PRs: []config.Keybinding{{Key: "R", Builtin: "removeReviewers"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 8, Title: "PR row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'R', Text: "R"})
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Remove reviewers") {
+		t.Fatalf("configured removeReviewers builtin should open remove-reviewers prompt, got:\n%s", m.actionPrompt.View(120))
 	}
 }
 

@@ -22,6 +22,7 @@ const (
 	KindReopen            Kind = "reopen"
 	KindReview            Kind = "review"
 	KindRequestReviewers  Kind = "request_reviewers"
+	KindRemoveReviewers   Kind = "remove_reviewers"
 	KindExternalDiff      Kind = "external_diff"
 	KindCheckout          Kind = "checkout"
 	KindSwitchBranch      Kind = "switch_branch"

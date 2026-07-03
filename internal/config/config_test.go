@@ -273,6 +273,8 @@ keybindings:
       builtin: checkout
     - key: "@"
       builtin: requestReviewers
+    - key: R
+      builtin: removeReviewers
     - key: g
       name: lazygit
       command: cd {{.RepoPath}} && lazygit
@@ -319,10 +321,11 @@ keybindings:
 		c.Keybindings.Universal[0].Builtin != "nextSection" {
 		t.Fatalf("universal keybindings = %+v", c.Keybindings.Universal)
 	}
-	if len(c.Keybindings.PRs) != 3 ||
+	if len(c.Keybindings.PRs) != 4 ||
 		c.Keybindings.PRs[1].Builtin != "requestReviewers" ||
-		c.Keybindings.PRs[2].Name != "lazygit" ||
-		!strings.Contains(c.Keybindings.PRs[2].Command, "lazygit") {
+		c.Keybindings.PRs[2].Builtin != "removeReviewers" ||
+		c.Keybindings.PRs[3].Name != "lazygit" ||
+		!strings.Contains(c.Keybindings.PRs[3].Command, "lazygit") {
 		t.Fatalf("prs keybindings = %+v", c.Keybindings.PRs)
 	}
 	if len(c.Keybindings.Issues) != 5 ||
