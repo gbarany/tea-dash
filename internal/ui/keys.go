@@ -43,6 +43,7 @@ type keyMap struct {
 	Close             key.Binding
 	Reopen            key.Binding
 	Review            key.Binding
+	RequestReviewers  key.Binding
 	ExternalDiff      key.Binding
 	Checkout          key.Binding
 	PushBranch        key.Binding
@@ -191,6 +192,10 @@ func defaultKeyMap() keyMap {
 		Review: key.NewBinding(
 			key.WithKeys("v"),
 			key.WithHelp("v", "review"),
+		),
+		RequestReviewers: key.NewBinding(
+			key.WithKeys("@"),
+			key.WithHelp("@", "request review"),
 		),
 		ExternalDiff: key.NewBinding(
 			key.WithKeys("d", "ctrl+t"),
@@ -345,6 +350,8 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Reopen = binding(keyName, "reopen")
 	case "approve", "review":
 		k.Review = binding(keyName, "review")
+	case "requestreview", "requestreviewer", "requestreviewers":
+		k.RequestReviewers = binding(keyName, "request review")
 	case "diff":
 		k.ExternalDiff = binding(keyName, "external diff")
 	case "checkout":

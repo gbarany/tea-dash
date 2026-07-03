@@ -233,7 +233,7 @@ func TestActionBarRendersCommonPullRequestButtons(t *testing.T) {
 	}}))
 
 	view := m.View().Content
-	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Diff]", "[Checkout]", "[Merge]", "[Close]"} {
+	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Request review]", "[Diff]", "[Checkout]", "[Merge]", "[Close]"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("action bar missing %q:\n%s", want, view)
 		}
@@ -1940,6 +1940,16 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		{name: "update branch", key: tea.KeyPressMsg{Code: 'u', Text: "u"}, kind: actions.KindUpdateBranch},
 		{name: "mark ready", key: tea.KeyPressMsg{Code: 'W', Text: "W"}, kind: actions.KindMarkReady},
 		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
+		{
+			name:      "request reviewers",
+			key:       tea.KeyPressMsg{Code: '@', Text: "@"},
+			kind:      actions.KindRequestReviewers,
+			textInput: []tea.KeyPressMsg{{Code: 'a', Text: "a"}, {Code: 'l', Text: "l"}, {Code: 'i', Text: "i"}, {Code: 'c', Text: "c"}, {Code: 'e', Text: "e"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptText,
+				Value: "alice",
+			},
+		},
 		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},
 		{name: "checkout space alias", key: tea.KeyPressMsg{Code: ' ', Text: " "}, kind: actions.KindCheckout},
 	}
@@ -2640,6 +2650,29 @@ func TestScopedBuiltinKeybindingReplacesDefaultInActiveView(t *testing.T) {
 	m = update(t, m, tea.KeyPressMsg{Code: 'M', Text: "M"})
 	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Merge") {
 		t.Fatalf("configured 'M' key should open the merge prompt, got:\n%s", m.actionPrompt.View(120))
+	}
+}
+
+func TestRequestReviewerAliasReplacesDefaultHotkey(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			PRs: []config.Keybinding{{Key: "Q", Builtin: "requestReviewer"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 8, Title: "PR row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: '@', Text: "@"})
+	if m.actionPrompt.Active() {
+		t.Fatal("default @ request-reviewers key should be replaced by requestReviewer scoped alias")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'Q', Text: "Q"})
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Request reviewers") {
+		t.Fatalf("configured requestReviewer alias should open request-reviewers prompt, got:\n%s", m.actionPrompt.View(120))
 	}
 }
 

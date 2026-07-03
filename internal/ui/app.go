@@ -501,6 +501,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindReopen)
 		case !m.scopedBuiltinOverridden("review") && key.Matches(msg, m.keys.Review):
 			return m, m.startAction(actions.KindReview)
+		case !m.scopedBuiltinOverridden("requestReview") && !m.scopedBuiltinOverridden("requestReviewer") &&
+			!m.scopedBuiltinOverridden("requestReviewers") && key.Matches(msg, m.keys.RequestReviewers):
+			return m, m.startAction(actions.KindRequestReviewers)
 		case !m.scopedBuiltinOverridden("push") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.PushBranch):
 			return m, m.startAction(actions.KindPushBranch)
 		case !m.scopedBuiltinOverridden("forcePush") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.ForcePushBranch):
@@ -761,6 +764,7 @@ func (m Model) actionButtons() []actionButton {
 		}
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
+			actionButton{Label: "Request review", Builtin: "requestReviewers"},
 			actionButton{Label: "Checks", Builtin: "watchChecks"},
 			actionButton{Label: "Diff", Builtin: "diff"},
 			actionButton{Label: "Checkout", Builtin: "checkout"},
@@ -1690,6 +1694,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindReopen), true
 	case "approve", "review":
 		return m, m.startAction(actions.KindReview), true
+	case "requestreview", "requestreviewer", "requestreviewers":
+		return m, m.startAction(actions.KindRequestReviewers), true
 	case "diff":
 		return m, m.startAction(actions.KindExternalDiff), true
 	case "checkout":
@@ -1841,7 +1847,7 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 
 func validateActionTarget(kind actions.Kind, target actions.Target) error {
 	switch kind {
-	case actions.KindMerge, actions.KindUpdateBranch, actions.KindMarkReady, actions.KindMarkDraft, actions.KindReview, actions.KindExternalDiff:
+	case actions.KindMerge, actions.KindUpdateBranch, actions.KindMarkReady, actions.KindMarkDraft, actions.KindReview, actions.KindRequestReviewers, actions.KindExternalDiff:
 		if target.RowKind != actions.RowKindPullRequest {
 			return fmt.Errorf("%s is only available for pull requests.", actionLabel(kind))
 		}
@@ -1883,7 +1889,7 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 	switch kind {
 	case actions.KindComment:
 		return actions.PromptText
-	case actions.KindAddLabel, actions.KindRemoveLabel, actions.KindSetMilestone:
+	case actions.KindAddLabel, actions.KindRemoveLabel, actions.KindSetMilestone, actions.KindRequestReviewers:
 		return actions.PromptText
 	case actions.KindMerge, actions.KindReview:
 		return actions.PromptPicker
@@ -1926,6 +1932,13 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 			Title:       title,
 			Message:     message,
 			Placeholder: "Milestone title",
+		}
+	case actions.KindRequestReviewers:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       title,
+			Message:     message,
+			Placeholder: "Reviewer usernames, comma-separated",
 		}
 	case actions.KindReview:
 		return actionprompt.Config{
@@ -1998,6 +2011,8 @@ func actionLabel(kind actions.Kind) string {
 		return "Reopen"
 	case actions.KindReview:
 		return "Review"
+	case actions.KindRequestReviewers:
+		return "Request reviewers"
 	case actions.KindExternalDiff:
 		return "External diff"
 	case actions.KindCheckout:

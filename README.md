@@ -98,6 +98,7 @@ tea-dash --help
 | `u`             | update PR branch from its base branch |
 | `W`             | mark draft PR ready for review |
 | `w`             | show/watch PR checks in the Actions view |
+| `@`             | request PR review from one or more users |
 | `m` / `u` / `M` | mark notification read / unread / all read |
 | `b` / `B`       | pin / unpin notification |
 | `x` / `X`       | close / reopen          |
@@ -252,6 +253,8 @@ keybindings:
       builtin: ready
     - key: w
       builtin: watchChecks
+    - key: "@"
+      builtin: requestReviewers
     - key: "["
       builtin: prevSidebarTab
     - key: "]"
