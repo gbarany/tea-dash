@@ -31,37 +31,62 @@ func (s *Server) Close() { s.http.Close() }
 // routes registers every handler. Handlers build/marshal their response
 // inside store.WithLock and use only unexported "*Locked" accessors there
 // (see store.go's WithLock doc) — never mutators or exported getters, which
-// self-lock and would deadlock against the non-reentrant mutex.
+// self-lock and would deadlock against the non-reentrant mutex. Route
+// registration is grouped by domain: routes() wires the version/user/repo
+// probes directly and delegates everything else to a per-domain
+// server_<domain>.go file (e.g. searchRoutes).
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"version": "1.24.3"})
 	})
 	mux.HandleFunc("GET /api/v1/user", func(w http.ResponseWriter, r *http.Request) {
-		s.store.WithLock(func() { writeJSON(w, s.store.meLocked()) })
+		respondOr404(s, w, r, func() *User { return s.store.meLocked() })
 	})
 	mux.HandleFunc("GET /api/v1/repos/{owner}/{repo}", func(w http.ResponseWriter, r *http.Request) {
-		s.store.WithLock(func() {
-			repo := s.store.repoByFullNameLocked(r.PathValue("owner") + "/" + r.PathValue("repo"))
-			if repo == nil {
-				notFound(w, r)
-				return
-			}
-			writeJSON(w, repo)
+		respondOr404(s, w, r, func() *Repo {
+			return s.store.repoByFullNameLocked(r.PathValue("owner") + "/" + r.PathValue("repo"))
 		})
 	})
+	s.searchRoutes(mux)
 	// Catch-all LAST: unknown paths fail loudly so drift surfaces in tests.
 	mux.HandleFunc("/", notFound)
 }
 
+// respondOr404 builds a value under the store lock and writes it as JSON, or
+// a loud 404 when build returns nil. It encapsulates the marshal-under-
+// WithLock contract so individual handlers can't forget it. Generic (*T, not
+// any) deliberately: a typed-nil pointer boxed into any is not == nil and
+// would marshal "null" instead of 404ing.
+func respondOr404[T any](s *Server, w http.ResponseWriter, r *http.Request, build func() *T) {
+	s.store.WithLock(func() {
+		if v := build(); v != nil {
+			writeJSON(w, v)
+			return
+		}
+		notFound(w, r)
+	})
+}
+
+// respondList builds a filtered/paged slice plus its pre-pagination total
+// under the store lock and writes it with X-Total-Count.
+func respondList[T any](s *Server, w http.ResponseWriter, build func() (rows []T, total int)) {
+	s.store.WithLock(func() {
+		rows, total := build()
+		writeList(w, total, rows)
+	})
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	// json.Encoder.Encode marshals to an internal buffer before writing to w
+	// in one call, so it's safe to still send an error response here — no
+	// partial body can have reached the client yet.
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // writeList writes a JSON array response with Gitea's X-Total-Count header.
-// Unused until Task 3 wires up the search/list endpoints; kept here now so
-// those handlers share one response-shaping helper with the rest of the
-// server.
 func writeList(w http.ResponseWriter, total int, v any) {
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	writeJSON(w, v)

@@ -339,6 +339,18 @@ func (s *Store) Pulls(repo string) []*Pull {
 func (s *Store) AllPulls() []*Pull {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.allPullsLocked()
+}
+
+// pullsLocked is Pulls without taking the lock, for use from inside WithLock.
+// Callers must hold s.mu.
+func (s *Store) pullsLocked(repo string) []*Pull {
+	return s.pulls[repo]
+}
+
+// allPullsLocked is AllPulls without taking the lock, for use from inside
+// WithLock. Callers must hold s.mu.
+func (s *Store) allPullsLocked() []*Pull {
 	var out []*Pull
 	for _, ps := range s.pulls {
 		out = append(out, ps...)
@@ -388,6 +400,18 @@ func (s *Store) Issues(repo string) []*Issue {
 func (s *Store) AllIssues() []*Issue {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.allIssuesLocked()
+}
+
+// issuesLocked is Issues without taking the lock, for use from inside
+// WithLock. Callers must hold s.mu.
+func (s *Store) issuesLocked(repo string) []*Issue {
+	return s.issues[repo]
+}
+
+// allIssuesLocked is AllIssues without taking the lock, for use from inside
+// WithLock. Callers must hold s.mu.
+func (s *Store) allIssuesLocked() []*Issue {
 	var out []*Issue
 	for _, is := range s.issues {
 		out = append(out, is...)
