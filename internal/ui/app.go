@@ -1492,6 +1492,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.openSelected(), true
 	case "quit":
 		return m, tea.Quit, true
+	case "redraw":
+		return m, tea.ClearScreen, true
 	case "nextsection":
 		if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 			m.currSectionId++
