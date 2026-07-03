@@ -133,6 +133,7 @@ instance:
   # tokenEnv:     TEA_DASH_TOKEN                           # name of an env var holding the token
 
 smartFilteringAtLaunch: true # when launched inside a matching git checkout, blank PR/issue sections scope to that repo
+confirmQuit: false           # set true to ask before quitting with q/ctrl+c
 
 defaults:
   view: prs              # startup view: "prs", "issues", "notifications", "actions", or "branches"
