@@ -1144,18 +1144,27 @@ func (m Model) switchToPullChecks(row data.PullRequest, branch, sha string) (Mod
 // switchView cycles pulls -> issues -> notifications -> actions -> branches, lazily
 // building and fetching the target view's sections on first visit.
 func (m *Model) switchView() tea.Cmd {
+	var next context.ViewType
 	switch m.ctx.View {
 	case context.PullsView:
-		m.ctx.View = context.IssuesView
+		next = context.IssuesView
 	case context.IssuesView:
-		m.ctx.View = context.NotificationsView
+		next = context.NotificationsView
 	case context.NotificationsView:
-		m.ctx.View = context.ActionsView
+		next = context.ActionsView
 	case context.ActionsView:
-		m.ctx.View = context.BranchesView
+		next = context.BranchesView
 	default:
-		m.ctx.View = context.PullsView
+		next = context.PullsView
 	}
+	return m.switchToView(next)
+}
+
+func (m *Model) switchToView(view context.ViewType) tea.Cmd {
+	if m.ctx.View == view {
+		return nil
+	}
+	m.ctx.View = view
 	m.syncMainContentDimensions()
 	var cmds []tea.Cmd
 	s := m.currentViewSections()
@@ -1530,7 +1539,11 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 			return m, m.enrichCurrRow(), true
 		}
 		return m, nil, true
-	case "viewissues", "viewprs", "switchview":
+	case "viewissues":
+		return m, m.switchToView(context.IssuesView), true
+	case "viewprs":
+		return m, m.switchToView(context.PullsView), true
+	case "switchview":
 		return m, m.switchView(), true
 	case "search":
 		if s := m.getCurrSection(); s != nil {
