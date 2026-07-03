@@ -9,7 +9,7 @@ notifications, and local branches across one or more Gitea instances, without
 leaving the terminal.
 
 > **Status: early — v1.** A working multi-view dashboard: live tables of your
-> pull requests, issues, unread notifications, Actions runs, and read-only local
+> pull requests, issues, notifications, Actions runs, and read-only local
 > branch status (fetched via the Gitea API (Go SDK + REST) and local `git`),
 > with view switching (`s`), configurable sections you page through with `h`/`l`,
 > live keyword search (`/`), progressive PR/issue loading, a default-open
@@ -143,6 +143,7 @@ defaults:
   prsLimit: 50           # PR page size; more rows load when you reach the bottom (0 -> 50)
   issuesLimit: 50        # issue page size; more rows load when you reach the bottom (0 -> 50)
   notificationsLimit: 50 # rows fetched per notifications section (0 -> 50)
+  includeReadNotifications: true # include read notifications in default notification sections
   actionsLimit: 50       # rows fetched per Actions section (0 -> 50)
   branchesLimit: 0       # local branches shown (0 -> all)
 
@@ -209,7 +210,7 @@ issuesSections:
       milestone: v2
 
 notificationsSections:
-  - title: Unread
+  - title: Inbox
     limit: 50
 
 branchSections:
@@ -326,12 +327,14 @@ view.
 > endpoint has no per-login author filter.
 
 With or without a config file, tea-dash shows the pull requests and issues you
-authored, plus unread notifications, across every repo you can access on your
-Gitea instance. The default PR view has separate open and closed-history tabs;
-sections and filters let you tailor what each tab shows. Notification sections
-currently support title/limit configuration and default to unread threads. The
-branches view shells out to local `git` for configured `localRepos` only and is
-read-only; with no `localRepos`, it falls back to the current working directory.
+authored, plus read and unread notifications, across every repo you can access
+on your Gitea instance. The default PR view has separate open and closed-history
+tabs; sections and filters let you tailor what each tab shows. Notification
+sections currently support title/limit configuration and include read
+notifications by default; set `defaults.includeReadNotifications: false` for
+unread/pinned-only threads. The branches view shells out to local `git` for
+configured `localRepos` only and is read-only; with no `localRepos`, it falls
+back to the current working directory.
 
 ## Development
 

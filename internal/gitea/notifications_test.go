@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestListNotificationsMapsThreads(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	rows, total, err := c.ListNotifications(context.Background(), 25)
+	rows, total, err := c.ListNotifications(context.Background(), 25, false)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -65,9 +66,26 @@ func TestListNotificationsMapsThreads(t *testing.T) {
 	if !strings.Contains(gotQuery, "limit=25") {
 		t.Fatalf("query %q missing limit=25", gotQuery)
 	}
-	if !strings.Contains(gotQuery, "status-types=unread") {
-		t.Fatalf("query %q missing unread status filter", gotQuery)
+	assertNotificationStatuses(t, gotQuery, "unread", "pinned")
+}
+
+func TestListNotificationsCanIncludeReadThreads(t *testing.T) {
+	var gotQuery string
+	srv := notificationServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		fmt.Fprint(w, notificationJSON)
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
 	}
+
+	if _, _, err := c.ListNotifications(context.Background(), 25, true); err != nil {
+		t.Fatalf("ListNotifications: %v", err)
+	}
+
+	assertNotificationStatuses(t, gotQuery, "unread", "read", "pinned")
 }
 
 func TestMarkNotificationReadUsesThreadEndpoint(t *testing.T) {
@@ -291,6 +309,18 @@ func notificationServer(t *testing.T, notifications http.HandlerFunc, routes ...
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func assertNotificationStatuses(t *testing.T, rawQuery string, want ...string) {
+	t.Helper()
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatalf("ParseQuery(%q): %v", rawQuery, err)
+	}
+	got := values["status-types"]
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("status-types = %v, want %v in query %q", got, want, rawQuery)
+	}
 }
 
 func assertEmptyBody(t *testing.T, r *http.Request) {

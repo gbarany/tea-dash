@@ -15,7 +15,7 @@ import (
 // ListNotifications returns the authenticated user's notification threads.
 // Gitea's notification list response does not expose X-Total-Count through the
 // SDK response, so total is the number of rows returned for this page.
-func (c *Client) ListNotifications(_ context.Context, limit int) ([]data.Notification, int, error) {
+func (c *Client) ListNotifications(_ context.Context, limit int, includeRead bool) ([]data.Notification, int, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -24,7 +24,7 @@ func (c *Client) ListNotifications(_ context.Context, limit int) ([]data.Notific
 		var e error
 		threads, _, e = c.sdk.ListNotifications(sdk.ListNotificationOptions{
 			ListOptions: sdk.ListOptions{PageSize: limit},
-			Status:      []sdk.NotifyStatus{sdk.NotifyStatusUnread},
+			Status:      notificationStatuses(includeRead),
 		})
 		return e
 	})
@@ -36,6 +36,13 @@ func (c *Client) ListNotifications(_ context.Context, limit int) ([]data.Notific
 		rows = append(rows, mapNotificationThread(thread))
 	}
 	return rows, len(rows), nil
+}
+
+func notificationStatuses(includeRead bool) []sdk.NotifyStatus {
+	if includeRead {
+		return []sdk.NotifyStatus{sdk.NotifyStatusUnread, sdk.NotifyStatusRead, sdk.NotifyStatusPinned}
+	}
+	return []sdk.NotifyStatus{sdk.NotifyStatusUnread, sdk.NotifyStatusPinned}
 }
 
 // MarkNotificationRead marks one notification thread as read.
