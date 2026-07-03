@@ -15,10 +15,11 @@ import (
 // mapIssueDetail/mapCombinedStatus and the Gitea SDK's PullRequest/Issue/
 // CombinedStatus/Status decode structs.
 func (s *Server) detailRoutes(mux *http.ServeMux) {
-	// A single {index} segment can't carry a literal ".diff" suffix as its own
-	// route pattern (net/http's ServeMux wildcards match a whole segment, so
-	// "{index}" and "{index}.diff" are the same pattern shape and would panic
-	// as a duplicate registration) — one handler dispatches on the suffix.
+	// A route pattern can't spell "{index}.diff": net/http's ServeMux rejects
+	// any text after a wildcard's closing '}' within the same segment as a
+	// malformed pattern ("bad wildcard segment (must end with '}')"), panicking
+	// at registration time — so one handler on the plain {index} pattern
+	// dispatches on the suffix itself.
 	mux.HandleFunc("GET /api/v1/repos/{owner}/{repo}/pulls/{index}", s.handlePullOrDiff)
 	mux.HandleFunc("GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews", s.handlePullReviews)
 	mux.HandleFunc("GET /api/v1/repos/{owner}/{repo}/issues/{index}", s.handleIssueDetail)
@@ -90,17 +91,16 @@ func (s *Server) handlePullReviews(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
-	s.store.WithLock(func() {
+	respondListOr404(s, w, r, func() (rows []*Review, total int, ok bool) {
 		p := s.store.pullLocked(full, idx)
 		if p == nil {
-			notFound(w, r)
-			return
+			return nil, 0, false
 		}
-		reviews := p.Reviews
-		if reviews == nil {
-			reviews = []*Review{}
+		rows = p.Reviews
+		if rows == nil {
+			rows = []*Review{}
 		}
-		writeList(w, len(reviews), reviews)
+		return rows, len(rows), true
 	})
 }
 
@@ -211,18 +211,17 @@ func (s *Server) handleMilestones(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// respondRepoList is respondList that first 404s loudly if the repo is
-// unknown, for the repo-scoped list endpoints that have no other way to
-// signal "this repo doesn't exist" (an empty list would look identical to a
-// repo with zero reviewers/labels/milestones).
+// respondRepoList is respondListOr404 for the repo-scoped list endpoints
+// (reviewers/labels/milestones) that have no other way to signal "this repo
+// doesn't exist" — an empty list would look identical to a real repo with
+// zero reviewers/labels/milestones.
 func respondRepoList[T any](s *Server, w http.ResponseWriter, r *http.Request, full string, build func() (rows []T, total int)) {
-	s.store.WithLock(func() {
+	respondListOr404(s, w, r, func() (rows []T, total int, ok bool) {
 		if s.store.repoByFullNameLocked(full) == nil {
-			notFound(w, r)
-			return
+			return nil, 0, false
 		}
-		rows, total := build()
-		writeList(w, total, rows)
+		rows, total = build()
+		return rows, total, true
 	})
 }
 
@@ -277,19 +276,21 @@ func combinedStatusRow(sha string, statuses []*CommitStatus) map[string]any {
 
 // statusSeverity ranks CommitStatus.Status values so worstStatus can pick the
 // most severe one to roll up into the combined state, matching Gitea's own
-// precedence: failure/error outrank pending, which outranks warning, which
-// outranks success.
+// commit-status precedence: error outranks failure, which outranks pending,
+// which outranks success, which outranks warning (warning is the LEAST
+// severe of the five — it means "succeeded, but flagged," not "still running"
+// or "broken").
 var statusSeverity = map[string]int{
-	"success": 0,
-	"warning": 1,
+	"warning": 0,
+	"success": 1,
 	"pending": 2,
-	"error":   3,
 	"failure": 3,
+	"error":   4,
 }
 
 // worstStatus returns the most severe status among statuses, defaulting to
-// "success" for an empty list (an unknown status string is treated as the
-// least severe, same as "success").
+// "success" for an empty list (an unknown status string ranks alongside
+// "warning", the lowest severity, rather than panicking or erroring).
 func worstStatus(statuses []*CommitStatus) string {
 	worst := "success"
 	worstRank := -1

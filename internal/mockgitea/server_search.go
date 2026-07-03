@@ -36,30 +36,24 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRepoIssues serves the repo-scoped GET /repos/{owner}/{repo}/issues
-// endpoint used by ListRepoPullsPage/ListRepoIssuesPage. It doesn't go through
-// respondList directly because it must 404 for an unknown repo instead of
-// writing an (empty) list — the whole check-then-build-then-write sequence
-// still runs as a single WithLock critical section, so no store access here
-// happens outside the lock.
+// endpoint used by ListRepoPullsPage/ListRepoIssuesPage. It 404s for an
+// unknown repo instead of writing an (empty) list, via respondListOr404.
 func (s *Server) handleRepoIssues(w http.ResponseWriter, r *http.Request) {
 	full := r.PathValue("owner") + "/" + r.PathValue("repo")
 	q := r.URL.Query()
 	limit, page := paginationParams(q)
 
-	s.store.WithLock(func() {
+	respondListOr404(s, w, r, func() (rows []map[string]any, total int, ok bool) {
 		if s.store.repoByFullNameLocked(full) == nil {
-			notFound(w, r)
-			return
+			return nil, 0, false
 		}
 		me := s.store.meLocked().Login
-		var rows []map[string]any
-		var total int
 		if q.Get("type") == "pulls" {
 			rows, total = pageRows(filterPulls(s.store.pullsLocked(full), q, me), limit, page, pullSearchRow)
 		} else {
 			rows, total = pageRows(filterIssues(s.store.issuesLocked(full), q, me), limit, page, issueSearchRow)
 		}
-		writeList(w, total, rows)
+		return rows, total, true
 	})
 }
 

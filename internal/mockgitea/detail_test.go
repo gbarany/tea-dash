@@ -53,3 +53,46 @@ func TestGetIssueDetailAndDiffAndReviewers(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestGetPullDetailUnknownNumberIs404WithPathInBody is a durable regression
+// test for the loud-404 invariant (server.go's routes doc comment): an
+// unknown resource must fail with a body naming the offending method+path,
+// not a bare/empty 404, so route drift surfaces immediately in any test that
+// exercises it — even through the real SDK's error-message extraction, which
+// unwraps the JSON body's "message" field into the returned error's text.
+func TestGetPullDetailUnknownNumberIs404WithPathInBody(t *testing.T) {
+	c := newTestClient(t, detailStore(time.Now()))
+	_, err := c.GetPullDetail("teahouse", "kettle", 999)
+	if err == nil {
+		t.Fatal("want error for unknown pull number")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "GET") || !strings.Contains(msg, "/api/v1/repos/teahouse/kettle/pulls/999") {
+		t.Fatalf("error %q should name the method and path, got %q", msg, msg)
+	}
+}
+
+// TestWorstStatusPrecedence pins worstStatus' severity order: error outranks
+// failure, which outranks pending, which outranks success, which outranks
+// warning (the least severe — a passed-but-flagged check, not a broken one).
+func TestWorstStatusPrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		statuses []*CommitStatus
+		want     string
+	}{
+		{"empty", nil, "success"},
+		{"success and failure -> failure", []*CommitStatus{{Status: "success"}, {Status: "failure"}}, "failure"},
+		{"pending and success -> pending", []*CommitStatus{{Status: "pending"}, {Status: "success"}}, "pending"},
+		{"error outranks failure", []*CommitStatus{{Status: "failure"}, {Status: "error"}}, "error"},
+		{"warning is least severe", []*CommitStatus{{Status: "warning"}, {Status: "success"}}, "success"},
+		{"nil entries skipped", []*CommitStatus{nil, {Status: "pending"}, nil}, "pending"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := worstStatus(tt.statuses); got != tt.want {
+				t.Errorf("worstStatus(%+v) = %q, want %q", tt.statuses, got, tt.want)
+			}
+		})
+	}
+}

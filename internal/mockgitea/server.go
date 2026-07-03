@@ -77,6 +77,22 @@ func respondList[T any](s *Server, w http.ResponseWriter, build func() (rows []T
 	})
 }
 
+// respondListOr404 is respondList for endpoints scoped to a parent resource
+// (a repo, a pull, an issue, ...) that must 404 loudly when that parent is
+// missing rather than silently writing an empty list — an empty list looks
+// identical to "found the parent, it just has zero rows." build reports ok
+// alongside rows/total; !ok writes the 404 instead.
+func respondListOr404[T any](s *Server, w http.ResponseWriter, r *http.Request, build func() (rows []T, total int, ok bool)) {
+	s.store.WithLock(func() {
+		rows, total, ok := build()
+		if !ok {
+			notFound(w, r)
+			return
+		}
+		writeList(w, total, rows)
+	})
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	// json.Encoder.Encode marshals to an internal buffer before writing to w
