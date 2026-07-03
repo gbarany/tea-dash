@@ -1759,8 +1759,22 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 		m.actionPrompt = m.actionPrompt.Focus(reviewBodyPromptConfig(m.pendingAction.Target, result.Label))
 		return cmd
 	}
+	if m.pendingAction.Kind == actions.KindMerge && m.pendingAction.Prompt.Value == "" && mergePromptNeedsMessage(result.Value) {
+		m.pendingAction.Prompt.Value = result.Value
+		m.pendingAction.Prompt.Label = result.Label
+		m.actionPrompt = m.actionPrompt.Focus(mergeTitlePromptConfig(m.pendingAction.Target))
+		return cmd
+	}
+	if m.pendingAction.Kind == actions.KindMerge && m.pendingAction.Prompt.Value != "" &&
+		mergePromptNeedsMessage(m.pendingAction.Prompt.Value) && m.pendingAction.Prompt.Title == "" {
+		m.pendingAction.Prompt.Title = result.Value
+		m.actionPrompt = m.actionPrompt.Focus(mergeMessagePromptConfig(m.pendingAction.Target))
+		return cmd
+	}
 	intent := m.pendingAction
 	if intent.Kind == actions.KindReview && intent.Prompt.Value != "" && reviewPromptNeedsBody(intent.Prompt.Value) {
+		intent.Prompt.Body = result.Value
+	} else if intent.Kind == actions.KindMerge && intent.Prompt.Value != "" && mergePromptNeedsMessage(intent.Prompt.Value) {
 		intent.Prompt.Body = result.Value
 	} else {
 		intent.Prompt.Value = result.Value
@@ -1790,6 +1804,16 @@ func reviewPromptNeedsBody(value string) bool {
 	}
 }
 
+func mergePromptNeedsMessage(value string) bool {
+	for _, part := range strings.Split(strings.ToLower(value), "+") {
+		switch strings.TrimSpace(part) {
+		case "message", "edit-message", "edit_message":
+			return true
+		}
+	}
+	return false
+}
+
 func reviewBodyPromptConfig(target actions.Target, label string) actionprompt.Config {
 	if label == "" {
 		label = "Review"
@@ -1799,6 +1823,25 @@ func reviewBodyPromptConfig(target actions.Target, label string) actionprompt.Co
 		Title:       fmt.Sprintf("Review message #%d", target.Number),
 		Message:     fmt.Sprintf("%s - %s", target.Repo, target.Title),
 		Placeholder: fmt.Sprintf("%s message", label),
+	}
+}
+
+func mergeTitlePromptConfig(target actions.Target) actionprompt.Config {
+	return actionprompt.Config{
+		Mode:        actionprompt.ModeText,
+		Title:       fmt.Sprintf("Merge title #%d", target.Number),
+		Message:     fmt.Sprintf("%s - %s", target.Repo, target.Title),
+		Placeholder: "Merge title",
+		Initial:     target.Title,
+	}
+}
+
+func mergeMessagePromptConfig(target actions.Target) actionprompt.Config {
+	return actionprompt.Config{
+		Mode:        actionprompt.ModeText,
+		Title:       fmt.Sprintf("Merge message #%d", target.Number),
+		Message:     fmt.Sprintf("%s - %s", target.Repo, target.Title),
+		Placeholder: "Merge message",
 	}
 }
 
@@ -2004,6 +2047,9 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 				{Label: "Rebase", Value: string(data.MergeStyleRebase)},
 				{Label: "Rebase merge", Value: string(data.MergeStyleRebaseMerge)},
 				{Label: "Fast-forward only", Value: string(data.MergeStyleFastForwardOnly)},
+				{Label: "Merge with message", Value: string(data.MergeStyleMerge) + "+message"},
+				{Label: "Squash with message", Value: string(data.MergeStyleSquash) + "+message"},
+				{Label: "Rebase merge with message", Value: string(data.MergeStyleRebaseMerge) + "+message"},
 				{Label: "Merge + delete branch", Value: string(data.MergeStyleMerge) + "+delete"},
 				{Label: "Squash + delete branch", Value: string(data.MergeStyleSquash) + "+delete"},
 				{Label: "Rebase + delete branch", Value: string(data.MergeStyleRebase) + "+delete"},

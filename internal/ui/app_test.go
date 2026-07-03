@@ -2081,6 +2081,77 @@ func TestMergePromptIncludesForceMergeOptions(t *testing.T) {
 	}
 }
 
+func TestMergePromptIncludesMessageOptions(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("merge key should open the merge picker")
+	}
+	view := m.actionPrompt.View(120)
+	for _, want := range []string{"Merge with message", "Squash with message", "Rebase merge with message"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("merge prompt missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestMergeWithMessagePromptsForTitleAndBodyBeforeDispatch(t *testing.T) {
+	var got []actions.Intent
+	m := New(&config.Config{}, nil)
+	m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+		got = append(got, intent)
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	for i := 0; i < 5; i++ {
+		m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(got) != 0 {
+		t.Fatalf("merge-with-message picker should not dispatch before title/body, got %+v", got)
+	}
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Merge title") ||
+		!strings.Contains(m.actionPrompt.View(120), "Action row") {
+		t.Fatalf("merge-with-message should open prefilled title prompt, got:\n%s", m.actionPrompt.View(120))
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(got) != 0 {
+		t.Fatalf("merge title prompt should not dispatch before body, got %+v", got)
+	}
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Merge message") {
+		t.Fatalf("merge title prompt should advance to message prompt, got:\n%s", m.actionPrompt.View(120))
+	}
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 's', Text: "s"}, {Code: 'h', Text: "h"}, {Code: 'i', Text: "i"}, {Code: 'p', Text: "p"},
+		{Code: ' ', Text: " "}, {Code: 'i', Text: "i"}, {Code: 't', Text: "t"},
+	} {
+		m = update(t, m, key)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if len(got) != 1 {
+		t.Fatalf("dispatcher calls = %d, want 1", len(got))
+	}
+	if got[0].Kind != actions.KindMerge ||
+		got[0].Prompt.Value != "merge+message" ||
+		got[0].Prompt.Title != "Action row" ||
+		got[0].Prompt.Body != "ship it" {
+		t.Fatalf("merge-with-message intent = %+v, want style plus title/body", got[0])
+	}
+}
+
 func TestReviewRequestChangesPromptsForBodyBeforeDispatch(t *testing.T) {
 	var got []actions.Intent
 	m := New(&config.Config{}, nil)

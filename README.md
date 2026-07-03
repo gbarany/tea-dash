@@ -114,7 +114,7 @@ tea-dash --help
 | `q` / `ctrl+c`  | quit                    |
 
 The merge picker includes each merge strategy plus explicit `+ delete branch`,
-`+ force merge`, and combined variants.
+`with message`, `+ force merge`, and combined variants.
 
 ## Configuration
 
