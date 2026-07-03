@@ -52,9 +52,10 @@ type Repo struct {
 
 // CommitStatus mirrors one entry of a combined commit status.
 type CommitStatus struct {
-	Status  string `json:"status"`
-	Context string `json:"context"`
-	URL     string `json:"target_url"`
+	Status      string `json:"status"`
+	Context     string `json:"context"`
+	URL         string `json:"target_url"`
+	Description string `json:"description"`
 }
 
 // Review mirrors a submitted pull request review.
@@ -271,6 +272,12 @@ func (s *Store) AddUser(u *User) {
 func (s *Store) Users() []*User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.usersLocked()
+}
+
+// usersLocked is Users without taking the lock, for use from inside WithLock.
+// Callers must hold s.mu.
+func (s *Store) usersLocked() []*User {
 	return s.users
 }
 
@@ -378,6 +385,12 @@ func (s *Store) AddIssue(i *Issue) {
 func (s *Store) Issue(repo string, num int64) *Issue {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.issueLocked(repo, num)
+}
+
+// issueLocked is Issue without taking the lock, for use from inside WithLock.
+// Callers must hold s.mu.
+func (s *Store) issueLocked(repo string, num int64) *Issue {
 	for _, i := range s.issues[repo] {
 		if i.Number == num {
 			return i
@@ -478,6 +491,12 @@ func (s *Store) resolveUserLocked(login string) *User {
 func (s *Store) Comments(repo string, num int64) []*Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.commentsLocked(repo, num)
+}
+
+// commentsLocked is Comments without taking the lock, for use from inside
+// WithLock. Callers must hold s.mu.
+func (s *Store) commentsLocked(repo string, num int64) []*Comment {
 	return s.comments[key(repo, num)]
 }
 
@@ -668,6 +687,12 @@ func (s *Store) AddLabelDef(repo string, l *Label) {
 func (s *Store) LabelDefs(repo string) []*Label {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.labelDefsLocked(repo)
+}
+
+// labelDefsLocked is LabelDefs without taking the lock, for use from inside
+// WithLock. Callers must hold s.mu.
+func (s *Store) labelDefsLocked(repo string) []*Label {
 	return s.labels[repo]
 }
 
@@ -685,5 +710,11 @@ func (s *Store) AddMilestoneDef(repo string, m *Milestone) {
 func (s *Store) MilestoneDefs(repo string) []*Milestone {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.milestoneDefsLocked(repo)
+}
+
+// milestoneDefsLocked is MilestoneDefs without taking the lock, for use from
+// inside WithLock. Callers must hold s.mu.
+func (s *Store) milestoneDefsLocked(repo string) []*Milestone {
 	return s.milestones[repo]
 }
