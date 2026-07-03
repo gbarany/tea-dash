@@ -30,6 +30,9 @@ type Config struct {
 	// the git repository tea-dash was launched from, when that checkout's remote
 	// host matches the configured Gitea instance. Nil means enabled.
 	SmartFilteringAtLaunch *bool `yaml:"smartFilteringAtLaunch"`
+	// ConfirmQuit asks before quitting with q/ctrl+c. Nil means disabled,
+	// matching gh-dash's default confirmQuit: false behavior.
+	ConfirmQuit *bool `yaml:"confirmQuit"`
 	// LocalRepos lists local git repository paths for read-only branch status.
 	LocalRepos []LocalRepoConfig `yaml:"localRepos"`
 	// PRSections, IssuesSections, NotificationsSections, ActionsSections, and BranchSections
@@ -63,6 +66,15 @@ func (c *Config) SmartFilteringEnabled() bool {
 		return true
 	}
 	return *c.SmartFilteringAtLaunch
+}
+
+// ConfirmQuitEnabled reports whether tea-dash should ask before quitting. It
+// defaults off, matching gh-dash.
+func (c *Config) ConfirmQuitEnabled() bool {
+	if c == nil || c.ConfirmQuit == nil {
+		return false
+	}
+	return *c.ConfirmQuit
 }
 
 // Defaults holds startup and limit defaults. Per-view limits set the row-fetch

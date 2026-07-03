@@ -204,6 +204,24 @@ func TestSmartFilteringAtLaunchCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestConfirmQuitDefaultsToDisabled(t *testing.T) {
+	var c Config
+	if c.ConfirmQuitEnabled() {
+		t.Fatal("ConfirmQuitEnabled should default to false when confirmQuit is omitted")
+	}
+}
+
+func TestConfirmQuitCanBeEnabled(t *testing.T) {
+	const y = `confirmQuit: true`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !c.ConfirmQuitEnabled() {
+		t.Fatal("ConfirmQuitEnabled should be true when confirmQuit is true")
+	}
+}
+
 func TestDefaultsRefetchInterval(t *testing.T) {
 	if got := (Defaults{}).RefetchInterval(); got != 0 {
 		t.Fatalf("zero refetch interval = %v, want disabled", got)

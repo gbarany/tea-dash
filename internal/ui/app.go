@@ -50,6 +50,7 @@ type Model struct {
 	actionDispatcher func(actions.Intent) tea.Cmd
 	actionPrompt     actionprompt.Model
 	pendingAction    actions.Intent
+	pendingQuit      bool
 	actionFeedback   actionfeedback.Model
 	copyToClipboard  func(string) error
 	showHelp         bool
@@ -502,7 +503,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.startAction(actions.KindCheckout)
 		case !m.scopedBuiltinOverridden("quit") && key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
+			return m.quitOrConfirm()
 		case !m.scopedBuiltinOverridden("refresh") && key.Matches(msg, m.keys.Refresh):
 			if s := m.getCurrSection(); s != nil && !s.GetIsLoading() {
 				if m.ctx.PreviewOpen {
@@ -1507,7 +1508,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "opengithub", "open", "openbrowser":
 		return m, m.openSelected(), true
 	case "quit":
-		return m, tea.Quit, true
+		next, cmd := m.quitOrConfirm()
+		return next, cmd, true
 	case "redraw":
 		return m, tea.ClearScreen, true
 	case "firstline":
@@ -1659,6 +1661,20 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	var result actionprompt.Result
 	var cmd tea.Cmd
 	m.actionPrompt, result, cmd = m.actionPrompt.Update(msg)
+	if m.pendingQuit {
+		if result.Canceled {
+			m.pendingQuit = false
+			return cmd
+		}
+		if result.Submitted {
+			m.pendingQuit = false
+			if cmd == nil {
+				return tea.Quit
+			}
+			return tea.Batch(cmd, tea.Quit)
+		}
+		return cmd
+	}
 	if result.Canceled {
 		m.pendingAction = actions.Intent{}
 		m.actionFeedback = m.actionFeedback.Set(actionfeedback.Cancel("Action cancelled."))
@@ -1683,6 +1699,19 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 		return cmd
 	}
 	return tea.Batch(cmd, dispatchCmd)
+}
+
+func (m Model) quitOrConfirm() (Model, tea.Cmd) {
+	if m.ctx != nil && m.ctx.Config != nil && m.ctx.Config.ConfirmQuitEnabled() {
+		m.pendingQuit = true
+		m.actionPrompt = m.actionPrompt.Focus(actionprompt.Config{
+			Mode:    actionprompt.ModeConfirm,
+			Title:   "Quit tea-dash",
+			Message: "Quit tea-dash?",
+		})
+		return m, nil
+	}
+	return m, tea.Quit
 }
 
 func (m *Model) dispatchActionIntent(intent actions.Intent) tea.Cmd {

@@ -536,6 +536,45 @@ func TestQuitKeyStopsProgram(t *testing.T) {
 	}
 }
 
+func TestQuitKeyOpensConfirmationWhenEnabled(t *testing.T) {
+	confirmQuit := true
+	m := New(&config.Config{ConfirmQuit: &confirmQuit}, nil)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if isQuitCmd(cmd) {
+		t.Fatal("confirmQuit=true should ask for confirmation before returning tea.Quit")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Quit tea-dash") {
+		t.Fatalf("quit should open a confirmation prompt, got:\n%s", m.actionPrompt.View(120))
+	}
+}
+
+func TestQuitConfirmationEnterStopsProgram(t *testing.T) {
+	confirmQuit := true
+	m := New(&config.Config{ConfirmQuit: &confirmQuit}, nil)
+	m = update(t, m, tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if !m.actionPrompt.Active() {
+		t.Fatal("quit prompt should be active")
+	}
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !isQuitCmd(cmd) {
+		t.Fatal("enter in the quit confirmation should return tea.Quit")
+	}
+}
+
+func TestQuitConfirmationEscCancels(t *testing.T) {
+	confirmQuit := true
+	m := New(&config.Config{ConfirmQuit: &confirmQuit}, nil)
+	m = update(t, m, tea.KeyPressMsg{Code: 'q', Text: "q"})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.actionPrompt.Active() {
+		t.Fatal("esc should close the quit confirmation prompt")
+	}
+	if strings.Contains(m.View().Content, "Quit tea-dash") {
+		t.Fatalf("quit confirmation should be gone:\n%s", m.View().Content)
+	}
+}
+
 func TestUnknownSectionIsNoOp(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
