@@ -550,6 +550,35 @@ func TestRemovePullReviewersDeletesReviewerList(t *testing.T) {
 	}
 }
 
+func TestListReviewersMapsRequestableReviewers(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/acme/widgets/reviewers" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `[
+			{"login":"alice","full_name":"Alice A."},
+			{"login":"bob"},
+			{"full_name":"No Login"},
+			null
+		]`)
+	})
+
+	got, err := c.ListReviewers("acme", "widgets")
+	if err != nil {
+		t.Fatalf("ListReviewers: %v", err)
+	}
+	want := []data.User{
+		{Login: "alice", FullName: "Alice A."},
+		{Login: "bob"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("reviewers = %#v, want %#v", got, want)
+	}
+}
+
 func TestAddCommentWrapsServerError(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/repos/acme/widgets/issues/7/comments" {

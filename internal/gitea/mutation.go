@@ -478,6 +478,28 @@ func (c *Client) RemovePullReviewers(owner, repo string, index int64, reviewers 
 	return nil
 }
 
+// ListReviewers returns users that can be requested to review pull requests in
+// the repository.
+func (c *Client) ListReviewers(owner, repo string) ([]data.User, error) {
+	var users []*sdk.User
+	err := c.call(func() error {
+		var e error
+		users, _, e = c.sdk.GetReviewers(owner, repo)
+		return e
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list reviewers for %s/%s: %w", owner, repo, err)
+	}
+	out := make([]data.User, 0, len(users))
+	for _, user := range users {
+		if user == nil || user.UserName == "" {
+			continue
+		}
+		out = append(out, data.User{Login: user.UserName, FullName: user.FullName})
+	}
+	return out, nil
+}
+
 func mapPullReviewEvent(event data.PullReviewEvent) (sdk.ReviewStateType, error) {
 	switch event {
 	case data.PullReviewEventApprove:

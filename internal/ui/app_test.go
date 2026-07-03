@@ -325,6 +325,62 @@ func TestMouseClickRemoveReviewersActionButtonStartsPromptAction(t *testing.T) {
 	}
 }
 
+func TestRequestReviewersLoadsRepoReviewersIntoMultiPicker(t *testing.T) {
+	var got []actions.Intent
+	client := reviewerClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/gbarany/tea-dash/reviewers" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `[
+			{"login":"alice","full_name":"Alice A."},
+			{"login":"bob","full_name":"Bob B."}
+		]`)
+	})
+	m := New(&config.Config{}, client)
+	m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+		got = append(got, intent)
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: '@', Text: "@"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("request reviewers should fetch repo reviewers before opening the prompt")
+	}
+	msg := cmd()
+	loaded, ok := msg.(reviewersLoadedMsg)
+	if !ok || loaded.err != nil || len(loaded.reviewers) != 2 {
+		t.Fatalf("reviewer load msg = %#v, want two reviewers", msg)
+	}
+
+	m = update(t, m, loaded)
+	view := m.actionPrompt.View(120)
+	for _, want := range []string{"[ ] Alice A. (alice)", "[ ] Bob B. (bob)"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("reviewer picker missing %q:\n%s", want, view)
+		}
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: ' ', Text: " "})
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: ' ', Text: " "})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(got) != 1 {
+		t.Fatalf("dispatcher calls = %d, want 1", len(got))
+	}
+	if got[0].Kind != actions.KindRequestReviewers || got[0].Prompt.Value != "alice,bob" {
+		t.Fatalf("intent = %+v, want request reviewers for alice,bob", got[0])
+	}
+}
+
 func TestWatchChecksHotkeySwitchesToActionsForSelectedPullRequest(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -3359,6 +3415,28 @@ func (e errBoomType) Error() string { return string(e) }
 
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+func reviewerClient(t *testing.T, reviewersHandler http.HandlerFunc) *gitea.Client {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	if reviewersHandler != nil {
+		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash/reviewers", reviewersHandler)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return client
 }
 
 func newNotificationActionClient(

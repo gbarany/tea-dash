@@ -98,6 +98,38 @@ func TestPickerSubmitAndCancel(t *testing.T) {
 	}
 }
 
+func TestMultiPickerTogglesAndSubmitsCommaSeparatedValues(t *testing.T) {
+	cfg := Config{
+		Mode:  ModeMultiPicker,
+		Title: "Request reviewers",
+		Options: []Option{
+			{Label: "Alice A. (alice)", Value: "alice"},
+			{Label: "Bob B. (bob)", Value: "bob"},
+			{Label: "Carol C. (carol)", Value: "carol"},
+		},
+	}
+	m := New().Focus(cfg)
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	m, _, _ = m.Update(testKey('j'))
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+
+	view := m.View(120)
+	for _, want := range []string{"[x] Alice A. (alice)", "[x] Bob B. (bob)", "[ ] Carol C. (carol)"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("multi-picker view missing %q:\n%s", want, view)
+		}
+	}
+
+	var result Result
+	m, result, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !result.Submitted || result.Value != "alice,bob" || result.Label != "Alice A. (alice), Bob B. (bob)" {
+		t.Fatalf("multi-picker submit = %+v, want alice/bob values and labels", result)
+	}
+	if m.Active() {
+		t.Fatal("prompt should close after multi-picker submit")
+	}
+}
+
 func TestSmallWidthRender(t *testing.T) {
 	m := New().Focus(Config{
 		Mode:        ModeText,
