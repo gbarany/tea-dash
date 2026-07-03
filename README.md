@@ -65,6 +65,7 @@ make build      # -> ./bin/tea-dash
 
 ```sh
 tea-dash            # start the dashboard
+tea-dash --config ./team.tea-dash.yml
 tea-dash --version  # print version info
 tea-dash --help
 ```
@@ -107,9 +108,15 @@ tea-dash --help
 
 ## Configuration
 
-Optional. Create `~/.config/tea-dash/config.yml`
-(`$XDG_CONFIG_HOME/tea-dash/config.yml`) to pick a tea login, choose the startup
-view, and define your own sections:
+Optional. tea-dash reads the first config it finds in this order:
+
+1. `--config <path>` / `-c <path>`
+2. `TEA_DASH_CONFIG`
+3. `.tea-dash.yml` or `.tea-dash.yaml` in the current git repository root
+4. `$XDG_CONFIG_HOME/tea-dash/config.yml`
+
+Use config to pick a tea login, choose the startup view, and define your own
+sections:
 
 ```yaml
 instance:
@@ -314,7 +321,7 @@ internal/gitea/         Gitea Go SDK client wrapper + PR/issue/notification APIs
 internal/git/           read-only local git branch status
 internal/auth/          resolves instance URL + token from the tea config
 internal/data/          TUI-agnostic domain models
-internal/config/        ~/.config/tea-dash/config.yml loading
+internal/config/        config discovery + YAML loading
 internal/build/         version metadata (set via -ldflags)
 ```
 
