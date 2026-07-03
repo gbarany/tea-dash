@@ -31,6 +31,8 @@ type Client interface {
 	UnassignPullFromMe(owner, repo string, index int64) error
 	AssignIssueToMe(owner, repo string, index int64) error
 	UnassignIssueFromMe(owner, repo string, index int64) error
+	SubscribeIssue(owner, repo string, index int64) error
+	UnsubscribeIssue(owner, repo string, index int64) error
 	AddLabels(owner, repo string, index int64, names []string) error
 	RemoveLabels(owner, repo string, index int64, names []string) error
 	SetIssueMilestone(owner, repo string, index int64, title string) error
@@ -230,6 +232,18 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			return "", err
 		}
 		return fmt.Sprintf("Unassigned you from %s#%d.", intent.Target.Repo, index), nil
+
+	case uiactions.KindSubscribe:
+		if err := r.setIssueSubscription(owner, repo, index, intent.Target.RowKind, true); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Subscribed to %s#%d.", intent.Target.Repo, index), nil
+
+	case uiactions.KindUnsubscribe:
+		if err := r.setIssueSubscription(owner, repo, index, intent.Target.RowKind, false); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Unsubscribed from %s#%d.", intent.Target.Repo, index), nil
 
 	case uiactions.KindAddLabel:
 		names, err := parseLabelNames(intent.Prompt.Value)
@@ -471,6 +485,16 @@ func (r Runner) setAssignment(owner, repo string, index int64, kind uiactions.Ro
 	}
 }
 
+func (r Runner) setIssueSubscription(owner, repo string, index int64, kind uiactions.RowKind, subscribe bool) error {
+	if kind != uiactions.RowKindIssue {
+		return fmt.Errorf("subscription is only available for issues")
+	}
+	if subscribe {
+		return r.client.SubscribeIssue(owner, repo, index)
+	}
+	return r.client.UnsubscribeIssue(owner, repo, index)
+}
+
 func parseLabelNames(input string) ([]string, error) {
 	parts := strings.Split(input, ",")
 	out := make([]string, 0, len(parts))
@@ -547,6 +571,10 @@ func actionLabel(kind uiactions.Kind) string {
 		return "assign"
 	case uiactions.KindUnassign:
 		return "unassign"
+	case uiactions.KindSubscribe:
+		return "subscribe"
+	case uiactions.KindUnsubscribe:
+		return "unsubscribe"
 	case uiactions.KindAddLabel:
 		return "add label"
 	case uiactions.KindRemoveLabel:

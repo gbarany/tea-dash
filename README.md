@@ -92,6 +92,7 @@ tea-dash --help
 | `a` / `A`       | assign / unassign yourself |
 | `L` / `U`       | add / remove labels     |
 | `M`             | set issue milestone     |
+| `b` / `B`       | subscribe / unsubscribe issue |
 | `m`             | merge PR                |
 | `u`             | update PR branch from its base branch |
 | `W`             | mark draft PR ready for review |
@@ -252,6 +253,10 @@ keybindings:
       builtin: removeLabel
     - key: M
       builtin: setMilestone
+    - key: b
+      builtin: subscribe
+    - key: B
+      builtin: unsubscribe
     - key: i
       command: echo issue {{.IssueNumber}} in {{.RepoName}}
   notifications:

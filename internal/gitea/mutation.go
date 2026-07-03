@@ -393,6 +393,30 @@ func stripWIPPrefix(title string) (string, bool) {
 	return title, false
 }
 
+// SubscribeIssue subscribes the authenticated user to an issue.
+func (c *Client) SubscribeIssue(owner, repo string, index int64) error {
+	err := c.call(func() error {
+		_, e := c.sdk.IssueSubscribe(owner, repo, index)
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("subscribe issue %s/%s#%d: %w", owner, repo, index, err)
+	}
+	return nil
+}
+
+// UnsubscribeIssue unsubscribes the authenticated user from an issue.
+func (c *Client) UnsubscribeIssue(owner, repo string, index int64) error {
+	err := c.call(func() error {
+		_, e := c.sdk.IssueUnSubscribe(owner, repo, index)
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("unsubscribe issue %s/%s#%d: %w", owner, repo, index, err)
+	}
+	return nil
+}
+
 // SubmitPullReview creates a submitted pull-request review.
 func (c *Client) SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error) {
 	event, err := mapPullReviewEvent(opt.Event)

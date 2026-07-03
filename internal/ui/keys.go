@@ -27,6 +27,8 @@ type keyMap struct {
 	Comment       key.Binding
 	Assign        key.Binding
 	Unassign      key.Binding
+	Subscribe     key.Binding
+	Unsubscribe   key.Binding
 	AddLabel      key.Binding
 	RemoveLabel   key.Binding
 	Milestone     key.Binding
@@ -116,6 +118,14 @@ func defaultKeyMap() keyMap {
 		Unassign: key.NewBinding(
 			key.WithKeys("A"),
 			key.WithHelp("A", "unassign"),
+		),
+		Subscribe: key.NewBinding(
+			key.WithKeys("b"),
+			key.WithHelp("b", "subscribe"),
+		),
+		Unsubscribe: key.NewBinding(
+			key.WithKeys("B"),
+			key.WithHelp("B", "unsubscribe"),
 		),
 		AddLabel: key.NewBinding(
 			key.WithKeys("L"),
@@ -258,6 +268,10 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Assign = binding(keyName, "assign")
 	case "unassign":
 		k.Unassign = binding(keyName, "unassign")
+	case "subscribe":
+		k.Subscribe = binding(keyName, "subscribe")
+	case "unsubscribe":
+		k.Unsubscribe = binding(keyName, "unsubscribe")
 	case "addlabel":
 		k.AddLabel = binding(keyName, "add label")
 	case "removelabel":
