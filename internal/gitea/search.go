@@ -489,7 +489,13 @@ func (c *Client) rawGet(ctx context.Context, path string, out any) (http.Header,
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("gitea GET %s: %s: %s", path, resp.Status, truncate(body, 500))
+		return nil, &HTTPError{
+			Method:     http.MethodGet,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       truncate(body, 500),
+		}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return nil, fmt.Errorf("decoding gitea GET %s: %w", path, err)
@@ -522,7 +528,13 @@ func (c *Client) rawGetBytes(ctx context.Context, path string, accept string) ([
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("gitea GET %s: %s: %s", path, resp.Status, truncate(body, 500))
+		return nil, nil, &HTTPError{
+			Method:     http.MethodGet,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       truncate(body, 500),
+		}
 	}
 	return body, resp.Header, nil
 }
@@ -549,7 +561,13 @@ func (c *Client) rawPost(ctx context.Context, path string) error {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("gitea POST %s: %s: %s", path, resp.Status, truncate(body, 500))
+		return &HTTPError{
+			Method:     http.MethodPost,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       truncate(body, 500),
+		}
 	}
 	return nil
 }

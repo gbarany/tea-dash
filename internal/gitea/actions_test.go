@@ -125,6 +125,27 @@ func TestListActionRunsMapsArrayResponse(t *testing.T) {
 	}
 }
 
+func TestListActionRunsReturnsEmptyWhenActionsEndpointIsMissing(t *testing.T) {
+	srv := actionServer(t, func(mux *http.ServeMux) {
+		mux.HandleFunc("/api/v1/repos/acme/widgets/actions/runs", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		})
+	})
+
+	c, err := NewClient(context.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	runs, total, err := c.ListActionRuns(context.Background(), "acme", "widgets", ActionRunListOptions{})
+	if err != nil {
+		t.Fatalf("ListActionRuns should degrade 404 to an empty unsupported-Actions list, got %v", err)
+	}
+	if total != 0 || len(runs) != 0 {
+		t.Fatalf("got total=%d len=%d, want no runs for missing Actions endpoint", total, len(runs))
+	}
+}
+
 func TestGetActionRunMapsSingleRun(t *testing.T) {
 	srv := actionServer(t, func(mux *http.ServeMux) {
 		mux.HandleFunc("/api/v1/repos/acme/widgets/actions/runs/101", func(w http.ResponseWriter, _ *http.Request) {

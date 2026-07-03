@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"time"
@@ -98,6 +99,9 @@ func (c *Client) ListActionRuns(ctx context.Context, owner, repo string, opts Ac
 
 	var raw json.RawMessage
 	if _, err := c.rawGet(ctx, path, &raw); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return nil, 0, nil
+		}
 		return nil, 0, err
 	}
 	rows, total, err := decodeActionRuns(raw)
