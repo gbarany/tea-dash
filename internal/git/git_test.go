@@ -204,6 +204,24 @@ func TestBranchNameFromTemplate(t *testing.T) {
 	}
 }
 
+func TestIssueBranchNameFromTemplate(t *testing.T) {
+	got, err := IssueBranchNameFromTemplate("issue/{{.Owner}}-{{.Repo}}-{{.IssueIndex}}", "acme/api", 42)
+	if err != nil {
+		t.Fatalf("IssueBranchNameFromTemplate: %v", err)
+	}
+	if got != "issue/acme-api-42" {
+		t.Fatalf("IssueBranchNameFromTemplate = %q", got)
+	}
+
+	got, err = IssueBranchNameFromTemplate("", "acme/api", 42)
+	if err != nil {
+		t.Fatalf("IssueBranchNameFromTemplate default: %v", err)
+	}
+	if got != "issue-42" {
+		t.Fatalf("IssueBranchNameFromTemplate default = %q", got)
+	}
+}
+
 func TestRunCheckoutDirtyTreeRefusal(t *testing.T) {
 	repo := t.TempDir()
 	runner := &fakeRunner{results: []Result{{Stdout: " M file.txt\n", ExitCode: 0}}}
@@ -298,6 +316,76 @@ func TestRunCheckoutMissingRepoPath(t *testing.T) {
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("runner should not be called, commands = %#v", runner.commands)
+	}
+}
+
+func TestRunIssueCheckoutCreatesMissingBranch(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{ExitCode: 0}, // status
+		{ExitCode: 1}, // show-ref missing branch
+		{ExitCode: 0}, // switch -c
+	}}
+
+	plan, err := RunIssueCheckout(context.Background(), IssueCheckoutOptions{
+		RepoName:       "acme/api",
+		RepoPaths:      map[string]string{"acme/api": repo},
+		BranchTemplate: "issue/{{.Owner}}-{{.Repo}}-{{.IssueIndex}}",
+		IssueIndex:     42,
+		Runner:         runner,
+	})
+	if err != nil {
+		t.Fatalf("RunIssueCheckout: %v", err)
+	}
+	if plan.Branch != "issue/acme-api-42" {
+		t.Fatalf("Branch = %q", plan.Branch)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
+		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/issue/acme-api-42"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "-c", "issue/acme-api-42"}},
+	})
+}
+
+func TestRunIssueCheckoutSwitchesExistingBranch(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{ExitCode: 0}, // status
+		{ExitCode: 0}, // show-ref existing branch
+		{ExitCode: 0}, // switch branch
+	}}
+
+	_, err := RunIssueCheckout(context.Background(), IssueCheckoutOptions{
+		RepoName:   "acme/api",
+		RepoPaths:  map[string]string{"acme/api": repo},
+		IssueIndex: 7,
+		Runner:     runner,
+	})
+	if err != nil {
+		t.Fatalf("RunIssueCheckout: %v", err)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
+		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/issue-7"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "issue-7"}},
+	})
+}
+
+func TestRunIssueCheckoutDirtyTreeRefusal(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{{Stdout: " M file.txt\n", ExitCode: 0}}}
+
+	_, err := RunIssueCheckout(context.Background(), IssueCheckoutOptions{
+		RepoName:   "acme/api",
+		RepoPaths:  map[string]string{"acme/api": repo},
+		IssueIndex: 42,
+		Runner:     runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "dirty") {
+		t.Fatalf("RunIssueCheckout dirty error = %v", err)
+	}
+	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].Args, []string{"status", "--porcelain"}) {
+		t.Fatalf("commands = %#v", runner.commands)
 	}
 }
 

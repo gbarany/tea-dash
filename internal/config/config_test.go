@@ -198,6 +198,7 @@ repoPaths:
 git:
   remote: upstream
   prBranchTemplate: review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}
+  issueBranchTemplate: issue/{{.Owner}}-{{.Repo}}-{{.IssueIndex}}
 `
 	var c Config
 	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
@@ -209,7 +210,8 @@ git:
 	if c.RepoPaths["acme/api"] != "~/src/acme-api" || c.RepoPaths["acme/*"] != "~/src/acme/{{.Repo}}" {
 		t.Fatalf("repoPaths = %+v", c.RepoPaths)
 	}
-	if c.Git.Remote != "upstream" || c.Git.PRBranchTemplate != "review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}" {
+	if c.Git.Remote != "upstream" || c.Git.PRBranchTemplate != "review/{{.Owner}}-{{.Repo}}-{{.PrIndex}}" ||
+		c.Git.IssueBranchTemplate != "issue/{{.Owner}}-{{.Repo}}-{{.IssueIndex}}" {
 		t.Fatalf("git = %+v", c.Git)
 	}
 }
@@ -231,6 +233,8 @@ keybindings:
       command: echo {{.IssueNumber}}
     - key: M
       builtin: setMilestone
+    - key: C
+      builtin: checkout
   notifications:
     - key: b
       builtin: togglePin
@@ -256,6 +260,11 @@ keybindings:
 	if len(c.Keybindings.PRs) != 2 || c.Keybindings.PRs[1].Name != "lazygit" ||
 		!strings.Contains(c.Keybindings.PRs[1].Command, "lazygit") {
 		t.Fatalf("prs keybindings = %+v", c.Keybindings.PRs)
+	}
+	if len(c.Keybindings.Issues) != 3 ||
+		c.Keybindings.Issues[1].Builtin != "setMilestone" ||
+		c.Keybindings.Issues[2].Builtin != "checkout" {
+		t.Fatalf("issues keybindings = %+v", c.Keybindings.Issues)
 	}
 	if len(c.Keybindings.Notifications) != 3 ||
 		c.Keybindings.Notifications[0].Builtin != "togglePin" ||

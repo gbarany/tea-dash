@@ -702,6 +702,7 @@ func (m Model) actionButtons() []actionButton {
 	case context.IssuesView:
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
+			actionButton{Label: "Checkout", Builtin: "checkout"},
 			actionButton{Label: "Milestone", Builtin: "setMilestone"},
 		)
 		switch rowState(row) {
@@ -1606,9 +1607,13 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 
 func validateActionTarget(kind actions.Kind, target actions.Target) error {
 	switch kind {
-	case actions.KindMerge, actions.KindUpdateBranch, actions.KindMarkReady, actions.KindMarkDraft, actions.KindReview, actions.KindExternalDiff, actions.KindCheckout:
+	case actions.KindMerge, actions.KindUpdateBranch, actions.KindMarkReady, actions.KindMarkDraft, actions.KindReview, actions.KindExternalDiff:
 		if target.RowKind != actions.RowKindPullRequest {
 			return fmt.Errorf("%s is only available for pull requests.", actionLabel(kind))
+		}
+	case actions.KindCheckout:
+		if target.RowKind != actions.RowKindPullRequest && target.RowKind != actions.RowKindIssue {
+			return fmt.Errorf("%s is only available for pull requests and issues.", actionLabel(kind))
 		}
 	case actions.KindComment, actions.KindAssign, actions.KindUnassign, actions.KindAddLabel, actions.KindRemoveLabel, actions.KindClose, actions.KindReopen:
 		if target.RowKind != actions.RowKindPullRequest && target.RowKind != actions.RowKindIssue {

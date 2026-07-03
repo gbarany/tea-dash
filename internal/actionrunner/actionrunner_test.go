@@ -394,6 +394,33 @@ func TestDispatchCheckoutPassesConfig(t *testing.T) {
 	}
 }
 
+func TestDispatchCheckoutIssuePassesConfig(t *testing.T) {
+	var gotOpts localgit.IssueCheckoutOptions
+	r := New(Options{
+		Client:      &fakeClient{},
+		Config:      &config.Config{RepoPaths: map[string]string{"acme/widgets": "/src/widgets"}, Git: config.Git{IssueBranchTemplate: "issue/{{.IssueIndex}}"}},
+		InstanceURL: "https://git.example",
+		CWD:         "/cwd",
+		IssueCheckout: func(_ context.Context, opts localgit.IssueCheckoutOptions) (localgit.IssueCheckoutPlan, error) {
+			gotOpts = opts
+			return localgit.IssueCheckoutPlan{RepoPath: "/src/widgets", Branch: "issue/7"}, nil
+		},
+	})
+
+	got := runDispatch(t, r, issueIntent(uiactions.KindCheckout))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("issue checkout result = %+v", got)
+	}
+	if gotOpts.RepoName != "acme/widgets" || gotOpts.IssueIndex != 7 || gotOpts.CWD != "/cwd" ||
+		gotOpts.InstanceURL != "https://git.example" ||
+		gotOpts.BranchTemplate != "issue/{{.IssueIndex}}" {
+		t.Fatalf("issue checkout opts = %+v", gotOpts)
+	}
+	if !strings.Contains(got.Message, "Checked out issue branch issue/7") {
+		t.Fatalf("message = %q, want issue checkout confirmation", got.Message)
+	}
+}
+
 func TestDispatchSwitchBranchDoesNotRequireClient(t *testing.T) {
 	var gotOpts localgit.SwitchBranchOptions
 	r := New(Options{

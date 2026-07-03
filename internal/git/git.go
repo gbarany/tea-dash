@@ -213,26 +213,40 @@ func gitConfigPath(cwd string) (string, error) {
 
 // BranchNameFromTemplate renders a local branch name for a pull request.
 func BranchNameFromTemplate(tmpl, repoName string, prIndex int64) (string, error) {
+	return branchNameFromTemplate(tmpl, repoName, prIndex, 0, config.Git{PRBranchTemplate: tmpl}.BranchTemplate())
+}
+
+// IssueBranchNameFromTemplate renders a local branch name for an issue.
+func IssueBranchNameFromTemplate(tmpl, repoName string, issueIndex int64) (string, error) {
+	return branchNameFromTemplate(tmpl, repoName, 0, issueIndex, config.Git{IssueBranchTemplate: tmpl}.IssueBranchTemplateOrDefault())
+}
+
+func branchNameFromTemplate(tmpl, repoName string, prIndex, issueIndex int64, fallback string) (string, error) {
 	r, err := config.ParseRepo(repoName)
 	if err != nil {
 		return "", err
 	}
-	tmpl = (config.Git{PRBranchTemplate: tmpl}).BranchTemplate()
+	tmpl = strings.TrimSpace(tmpl)
+	if tmpl == "" {
+		tmpl = fallback
+	}
 	t, err := template.New("branch").Option("missingkey=error").Parse(tmpl)
 	if err != nil {
 		return "", err
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, struct {
-		Owner    string
-		Repo     string
-		RepoName string
-		PrIndex  int64
+		Owner      string
+		Repo       string
+		RepoName   string
+		PrIndex    int64
+		IssueIndex int64
 	}{
-		Owner:    r.Owner,
-		Repo:     r.Name,
-		RepoName: repoName,
-		PrIndex:  prIndex,
+		Owner:      r.Owner,
+		Repo:       r.Name,
+		RepoName:   repoName,
+		PrIndex:    prIndex,
+		IssueIndex: issueIndex,
 	}); err != nil {
 		return "", err
 	}
@@ -307,6 +321,23 @@ type CheckoutPlan struct {
 	RemoteRef    string
 }
 
+// IssueCheckoutOptions configures local issue branch checkout.
+type IssueCheckoutOptions struct {
+	RepoName       string
+	CWD            string
+	InstanceURL    string
+	RepoPaths      map[string]string
+	BranchTemplate string
+	IssueIndex     int64
+	Runner         Runner
+}
+
+// IssueCheckoutPlan is the resolved local issue checkout plan.
+type IssueCheckoutPlan struct {
+	RepoPath string
+	Branch   string
+}
+
 // PlanCheckout resolves paths, branch names, and refspecs without running git.
 func PlanCheckout(opts CheckoutOptions) (CheckoutPlan, error) {
 	if opts.PrIndex <= 0 {
@@ -369,6 +400,59 @@ func RunCheckout(ctx context.Context, opts CheckoutOptions) (CheckoutPlan, error
 	}
 	if _, err := runGit(ctx, runner, plan.RepoPath, "merge", "--ff-only", plan.RemoteRef); err != nil {
 		return CheckoutPlan{}, fmt.Errorf("fast-forward existing branch %s: %w", plan.Branch, err)
+	}
+	return plan, nil
+}
+
+// PlanIssueCheckout resolves the local issue checkout path and branch name
+// without running git.
+func PlanIssueCheckout(opts IssueCheckoutOptions) (IssueCheckoutPlan, error) {
+	if opts.IssueIndex <= 0 {
+		return IssueCheckoutPlan{}, fmt.Errorf("invalid issue index %d", opts.IssueIndex)
+	}
+	repoPath, err := ResolveRepoPath(opts.RepoName, opts.CWD, opts.InstanceURL, opts.RepoPaths)
+	if err != nil {
+		return IssueCheckoutPlan{}, err
+	}
+	branch, err := IssueBranchNameFromTemplate(opts.BranchTemplate, opts.RepoName, opts.IssueIndex)
+	if err != nil {
+		return IssueCheckoutPlan{}, err
+	}
+	return IssueCheckoutPlan{RepoPath: repoPath, Branch: branch}, nil
+}
+
+// RunIssueCheckout creates or switches to a local branch for an issue. Unlike
+// PR checkout there is no remote issue ref to fetch, so this only operates on
+// the local checkout after refusing a dirty worktree.
+func RunIssueCheckout(ctx context.Context, opts IssueCheckoutOptions) (IssueCheckoutPlan, error) {
+	plan, err := PlanIssueCheckout(opts)
+	if err != nil {
+		return IssueCheckoutPlan{}, err
+	}
+	runner := opts.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+
+	status, err := runGit(ctx, runner, plan.RepoPath, "status", "--porcelain")
+	if err != nil {
+		return IssueCheckoutPlan{}, err
+	}
+	if strings.TrimSpace(status.Stdout) != "" {
+		return IssueCheckoutPlan{}, fmt.Errorf("refusing checkout in dirty worktree %s", plan.RepoPath)
+	}
+	exists, err := branchExists(ctx, runner, plan.RepoPath, plan.Branch)
+	if err != nil {
+		return IssueCheckoutPlan{}, err
+	}
+	if !exists {
+		if _, err := runGit(ctx, runner, plan.RepoPath, "switch", "-c", plan.Branch); err != nil {
+			return IssueCheckoutPlan{}, err
+		}
+		return plan, nil
+	}
+	if _, err := runGit(ctx, runner, plan.RepoPath, "switch", plan.Branch); err != nil {
+		return IssueCheckoutPlan{}, err
 	}
 	return plan, nil
 }
