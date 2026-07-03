@@ -11,6 +11,7 @@ func detailStore(now time.Time) *Store {
 	p := s.Pull("teahouse/kettle", 1)
 	p.HeadRef, p.HeadSHA, p.BaseRef = "fix/login", "abc123", "main"
 	p.Diff = "diff --git a/login.go b/login.go\n+fixed\n"
+	p.Additions, p.Deletions, p.ChangedFiles = 42, 7, 3
 	p.Statuses = []*CommitStatus{{Status: "success", Context: "ci/build"}}
 	p.Reviews = []*Review{{ID: 9, State: "APPROVED", Reviewer: &User{Login: "mei"}, Created: now}}
 	s.AddComment("teahouse/kettle", 1, "mei", "looks good")
@@ -33,6 +34,9 @@ func TestGetPullDetail(t *testing.T) {
 	}
 	if len(d.CI.Checks) == 0 {
 		t.Fatalf("want combined-status checks, got %+v", d.CI)
+	}
+	if d.Additions != 42 || d.Deletions != 7 || d.ChangedFiles != 3 {
+		t.Fatalf("diff stats not mapped: %+v", d)
 	}
 }
 

@@ -235,8 +235,10 @@ func parsePathInt64(s string) (int64, bool) {
 // pullDetailRow marshals a Pull into the shape internal/gitea's GetPullDetail
 // reads off the SDK's PullRequest type: top-level draft/mergeable/merged (NOT
 // nested under "pull_request" the way search rows nest them — see
-// pullSearchRow), plus "base"/"head" ref objects mapPullDetail reads BaseRef/
-// HeadRef/HeadSHA from.
+// pullSearchRow), "base"/"head" ref objects mapPullDetail reads BaseRef/
+// HeadRef/HeadSHA from, and additions/deletions/changed_files (the SDK's
+// PullRequest keys for diff-stat counts — data.PullDetail carries matching
+// fields, populated by mapPullDetail off these same three).
 func pullDetailRow(p *Pull) map[string]any {
 	return map[string]any{
 		"id":                  p.ID,
@@ -258,6 +260,9 @@ func pullDetailRow(p *Pull) map[string]any {
 		"html_url":            p.HTMLURL,
 		"base":                map[string]any{"ref": p.BaseRef},
 		"head":                map[string]any{"ref": p.HeadRef, "sha": p.HeadSHA},
+		"additions":           p.Additions,
+		"deletions":           p.Deletions,
+		"changed_files":       p.ChangedFiles,
 	}
 }
 

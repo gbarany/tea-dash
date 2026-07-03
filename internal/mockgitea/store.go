@@ -103,6 +103,15 @@ type Pull struct {
 	Diff         string          `json:"-"`
 	Statuses     []*CommitStatus `json:"-"`
 	Reviews      []*Review       `json:"-"`
+	// Additions/Deletions/ChangedFiles are diff-stat counts. Flagged by Task 4
+	// (they defaulted to 0 with no store field to hold them, so pull-detail
+	// previews always showed a zero diffstat) and served in pullDetailRow
+	// under the SDK PullRequest's json keys (additions/deletions/
+	// changed_files). data.PullDetail carries matching fields, so they round
+	// -trip through GetPullDetail.
+	Additions    int `json:"-"`
+	Deletions    int `json:"-"`
+	ChangedFiles int `json:"-"`
 }
 
 // Issue is a denormalized issue record. Fields tagged "-" are store-internal
@@ -469,6 +478,26 @@ func (s *Store) AddComment(repo string, num int64, login, body string) *Comment 
 			i.Updated = now
 		}
 	}
+	return c
+}
+
+// SeedComment inserts a comment at an explicit timestamp without bumping the
+// parent pull/issue's CommentCount or Updated — for deterministic seed data
+// (demo.go), which sets those fields itself as part of building the parent
+// record and would otherwise have them double-counted or overwritten with
+// AddComment's wall-clock time.Now(). AddComment remains what live mutations
+// (the HTTP comment-creation handler) use.
+func (s *Store) SeedComment(repo string, num int64, login, body string, at time.Time) *Comment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := &Comment{
+		ID:      s.id(),
+		Body:    body,
+		Author:  s.resolveUserLocked(login),
+		Created: at,
+		Updated: at,
+	}
+	s.comments[key(repo, num)] = append(s.comments[key(repo, num)], c)
 	return c
 }
 
