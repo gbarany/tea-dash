@@ -112,6 +112,39 @@ func TestFetchedMsgBuildsRows(t *testing.T) {
 	}
 }
 
+func TestConfiguredColumnsBuildIssueRowsInConfiguredOrder(t *testing.T) {
+	ctx := &context.ProgramContext{Styles: context.DefaultStyles(), MainContentWidth: 100, MainContentHeight: 20}
+	m := NewModel(0, ctx, config.SectionConfig{
+		Title: "Compact Issues",
+		Columns: []config.ColumnConfig{
+			{Name: "repo", Width: 20},
+			{Name: "number", Width: 8},
+			{Name: "title", Title: "Summary"},
+		},
+	})
+	if got := m.Columns; len(got) != 3 ||
+		got[0].Title != "Repo" || got[0].Width != 20 ||
+		got[1].Title != "#" || got[1].Width != 8 ||
+		got[2].Title != "Summary" {
+		t.Fatalf("columns = %+v", got)
+	}
+
+	m.SetLastFetchID("t1")
+	next, _ := m.Update(SectionIssuesFetchedMsg{
+		Rows: []data.Issue{{
+			Number: 77, Title: "Bug X", RepoNameWithOwner: "acme/widgets",
+			Author: "octo", State: "open", UpdatedAt: time.Now().Add(-2 * time.Hour),
+		}},
+		TotalCount: 1, TaskId: "t1",
+	})
+	m = next.(*Model)
+	row := m.BuildRows()[0]
+	want := []string{"acme/widgets", "#77", "Bug X"}
+	if strings.Join([]string(row), "|") != strings.Join(want, "|") {
+		t.Fatalf("row = %v, want %v", row, want)
+	}
+}
+
 func TestStaleFetchIgnored(t *testing.T) {
 	m := newModel(t)
 	m.SetLastFetchID("t2") // an in-flight fetch t2 is expected

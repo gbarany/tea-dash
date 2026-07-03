@@ -91,6 +91,12 @@ defaults:
   branchesLimit: 100
 prSections:
   - title: My PRs
+    columns:
+      - number
+      - name: title
+        title: Summary
+        width: 42
+      - repo
     filter:
       state: open
       createdBy: "@me"
@@ -137,6 +143,12 @@ localRepos:
 	if len(c.PRSections) != 2 || c.PRSections[0].Title != "My PRs" ||
 		c.PRSections[1].Filter.ReviewRequested != "@me" {
 		t.Fatalf("prSections = %+v", c.PRSections)
+	}
+	if cols := c.PRSections[0].Columns; len(cols) != 3 ||
+		cols[0].Name != "number" ||
+		cols[1].Name != "title" || cols[1].Title != "Summary" || cols[1].Width != 42 ||
+		cols[2].Name != "repo" {
+		t.Fatalf("PR section columns = %+v", cols)
 	}
 	if len(c.IssuesSections) != 1 || c.IssuesSections[0].Title != "My Issues" ||
 		c.IssuesSections[0].Filter.CreatedBy != "@me" {
@@ -569,6 +581,54 @@ func TestConfigValidateRejectsBadSectionFilter(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() should reject a section with a non-@me author filter")
+	}
+}
+
+func TestConfigValidateRejectsUnknownColumn(t *testing.T) {
+	cfg := &Config{
+		PRSections: []SectionConfig{
+			{Title: "Bad", Columns: []ColumnConfig{{Name: "unknown"}}},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() should reject an unknown table column")
+	}
+	if !strings.Contains(err.Error(), "prSections[0].columns[0]") || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("Validate() error = %v, want section/column path and column name", err)
+	}
+}
+
+func TestConfigValidateRejectsNegativeColumnWidth(t *testing.T) {
+	cfg := &Config{
+		IssuesSections: []SectionConfig{
+			{Title: "Bad", Columns: []ColumnConfig{{Name: "title", Width: -1}}},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() should reject a negative table column width")
+	}
+	if !strings.Contains(err.Error(), "issuesSections[0].columns[0].width") {
+		t.Fatalf("Validate() error = %v, want section/column width path", err)
+	}
+}
+
+func TestConfigValidateRejectsColumnsOnUnsupportedSections(t *testing.T) {
+	for name, cfg := range map[string]*Config{
+		"notifications": {NotificationsSections: []SectionConfig{{Title: "Inbox", Columns: []ColumnConfig{{Name: "title"}}}}},
+		"actions":       {ActionsSections: []SectionConfig{{Title: "CI", Columns: []ColumnConfig{{Name: "title"}}}}},
+		"branches":      {BranchSections: []SectionConfig{{Title: "Branches", Columns: []ColumnConfig{{Name: "title"}}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("Validate() should reject columns on unsupported section types")
+			}
+			if !strings.Contains(err.Error(), "columns") {
+				t.Fatalf("Validate() error = %v, want it to mention columns", err)
+			}
+		})
 	}
 }
 

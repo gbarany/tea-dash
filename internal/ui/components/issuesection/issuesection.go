@@ -27,6 +27,7 @@ type SectionIssuesFetchedMsg = section.RowsFetchedMsg[data.Issue]
 // NewModel builds an issues section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	programCtx := ctx
+	columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 	return section.New(section.Options[data.Issue]{
 		Id:           id,
 		Ctx:          ctx,
@@ -49,7 +50,12 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			}
 			return c.SearchIssuesPage(fetchCtx, f, limit, page)
 		},
-		BuildRow: issueBuildRow,
+		BuildRow: func(issue data.Issue) table.Row {
+			return issueBuildRowWithColumns(issue, columnNames)
+		},
+		Columns: func(width int) []table.Column {
+			return section.ColumnsFromConfig(cfg.Columns, section.DefaultColumnDefinitions(width))
+		},
 	})
 }
 
@@ -63,18 +69,38 @@ func effectiveRepo(ctx *appctx.ProgramContext, cfg config.SectionConfig) string 
 	return ctx.CurrentRepo
 }
 
-// issueBuildRow maps an issue into the table's 6-cell row.
+// issueBuildRow maps an issue into the default table row.
 func issueBuildRow(issue data.Issue) table.Row {
+	return issueBuildRowWithColumns(issue, section.DefaultColumnNames())
+}
+
+func issueBuildRowWithColumns(issue data.Issue, columns []string) table.Row {
+	row := make(table.Row, 0, len(columns))
+	for _, column := range columns {
+		row = append(row, issueColumnValue(issue, column))
+	}
+	return row
+}
+
+func issueColumnValue(issue data.Issue, column string) string {
 	author := ""
 	if issue.Author != "" {
 		author = "@" + issue.Author
 	}
-	return table.Row{
-		fmt.Sprintf("#%d", issue.Number),
-		issue.Title,
-		issue.RepoNameWithOwner,
-		author,
-		issue.State,
-		section.HumanizeTime(issue.UpdatedAt),
+	switch column {
+	case "number":
+		return fmt.Sprintf("#%d", issue.Number)
+	case "title":
+		return issue.Title
+	case "repo":
+		return issue.RepoNameWithOwner
+	case "author":
+		return author
+	case "state":
+		return issue.State
+	case "updated":
+		return section.HumanizeTime(issue.UpdatedAt)
+	default:
+		return ""
 	}
 }
