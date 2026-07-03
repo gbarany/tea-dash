@@ -305,6 +305,26 @@ func TestDispatchMergeAndReview(t *testing.T) {
 		t.Fatalf("merge options = %+v, want squash with DeleteBranch and ForceMerge", client.merge)
 	}
 
+	autoMerge := pullIntent(uiactions.KindMerge)
+	autoMerge.Prompt.Value = "squash+auto"
+	got = runDispatch(t, r, autoMerge)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("squash auto-merge result = %+v", got)
+	}
+	if client.merge.Style != data.MergeStyleSquash || !client.merge.AutoMerge {
+		t.Fatalf("merge options = %+v, want squash with AutoMerge", client.merge)
+	}
+
+	autoMergeDelete := pullIntent(uiactions.KindMerge)
+	autoMergeDelete.Prompt.Value = "squash+delete+auto"
+	got = runDispatch(t, r, autoMergeDelete)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("squash delete-branch auto-merge result = %+v", got)
+	}
+	if client.merge.Style != data.MergeStyleSquash || !client.merge.DeleteBranch || !client.merge.AutoMerge {
+		t.Fatalf("merge options = %+v, want squash with DeleteBranch and AutoMerge", client.merge)
+	}
+
 	message := pullIntent(uiactions.KindMerge)
 	message.Prompt.Value = "squash+message"
 	message.Prompt.Title = "Custom merge title"
