@@ -655,6 +655,12 @@ func (s *Store) AddRun(run *ActionRun) {
 func (s *Store) Runs(repo string) []*ActionRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.runsLocked(repo)
+}
+
+// runsLocked is Runs without taking the lock, for use from inside WithLock.
+// Callers must hold s.mu.
+func (s *Store) runsLocked(repo string) []*ActionRun {
 	return s.runs[repo]
 }
 
@@ -662,9 +668,30 @@ func (s *Store) Runs(repo string) []*ActionRun {
 func (s *Store) RunByID(repo string, id int64) *ActionRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.runByIDLocked(repo, id)
+}
+
+// runByIDLocked is RunByID without taking the lock, for use from inside
+// WithLock. Callers must hold s.mu.
+func (s *Store) runByIDLocked(repo string, id int64) *ActionRun {
 	for _, r := range s.runs[repo] {
 		if r.ID == id {
 			return r
+		}
+	}
+	return nil
+}
+
+// jobByIDLocked finds an Actions job by ID across every run in one repo, for
+// use from inside WithLock (job IDs have no dedicated top-level index — the
+// real repo-scoped .../actions/jobs/{id}/logs endpoint requires scanning the
+// repo's runs). Callers must hold s.mu.
+func (s *Store) jobByIDLocked(repo string, jobID int64) *ActionJob {
+	for _, run := range s.runs[repo] {
+		for _, j := range run.Jobs {
+			if j.ID == jobID {
+				return j
+			}
 		}
 	}
 	return nil
