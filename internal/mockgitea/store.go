@@ -539,9 +539,15 @@ func (s *Store) notificationByIDLocked(id int64) *Notification {
 	return nil
 }
 
-// SetNotificationStatus applies one of "read", "unread", "pinned", or
-// "unpinned" to a notification thread. It errors if the thread is unknown or
-// the status is not one of those four.
+// SetNotificationStatus applies one of "read", "unread", or "pinned" to a
+// notification thread. Gitea's NotifyStatus is a single enum, not two
+// independent booleans, so a transition to "read" or "unread" is a full
+// status overwrite that also clears Pinned: the real API's PATCH
+// to-status=read/unread is how a client unpins a thread (there is no
+// separate "unpinned" NotifyStatus value — UnpinNotification just restores
+// the prior read/unread state, which as a side effect leaves the pinned
+// bucket). It errors if the thread is unknown or the status is not one of
+// those three.
 func (s *Store) SetNotificationStatus(id int64, status string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -552,12 +558,12 @@ func (s *Store) SetNotificationStatus(id int64, status string) error {
 	switch status {
 	case "read":
 		n.Unread = false
+		n.Pinned = false
 	case "unread":
 		n.Unread = true
+		n.Pinned = false
 	case "pinned":
 		n.Pinned = true
-	case "unpinned":
-		n.Pinned = false
 	default:
 		return fmt.Errorf("mockgitea: unknown notification status %q", status)
 	}

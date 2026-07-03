@@ -50,6 +50,13 @@ func TestNotificationLifecycle(t *testing.T) {
 	if err := c.UnpinNotification(ctx, 1, true); err != nil {
 		t.Fatal(err)
 	}
+	// Regression lock: UnpinNotification(unread=true) must clear Pinned as
+	// well as restoring Unread — a PATCH to-status=unread is a full
+	// NotifyStatus overwrite, not a Pinned-only toggle (there is no distinct
+	// "unpinned" status on the real API).
+	if n := s.NotificationByID(1); n.Pinned || !n.Unread {
+		t.Fatalf("want unpinned+unread after UnpinNotification(unread=true), got %+v", n)
+	}
 	if err := c.MarkAllNotificationsRead(ctx); err != nil {
 		t.Fatal(err)
 	}

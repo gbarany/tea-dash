@@ -50,6 +50,11 @@ func TestAddIssueInitializesSubscribers(t *testing.T) {
 	}
 }
 
+// TestNotificationReadPin exercises the full read/unread/pinned lifecycle,
+// including unpinning: Gitea's NotifyStatus is a single enum with no distinct
+// "unpinned" value, so a real client unpins by sending to-status=unread or
+// to-status=read (UnpinNotification), which must clear Pinned as a side
+// effect of that full status overwrite.
 func TestNotificationReadPin(t *testing.T) {
 	s := NewStore()
 	s.AddNotification(&Notification{ID: 7, Unread: true})
@@ -64,6 +69,26 @@ func TestNotificationReadPin(t *testing.T) {
 	}
 	if n := s.NotificationByID(7); !n.Pinned {
 		t.Fatal("not pinned")
+	}
+
+	// Unpin via "unread" (UnpinNotification(id, unread=true)): Pinned clears
+	// and the unread state is restored.
+	if err := s.SetNotificationStatus(7, "unread"); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.NotificationByID(7); n.Pinned || !n.Unread {
+		t.Fatalf("want unpinned+unread after to-status=unread, got %+v", n)
+	}
+
+	// Pin again, then unpin via "read" (UnpinNotification(id, unread=false)).
+	if err := s.SetNotificationStatus(7, "pinned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNotificationStatus(7, "read"); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.NotificationByID(7); n.Pinned || n.Unread {
+		t.Fatalf("want unpinned+read after to-status=read, got %+v", n)
 	}
 }
 
