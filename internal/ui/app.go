@@ -96,6 +96,12 @@ type reviewersLoadedMsg struct {
 	err       error
 }
 
+type mergeCapabilitiesLoadedMsg struct {
+	intent       actions.Intent
+	capabilities data.MergeCapabilities
+	err          error
+}
+
 // autoRefreshMsg is emitted by the optional background refetch timer.
 type autoRefreshMsg struct{}
 
@@ -378,6 +384,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case reviewersLoadedMsg:
 		return m.handleReviewersLoaded(msg), nil
+
+	case mergeCapabilitiesLoadedMsg:
+		return m.handleMergeCapabilitiesLoaded(msg), nil
 
 	case actions.ResultMsg:
 		m.notice = ""
@@ -1526,6 +1535,10 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 		m.notice = "Loading reviewers..."
 		return loadReviewersCmd(m.ctx.Client, intent)
 	}
+	if kind == actions.KindMerge && m.ctx.Client != nil {
+		m.notice = "Loading merge options..."
+		return loadMergeCapabilitiesCmd(m.ctx.Client, intent)
+	}
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(kind, target))
 	return nil
 }
@@ -1838,6 +1851,25 @@ func (m *Model) handleReviewersLoaded(msg reviewersLoadedMsg) Model {
 	return *m
 }
 
+func (m *Model) handleMergeCapabilitiesLoaded(msg mergeCapabilitiesLoadedMsg) Model {
+	if msg.intent.Kind != actions.KindMerge {
+		return *m
+	}
+	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
+		return *m
+	}
+	m.pendingAction = msg.intent
+	caps := msg.capabilities
+	if msg.err != nil {
+		m.notice = fmt.Sprintf("Couldn't load merge settings: %v. Showing default merge options.", msg.err)
+		caps = data.DefaultMergeCapabilities()
+	} else {
+		m.notice = ""
+	}
+	m.actionPrompt = m.actionPrompt.Focus(promptConfigForActionWithMergeCapabilities(msg.intent.Kind, msg.intent.Target, caps))
+	return *m
+}
+
 func reviewerPickerAction(kind actions.Kind) bool {
 	return kind == actions.KindRequestReviewers || kind == actions.KindRemoveReviewers
 }
@@ -1850,6 +1882,17 @@ func loadReviewersCmd(client *gitea.Client, intent actions.Intent) tea.Cmd {
 		}
 		reviewers, err := client.ListReviewers(owner, repo)
 		return reviewersLoadedMsg{intent: intent, reviewers: reviewers, err: err}
+	}
+}
+
+func loadMergeCapabilitiesCmd(client *gitea.Client, intent actions.Intent) tea.Cmd {
+	return func() tea.Msg {
+		owner, repo, ok := data.SplitOwnerRepo(intent.Target.Repo)
+		if !ok {
+			return mergeCapabilitiesLoadedMsg{intent: intent, err: fmt.Errorf("invalid repository %q", intent.Target.Repo)}
+		}
+		caps, err := client.MergeCapabilities(owner, repo)
+		return mergeCapabilitiesLoadedMsg{intent: intent, capabilities: caps, err: err}
 	}
 }
 
@@ -2061,6 +2104,10 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 }
 
 func promptConfigForAction(kind actions.Kind, target actions.Target) actionprompt.Config {
+	return promptConfigForActionWithMergeCapabilities(kind, target, data.DefaultMergeCapabilities())
+}
+
+func promptConfigForActionWithMergeCapabilities(kind actions.Kind, target actions.Target, caps data.MergeCapabilities) actionprompt.Config {
 	title := fmt.Sprintf("%s #%d", actionLabel(kind), target.Number)
 	message := fmt.Sprintf("%s - %s", target.Repo, target.Title)
 	if kind == actions.KindSwitchBranch || kind == actions.KindPushBranch || kind == actions.KindForcePushBranch || kind == actions.KindFastForwardBranch || kind == actions.KindDeleteBranch {
@@ -2125,41 +2172,7 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 			Mode:    actionprompt.ModePicker,
 			Title:   title,
 			Message: message,
-			Options: []actionprompt.Option{
-				{Label: "Merge", Value: string(data.MergeStyleMerge)},
-				{Label: "Squash", Value: string(data.MergeStyleSquash)},
-				{Label: "Rebase", Value: string(data.MergeStyleRebase)},
-				{Label: "Rebase merge", Value: string(data.MergeStyleRebaseMerge)},
-				{Label: "Fast-forward only", Value: string(data.MergeStyleFastForwardOnly)},
-				{Label: "Merge with message", Value: string(data.MergeStyleMerge) + "+message"},
-				{Label: "Squash with message", Value: string(data.MergeStyleSquash) + "+message"},
-				{Label: "Rebase merge with message", Value: string(data.MergeStyleRebaseMerge) + "+message"},
-				{Label: "Merge + delete branch", Value: string(data.MergeStyleMerge) + "+delete"},
-				{Label: "Squash + delete branch", Value: string(data.MergeStyleSquash) + "+delete"},
-				{Label: "Rebase + delete branch", Value: string(data.MergeStyleRebase) + "+delete"},
-				{Label: "Rebase merge + delete branch", Value: string(data.MergeStyleRebaseMerge) + "+delete"},
-				{Label: "Fast-forward only + delete branch", Value: string(data.MergeStyleFastForwardOnly) + "+delete"},
-				{Label: "Merge + force merge", Value: string(data.MergeStyleMerge) + "+force"},
-				{Label: "Squash + force merge", Value: string(data.MergeStyleSquash) + "+force"},
-				{Label: "Rebase + force merge", Value: string(data.MergeStyleRebase) + "+force"},
-				{Label: "Rebase merge + force merge", Value: string(data.MergeStyleRebaseMerge) + "+force"},
-				{Label: "Fast-forward only + force merge", Value: string(data.MergeStyleFastForwardOnly) + "+force"},
-				{Label: "Merge when checks pass", Value: string(data.MergeStyleMerge) + "+auto"},
-				{Label: "Squash when checks pass", Value: string(data.MergeStyleSquash) + "+auto"},
-				{Label: "Rebase when checks pass", Value: string(data.MergeStyleRebase) + "+auto"},
-				{Label: "Rebase merge when checks pass", Value: string(data.MergeStyleRebaseMerge) + "+auto"},
-				{Label: "Fast-forward only when checks pass", Value: string(data.MergeStyleFastForwardOnly) + "+auto"},
-				{Label: "Merge + delete branch when checks pass", Value: string(data.MergeStyleMerge) + "+delete+auto"},
-				{Label: "Squash + delete branch when checks pass", Value: string(data.MergeStyleSquash) + "+delete+auto"},
-				{Label: "Rebase + delete branch when checks pass", Value: string(data.MergeStyleRebase) + "+delete+auto"},
-				{Label: "Rebase merge + delete branch when checks pass", Value: string(data.MergeStyleRebaseMerge) + "+delete+auto"},
-				{Label: "Fast-forward only + delete branch when checks pass", Value: string(data.MergeStyleFastForwardOnly) + "+delete+auto"},
-				{Label: "Merge + delete branch + force merge", Value: string(data.MergeStyleMerge) + "+delete+force"},
-				{Label: "Squash + delete branch + force merge", Value: string(data.MergeStyleSquash) + "+delete+force"},
-				{Label: "Rebase + delete branch + force merge", Value: string(data.MergeStyleRebase) + "+delete+force"},
-				{Label: "Rebase merge + delete branch + force merge", Value: string(data.MergeStyleRebaseMerge) + "+delete+force"},
-				{Label: "Fast-forward only + delete branch + force merge", Value: string(data.MergeStyleFastForwardOnly) + "+delete+force"},
-			},
+			Options: mergePromptOptions(caps),
 		}
 	case actions.KindCancelRun:
 		return actionprompt.Config{
@@ -2174,6 +2187,68 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 			Message: message,
 		}
 	}
+}
+
+type mergePromptStyle struct {
+	Label   string
+	Style   data.MergeStyle
+	Message bool
+}
+
+func mergePromptOptions(caps data.MergeCapabilities) []actionprompt.Option {
+	styles := []mergePromptStyle{
+		{Label: "Merge", Style: data.MergeStyleMerge, Message: true},
+		{Label: "Squash", Style: data.MergeStyleSquash, Message: true},
+		{Label: "Rebase", Style: data.MergeStyleRebase},
+		{Label: "Rebase merge", Style: data.MergeStyleRebaseMerge, Message: true},
+		{Label: "Fast-forward only", Style: data.MergeStyleFastForwardOnly},
+	}
+	supported := make([]mergePromptStyle, 0, len(styles))
+	for _, style := range styles {
+		if caps.SupportsStyle(style.Style) {
+			supported = append(supported, style)
+		}
+	}
+	if len(supported) == 0 {
+		caps = data.DefaultMergeCapabilities()
+		supported = styles
+	}
+
+	options := make([]actionprompt.Option, 0, 32)
+	add := func(label string, style data.MergeStyle, suffix string) {
+		options = append(options, actionprompt.Option{Label: label, Value: string(style) + suffix})
+	}
+
+	for _, style := range supported {
+		add(style.Label, style.Style, "")
+	}
+	for _, style := range supported {
+		if style.Message {
+			add(style.Label+" with message", style.Style, "+message")
+		}
+	}
+	for _, style := range supported {
+		add(style.Label+" + delete branch", style.Style, "+delete")
+	}
+	if caps.ForceMerge {
+		for _, style := range supported {
+			add(style.Label+" + force merge", style.Style, "+force")
+		}
+	}
+	if caps.AutoMerge {
+		for _, style := range supported {
+			add(style.Label+" when checks pass", style.Style, "+auto")
+		}
+		for _, style := range supported {
+			add(style.Label+" + delete branch when checks pass", style.Style, "+delete+auto")
+		}
+	}
+	if caps.ForceMerge {
+		for _, style := range supported {
+			add(style.Label+" + delete branch + force merge", style.Style, "+delete+force")
+		}
+	}
+	return options
 }
 
 func actionLabel(kind actions.Kind) string {

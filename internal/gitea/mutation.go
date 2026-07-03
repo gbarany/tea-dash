@@ -312,6 +312,38 @@ func (c *Client) MergePullRequest(owner, repo string, index int64, opt data.Merg
 	return merged, nil
 }
 
+// MergeCapabilities returns the merge choices the selected repository advertises.
+func (c *Client) MergeCapabilities(owner, repo string) (data.MergeCapabilities, error) {
+	var repository *sdk.Repository
+	err := c.call(func() error {
+		var e error
+		repository, _, e = c.sdk.GetRepo(owner, repo)
+		return e
+	})
+	if err != nil {
+		return data.DefaultMergeCapabilities(), fmt.Errorf("load merge capabilities for %s/%s: %w", owner, repo, err)
+	}
+	return mergeCapabilitiesFromRepository(repository), nil
+}
+
+func mergeCapabilitiesFromRepository(repo *sdk.Repository) data.MergeCapabilities {
+	caps := data.DefaultMergeCapabilities()
+	if repo == nil {
+		return caps
+	}
+	hasStyleSignal := repo.AllowMerge || repo.AllowSquash || repo.AllowRebase ||
+		repo.AllowRebaseMerge || repo.AllowFastForwardOnlyMerge
+	if !hasStyleSignal {
+		return caps
+	}
+	caps.Merge = repo.AllowMerge
+	caps.Squash = repo.AllowSquash
+	caps.Rebase = repo.AllowRebase
+	caps.RebaseMerge = repo.AllowRebaseMerge
+	caps.FastForwardOnly = repo.AllowFastForwardOnlyMerge
+	return caps
+}
+
 // UpdatePullRequest asks the server to update a PR branch with commits from its
 // base branch.
 func (c *Client) UpdatePullRequest(owner, repo string, index int64) error {

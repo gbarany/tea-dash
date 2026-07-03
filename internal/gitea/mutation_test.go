@@ -342,6 +342,41 @@ func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 	}
 }
 
+func TestMergeCapabilitiesMapsRepositorySettings(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/repos/acme/widgets" {
+			t.Fatalf("%s %s", r.Method, r.URL.String())
+		}
+		fmt.Fprint(w, `{
+			"id": 1,
+			"name": "widgets",
+			"full_name": "acme/widgets",
+			"allow_merge_commits": true,
+			"allow_squash_merge": false,
+			"allow_rebase": true,
+			"allow_rebase_explicit": false,
+			"allow_fast_forward_only_merge": true
+		}`)
+	})
+
+	got, err := c.MergeCapabilities("acme", "widgets")
+	if err != nil {
+		t.Fatalf("MergeCapabilities: %v", err)
+	}
+	want := data.MergeCapabilities{
+		Merge:           true,
+		Squash:          false,
+		Rebase:          true,
+		RebaseMerge:     false,
+		FastForwardOnly: true,
+		ForceMerge:      true,
+		AutoMerge:       true,
+	}
+	if got != want {
+		t.Fatalf("capabilities = %+v, want %+v", got, want)
+	}
+}
+
 func TestUpdatePullRequestPostsUpdateEndpoint(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

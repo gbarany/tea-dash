@@ -18,6 +18,7 @@ import (
 	localgit "github.com/gbarany/tea-dash/internal/git"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/actions"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
@@ -2157,6 +2158,89 @@ func TestMergePromptIncludesAutoMergeOptions(t *testing.T) {
 	}
 }
 
+func TestMergePromptFiltersUnsupportedCapabilities(t *testing.T) {
+	caps := data.DefaultMergeCapabilities()
+	caps.Squash = false
+	caps.Rebase = false
+	caps.RebaseMerge = false
+	caps.FastForwardOnly = false
+	caps.ForceMerge = false
+	caps.AutoMerge = false
+
+	cfg := promptConfigForActionWithMergeCapabilities(actions.KindMerge, actions.Target{}, caps)
+	labels := optionLabels(cfg.Options)
+	for _, want := range []string{"Merge", "Merge with message", "Merge + delete branch"} {
+		if !strings.Contains(labels, want) {
+			t.Fatalf("merge prompt missing %q in labels:\n%s", want, labels)
+		}
+	}
+	for _, blocked := range []string{"Squash", "Rebase", "Fast-forward", "force merge", "checks pass"} {
+		if strings.Contains(labels, blocked) {
+			t.Fatalf("merge prompt should not include unsupported %q labels:\n%s", blocked, labels)
+		}
+	}
+}
+
+func TestMergePromptLoadsRepositoryCapabilitiesBeforeOpening(t *testing.T) {
+	client := mergeCapabilitiesClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/gbarany/tea-dash" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{
+			"id": 1,
+			"name": "tea-dash",
+			"full_name": "gbarany/tea-dash",
+			"allow_merge_commits": true,
+			"allow_squash_merge": false,
+			"allow_rebase": false,
+			"allow_rebase_explicit": false,
+			"allow_fast_forward_only_merge": false
+		}`)
+	})
+	m := New(&config.Config{}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("merge should fetch repository capabilities before opening the prompt")
+	}
+	if m.actionPrompt.Active() {
+		t.Fatal("merge prompt should wait for capability loading before opening")
+	}
+	msg := cmd()
+	loaded, ok := msg.(mergeCapabilitiesLoadedMsg)
+	if !ok || loaded.err != nil {
+		t.Fatalf("merge capability load msg = %#v, want success", msg)
+	}
+
+	m = update(t, m, loaded)
+	view := m.actionPrompt.View(160)
+	if !strings.Contains(view, "Merge + delete branch") {
+		t.Fatalf("merge prompt should include allowed merge options:\n%s", view)
+	}
+	for _, blocked := range []string{"Squash", "Rebase", "Fast-forward"} {
+		if strings.Contains(view, blocked) {
+			t.Fatalf("merge prompt should hide unsupported %q options:\n%s", blocked, view)
+		}
+	}
+}
+
+func optionLabels(options []actionprompt.Option) string {
+	var labels []string
+	for _, opt := range options {
+		labels = append(labels, opt.Label)
+	}
+	return strings.Join(labels, "\n")
+}
+
 func TestMergePromptIncludesMessageOptions(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -3428,6 +3512,28 @@ func reviewerClient(t *testing.T, reviewersHandler http.HandlerFunc) *gitea.Clie
 	})
 	if reviewersHandler != nil {
 		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash/reviewers", reviewersHandler)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return client
+}
+
+func mergeCapabilitiesClient(t *testing.T, repoHandler http.HandlerFunc) *gitea.Client {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	if repoHandler != nil {
+		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash", repoHandler)
 	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
