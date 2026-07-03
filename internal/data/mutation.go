@@ -42,6 +42,7 @@ type MergeOptions struct {
 	Message      string
 	DeleteBranch bool
 	ForceMerge   bool
+	AutoMerge    bool
 	HeadCommitID string
 }
 

@@ -314,6 +314,7 @@ func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 			"MergeMessageField":         "merge message",
 			"delete_branch_after_merge": true,
 			"force_merge":               true,
+			"merge_when_checks_succeed": true,
 			"head_commit_id":            "abc123",
 		}
 		for key, want := range checks {
@@ -330,6 +331,7 @@ func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 		Message:      "merge message",
 		DeleteBranch: true,
 		ForceMerge:   true,
+		AutoMerge:    true,
 		HeadCommitID: "abc123",
 	})
 	if err != nil {

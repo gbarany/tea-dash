@@ -302,6 +302,7 @@ func (c *Client) MergePullRequest(owner, repo string, index int64, opt data.Merg
 			DeleteBranchAfterMerge: &deleteBranch,
 			ForceMerge:             opt.ForceMerge,
 			HeadCommitId:           opt.HeadCommitID,
+			MergeWhenChecksSucceed: opt.AutoMerge,
 		})
 		return e
 	})

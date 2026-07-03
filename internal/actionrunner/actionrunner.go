@@ -742,12 +742,15 @@ func mergeOptions(value string) (data.MergeOptions, error) {
 	styleValue := parts[0]
 	deleteBranch := false
 	forceMerge := false
+	autoMerge := false
 	for _, flag := range parts[1:] {
 		switch strings.TrimSpace(flag) {
 		case "delete", "delete-branch", "delete_branch":
 			deleteBranch = true
 		case "force", "force-merge", "force_merge":
 			forceMerge = true
+		case "auto", "auto-merge", "auto_merge", "when-checks-pass", "checks", "merge-when-checks-succeed", "merge_when_checks_succeed":
+			autoMerge = true
 		case "message", "edit-message", "edit_message":
 			// UI-only flag: the submitted Prompt carries the actual title/body.
 		case "":
@@ -761,7 +764,7 @@ func mergeOptions(value string) (data.MergeOptions, error) {
 	if err != nil {
 		return data.MergeOptions{}, err
 	}
-	return data.MergeOptions{Style: style, DeleteBranch: deleteBranch, ForceMerge: forceMerge}, nil
+	return data.MergeOptions{Style: style, DeleteBranch: deleteBranch, ForceMerge: forceMerge, AutoMerge: autoMerge}, nil
 }
 
 func mergeStyle(value string) (data.MergeStyle, error) {
