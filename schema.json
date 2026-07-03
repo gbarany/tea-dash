@@ -6,6 +6,22 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "include": {
+      "description": "YAML config files to load before this file. Relative paths resolve from the file declaring them. Later includes override earlier includes; this file overrides all includes.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      ]
+    },
     "instance": { "$ref": "#/$defs/instance" },
     "login": {
       "type": "string",

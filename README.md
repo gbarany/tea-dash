@@ -132,6 +132,9 @@ sections. A fuller copyable example lives at
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/gbarany/tea-dash/main/schema.json
 
+include:
+  - ./shared-tea-dash.yml # loaded first; this file wins on conflicts
+
 instance:
   login: ""          # tea login profile to use (empty = your default tea login)
   # url:   ""        # override the instance URL (else taken from the tea login)
@@ -318,6 +321,12 @@ keybindings:
 tea-dash publishes a JSON Schema at
 [`schema.json`](schema.json). Add the `yaml-language-server` comment above to
 your config file to get editor validation and autocomplete in YAML-aware editors.
+
+Use `include` to share config across files. Include paths are resolved relative
+to the file declaring them unless they are absolute or start with `~`. Includes
+are loaded first; later includes override earlier includes; the current file
+overrides all included values. Nested maps merge recursively, while arrays and
+scalars replace the previous value.
 
 `filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
 `assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),

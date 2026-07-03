@@ -5,6 +5,11 @@
 # Copy this to one of tea-dash's config locations and adjust the repo names,
 # local checkout paths, and login name for your environment.
 
+# Optionally share defaults/keybindings/theme across files. Includes are loaded
+# first; this file overrides included values.
+# include:
+#   - ./shared-tea-dash.yml
+
 instance:
   # Empty means "use the default tea login". Set this to a named tea login when
   # you have multiple Gitea/Forgejo instances configured.
