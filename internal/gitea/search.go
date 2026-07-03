@@ -41,6 +41,10 @@ type searchIssue struct {
 	PullRequest *struct {
 		Merged bool `json:"merged"`
 		Draft  bool `json:"draft"`
+		Head   *struct {
+			Ref string `json:"ref"`
+			Sha string `json:"sha"`
+		} `json:"head"`
 	} `json:"pull_request"`
 }
 
@@ -374,6 +378,10 @@ func mapSearchIssue(it searchIssue) data.PullRequest {
 		pr.Draft = it.PullRequest.Draft
 		if it.PullRequest.Merged {
 			pr.State = "merged"
+		}
+		if it.PullRequest.Head != nil {
+			pr.HeadRef = it.PullRequest.Head.Ref
+			pr.HeadSHA = it.PullRequest.Head.Sha
 		}
 	}
 	for _, l := range it.Labels {

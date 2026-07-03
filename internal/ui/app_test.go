@@ -304,6 +304,72 @@ func TestMouseClickReadyActionButtonStartsPromptAction(t *testing.T) {
 	}
 }
 
+func TestWatchChecksHotkeySwitchesToActionsForSelectedPullRequest(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 7, Title: "Fix checks", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+		HeadRef: "feature/checks", HeadSHA: "abc123",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("watch checks should fetch the transient Actions section")
+	}
+	if m.ctx.View != context.ActionsView {
+		t.Fatalf("view = %v, want ActionsView", m.ctx.View)
+	}
+	if len(m.actions) != 1 {
+		t.Fatalf("actions sections = %d, want 1 transient section", len(m.actions))
+	}
+	sec, ok := m.actions[0].(*actionsection.Model)
+	if !ok {
+		t.Fatalf("actions section type = %T", m.actions[0])
+	}
+	if sec.Config.Title != "Checks for #7" || sec.Config.Repo != "gitea/tea" {
+		t.Fatalf("transient section config = %+v", sec.Config)
+	}
+	if sec.Config.Filter.Branch != "feature/checks" || sec.Config.Filter.HeadSHA != "abc123" {
+		t.Fatalf("actions filter = %+v, want PR head branch+SHA", sec.Config.Filter)
+	}
+}
+
+func TestWatchChecksUsesCachedPullDetailWhenRowLacksHead(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 7, Title: "Fix checks", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+	m.pullDetails[m.selKey()] = &data.PullDetail{HeadRef: "detail-branch", HeadSHA: "detail-sha"}
+
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
+	m = next.(Model)
+	sec := m.actions[0].(*actionsection.Model)
+	if sec.Config.Filter.Branch != "detail-branch" || sec.Config.Filter.HeadSHA != "detail-sha" {
+		t.Fatalf("actions filter = %+v, want cached detail branch+SHA", sec.Config.Filter)
+	}
+}
+
+func TestMouseClickChecksActionButtonSwitchesToActions(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 7, Title: "Fix checks", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+		HeadRef: "feature/checks", HeadSHA: "abc123",
+	}}))
+
+	x := actionButtonClickX(t, m, "Checks")
+	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("checks action button should fetch the transient Actions section")
+	}
+	if m.ctx.View != context.ActionsView {
+		t.Fatalf("view = %v, want ActionsView", m.ctx.View)
+	}
+}
+
 func TestMouseClickRefreshActionButtonRefreshesCurrentSection(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})

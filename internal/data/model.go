@@ -28,6 +28,8 @@ type PullRequest struct {
 	Author            string // poster login
 	State             string // "open" | "closed" | "merged"
 	Draft             bool
+	HeadRef           string
+	HeadSHA           string
 	HTMLURL           string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
