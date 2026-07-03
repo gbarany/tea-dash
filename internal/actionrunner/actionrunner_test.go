@@ -484,6 +484,50 @@ func TestDispatchSwitchBranchDoesNotRequireClient(t *testing.T) {
 	}
 }
 
+func TestDispatchBranchPushAndDeleteDoNotRequireClient(t *testing.T) {
+	t.Run("push", func(t *testing.T) {
+		var gotOpts localgit.PushBranchOptions
+		r := New(Options{
+			BranchPush: func(_ context.Context, opts localgit.PushBranchOptions) (localgit.PushBranchResult, error) {
+				gotOpts = opts
+				return localgit.PushBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch, Remote: opts.Remote}, nil
+			},
+		})
+
+		got := runDispatch(t, r, branchIntent(uiactions.KindPushBranch))
+		if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+			t.Fatalf("push branch result = %+v", got)
+		}
+		if gotOpts.RepoPath != "/src/tea-dash" || gotOpts.Branch != "feature/local-ops" || gotOpts.Remote != "origin" {
+			t.Fatalf("push branch opts = %+v", gotOpts)
+		}
+		if !strings.Contains(got.Message, "Pushed feature/local-ops") {
+			t.Fatalf("push branch message = %q", got.Message)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		var gotOpts localgit.DeleteBranchOptions
+		r := New(Options{
+			BranchDelete: func(_ context.Context, opts localgit.DeleteBranchOptions) (localgit.DeleteBranchResult, error) {
+				gotOpts = opts
+				return localgit.DeleteBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch}, nil
+			},
+		})
+
+		got := runDispatch(t, r, branchIntent(uiactions.KindDeleteBranch))
+		if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+			t.Fatalf("delete branch result = %+v", got)
+		}
+		if gotOpts.RepoPath != "/src/tea-dash" || gotOpts.Branch != "feature/local-ops" {
+			t.Fatalf("delete branch opts = %+v", gotOpts)
+		}
+		if !strings.Contains(got.Message, "Deleted feature/local-ops") {
+			t.Fatalf("delete branch message = %q", got.Message)
+		}
+	})
+}
+
 func TestDispatchActionRunControlsUseRunID(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})

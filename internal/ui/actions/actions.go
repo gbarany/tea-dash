@@ -24,6 +24,8 @@ const (
 	KindExternalDiff  Kind = "external_diff"
 	KindCheckout      Kind = "checkout"
 	KindSwitchBranch  Kind = "switch_branch"
+	KindPushBranch    Kind = "push_branch"
+	KindDeleteBranch  Kind = "delete_branch"
 	KindRerunRun      Kind = "rerun_run"
 	KindCancelRun     Kind = "cancel_run"
 	KindCustomCommand Kind = "custom_command"

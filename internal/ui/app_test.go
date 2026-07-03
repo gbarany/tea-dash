@@ -2163,6 +2163,73 @@ func TestBranchSwitchHotkeysDispatchExpectedIntent(t *testing.T) {
 	}
 }
 
+func TestBranchLocalOpHotkeysDispatchExpectedIntents(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		kind actions.Kind
+	}{
+		{name: "push", key: tea.KeyPressMsg{Code: 'P', Text: "P"}, kind: actions.KindPushBranch},
+		{name: "delete", key: tea.KeyPressMsg{Code: 'd', Text: "d"}, kind: actions.KindDeleteBranch},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []actions.Intent
+			m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+			m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+				got = append(got, intent)
+				return nil
+			}
+			m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+				Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+				Name: "feature/local-ops", Current: false,
+			}}))
+
+			m = update(t, m, tt.key)
+			if !m.actionPrompt.Active() {
+				t.Fatalf("%s should open a confirmation prompt", tt.name)
+			}
+			m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(got) != 1 {
+				t.Fatalf("dispatcher calls = %d, want 1", len(got))
+			}
+			wantTarget := actions.Target{
+				SectionID:      0,
+				SectionType:    branchsection.SectionType,
+				RowKind:        actions.RowKindBranch,
+				Repo:           "tea-dash",
+				RepositoryPath: "/src/tea-dash",
+				Title:          "feature/local-ops",
+			}
+			if got[0].Kind != tt.kind || got[0].Target != wantTarget {
+				t.Fatalf("intent = %+v, want %s target %+v", got[0], tt.kind, wantTarget)
+			}
+		})
+	}
+}
+
+func TestBranchActionButtonsIncludeLocalOps(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+		Name: "feature/local-ops", Current: false,
+	}}))
+
+	found := map[string]bool{}
+	for _, b := range m.actionButtons() {
+		found[b.Label] = true
+	}
+	for _, label := range []string{"Push", "Delete"} {
+		if !found[label] {
+			t.Fatalf("branch action button %q not found in %+v", label, m.actionButtons())
+		}
+	}
+}
+
 func TestActionsViewRunControlKeysDispatchExpectedIntents(t *testing.T) {
 	tests := []struct {
 		name       string

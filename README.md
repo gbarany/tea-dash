@@ -103,6 +103,8 @@ tea-dash --help
 | `v`             | submit PR review        |
 | `d` / `ctrl+t`  | open PR diff in external pager |
 | `C` / `space`   | checkout PR/issue locally; switch branch in Branches view |
+| `P`             | push branch in Branches view   |
+| `d` / `backspace` | delete branch in Branches view |
 | `R` / `!`       | rerun / cancel Actions run |
 | `r` / `R`       | refresh section / all sections (`ctrl+r` refreshes all in Actions view) |
 | `?`             | show / hide full help   |
@@ -285,6 +287,10 @@ keybindings:
   branches:
     - key: B
       command: git -C {{.RepoPath}} status
+    - key: P
+      builtin: push
+    - key: d
+      builtin: delete
 ```
 
 `filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,

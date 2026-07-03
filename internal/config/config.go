@@ -468,7 +468,7 @@ var notificationBuiltins = builtinSet(
 
 var actionBuiltins = builtinSet("rerun", "rerunRun", "cancel", "cancelRun")
 
-var branchBuiltins = builtinSet("checkout")
+var branchBuiltins = builtinSet("checkout", "push", "delete")
 
 func builtinSet(names ...string) map[string]struct{} {
 	out := make(map[string]struct{}, len(names))

@@ -512,6 +512,87 @@ func switchBranchError(repoPath, branch string, err error) error {
 	}
 }
 
+// PushBranchOptions configures pushing a local branch to a remote.
+type PushBranchOptions struct {
+	RepoPath string
+	Branch   string
+	Remote   string
+	Runner   Runner
+}
+
+// PushBranchResult is the local branch push that completed.
+type PushBranchResult struct {
+	RepoPath string
+	Branch   string
+	Remote   string
+}
+
+// PushBranch pushes branch to remote and sets upstream tracking. Empty remote
+// defaults to origin.
+func PushBranch(ctx context.Context, opts PushBranchOptions) (PushBranchResult, error) {
+	repoPath := strings.TrimSpace(opts.RepoPath)
+	branch := strings.TrimSpace(opts.Branch)
+	remote := strings.TrimSpace(opts.Remote)
+	if remote == "" {
+		remote = "origin"
+	}
+	if repoPath == "" {
+		return PushBranchResult{}, errors.New("repository path is required")
+	}
+	if branch == "" {
+		return PushBranchResult{}, errors.New("branch name is required")
+	}
+	runner := opts.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	if _, err := runGit(ctx, runner, repoPath, "push", "-u", remote, branch); err != nil {
+		return PushBranchResult{}, fmt.Errorf("push %s to %s in %s: %w", branch, remote, repoPath, err)
+	}
+	return PushBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote}, nil
+}
+
+// DeleteBranchOptions configures deleting a local branch.
+type DeleteBranchOptions struct {
+	RepoPath string
+	Branch   string
+	Runner   Runner
+}
+
+// DeleteBranchResult is the local branch deletion that completed.
+type DeleteBranchResult struct {
+	RepoPath string
+	Branch   string
+}
+
+// DeleteBranch deletes a local branch with git branch -d. It refuses deleting
+// the currently checked-out branch before invoking git branch -d.
+func DeleteBranch(ctx context.Context, opts DeleteBranchOptions) (DeleteBranchResult, error) {
+	repoPath := strings.TrimSpace(opts.RepoPath)
+	branch := strings.TrimSpace(opts.Branch)
+	if repoPath == "" {
+		return DeleteBranchResult{}, errors.New("repository path is required")
+	}
+	if branch == "" {
+		return DeleteBranchResult{}, errors.New("branch name is required")
+	}
+	runner := opts.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	current, err := runGit(ctx, runner, repoPath, "branch", "--show-current")
+	if err != nil {
+		return DeleteBranchResult{}, err
+	}
+	if strings.TrimSpace(current.Stdout) == branch {
+		return DeleteBranchResult{}, fmt.Errorf("branch %s is current in %s; switch away before deleting it", branch, repoPath)
+	}
+	if _, err := runGit(ctx, runner, repoPath, "branch", "-d", branch); err != nil {
+		return DeleteBranchResult{}, fmt.Errorf("delete branch %s in %s: %w", branch, repoPath, err)
+	}
+	return DeleteBranchResult{RepoPath: repoPath, Branch: branch}, nil
+}
+
 func branchExists(ctx context.Context, runner Runner, dir, branch string) (bool, error) {
 	res, err := runner.Run(ctx, Command{Dir: dir, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/" + branch}})
 	if err != nil {

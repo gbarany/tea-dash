@@ -43,6 +43,8 @@ type keyMap struct {
 	Review        key.Binding
 	ExternalDiff  key.Binding
 	Checkout      key.Binding
+	PushBranch    key.Binding
+	DeleteBranch  key.Binding
 	RerunRun      key.Binding
 	CancelRun     key.Binding
 	CopyNumber    key.Binding
@@ -185,6 +187,14 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("C", " ", "space"),
 			key.WithHelp("C/space", "checkout"),
 		),
+		PushBranch: key.NewBinding(
+			key.WithKeys("P"),
+			key.WithHelp("P", "push branch"),
+		),
+		DeleteBranch: key.NewBinding(
+			key.WithKeys("d", "backspace"),
+			key.WithHelp("d/backspace", "delete branch"),
+		),
 		RerunRun: key.NewBinding(
 			key.WithKeys("R"),
 			key.WithHelp("R", "rerun"),
@@ -310,6 +320,10 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.ExternalDiff = binding(keyName, "external diff")
 	case "checkout":
 		k.Checkout = binding(keyName, "checkout")
+	case "push":
+		k.PushBranch = binding(keyName, "push branch")
+	case "delete":
+		k.DeleteBranch = binding(keyName, "delete branch")
 	case "rerun", "rerunrun":
 		k.RerunRun = binding(keyName, "rerun")
 	case "cancel", "cancelrun":
