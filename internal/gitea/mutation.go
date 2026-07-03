@@ -460,6 +460,23 @@ func (c *Client) RequestPullReviewers(owner, repo string, index int64, reviewers
 	return nil
 }
 
+// RemovePullReviewers removes review requests for the given usernames.
+func (c *Client) RemovePullReviewers(owner, repo string, index int64, reviewers []string) error {
+	if len(reviewers) == 0 {
+		return fmt.Errorf("reviewer usernames cannot be empty")
+	}
+	err := c.call(func() error {
+		_, e := c.sdk.DeleteReviewRequests(owner, repo, index, sdk.PullReviewRequestOptions{
+			Reviewers: reviewers,
+		})
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("remove reviewers on %s/%s#%d: %w", owner, repo, index, err)
+	}
+	return nil
+}
+
 func mapPullReviewEvent(event data.PullReviewEvent) (sdk.ReviewStateType, error) {
 	switch event {
 	case data.PullReviewEventApprove:

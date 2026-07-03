@@ -766,6 +766,7 @@ func (m Model) actionButtons() []actionButton {
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
 			actionButton{Label: "Request review", Builtin: "requestReviewers"},
+			actionButton{Label: "Remove reviewers", Builtin: "removeReviewers"},
 			actionButton{Label: "Checks", Builtin: "watchChecks"},
 			actionButton{Label: "Diff", Builtin: "diff"},
 			actionButton{Label: "Checkout", Builtin: "checkout"},
@@ -1697,6 +1698,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindReview), true
 	case "requestreview", "requestreviewer", "requestreviewers":
 		return m, m.startAction(actions.KindRequestReviewers), true
+	case "removereview", "removereviewer", "removereviewers", "removerequestedreviewers":
+		return m, m.startAction(actions.KindRemoveReviewers), true
 	case "diff":
 		return m, m.startAction(actions.KindExternalDiff), true
 	case "checkout":
@@ -1879,7 +1882,7 @@ func (m Model) selectedActionTarget() (actions.Target, bool) {
 
 func validateActionTarget(kind actions.Kind, target actions.Target) error {
 	switch kind {
-	case actions.KindMerge, actions.KindUpdateBranch, actions.KindMarkReady, actions.KindMarkDraft, actions.KindReview, actions.KindRequestReviewers, actions.KindExternalDiff:
+	case actions.KindMerge, actions.KindUpdateBranch, actions.KindMarkReady, actions.KindMarkDraft, actions.KindReview, actions.KindRequestReviewers, actions.KindRemoveReviewers, actions.KindExternalDiff:
 		if target.RowKind != actions.RowKindPullRequest {
 			return fmt.Errorf("%s is only available for pull requests.", actionLabel(kind))
 		}
@@ -1921,7 +1924,7 @@ func promptModeForAction(kind actions.Kind) actions.PromptMode {
 	switch kind {
 	case actions.KindComment:
 		return actions.PromptText
-	case actions.KindAddLabel, actions.KindRemoveLabel, actions.KindSetMilestone, actions.KindRequestReviewers:
+	case actions.KindAddLabel, actions.KindRemoveLabel, actions.KindSetMilestone, actions.KindRequestReviewers, actions.KindRemoveReviewers:
 		return actions.PromptText
 	case actions.KindMerge, actions.KindReview:
 		return actions.PromptPicker
@@ -1971,6 +1974,13 @@ func promptConfigForAction(kind actions.Kind, target actions.Target) actionpromp
 			Title:       title,
 			Message:     message,
 			Placeholder: "Reviewer usernames, comma-separated",
+		}
+	case actions.KindRemoveReviewers:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       title,
+			Message:     message,
+			Placeholder: "Reviewer usernames to remove, comma-separated",
 		}
 	case actions.KindReview:
 		return actionprompt.Config{
@@ -2045,6 +2055,8 @@ func actionLabel(kind actions.Kind) string {
 		return "Review"
 	case actions.KindRequestReviewers:
 		return "Request reviewers"
+	case actions.KindRemoveReviewers:
+		return "Remove reviewers"
 	case actions.KindExternalDiff:
 		return "External diff"
 	case actions.KindCheckout:

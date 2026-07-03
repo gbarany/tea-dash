@@ -42,6 +42,7 @@ type Client interface {
 	MarkPullDraft(owner, repo string, index int64) (bool, error)
 	SubmitPullReview(owner, repo string, index int64, opt data.PullReviewOptions) (data.Review, error)
 	RequestPullReviewers(owner, repo string, index int64, reviewers []string) error
+	RemovePullReviewers(owner, repo string, index int64, reviewers []string) error
 	GetPullDiff(owner, repo string, index int64) ([]byte, error)
 	ListActionJobs(ctx context.Context, owner, repo string, runID int64) ([]data.ActionJob, error)
 	GetActionJobLogs(ctx context.Context, owner, repo string, jobID int64) ([]byte, error)
@@ -477,6 +478,16 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		}
 		return fmt.Sprintf("Requested review from %s on %s#%d.", strings.Join(reviewers, ", "), intent.Target.Repo, index), nil
 
+	case uiactions.KindRemoveReviewers:
+		reviewers, err := parseReviewerNames(intent.Prompt.Value)
+		if err != nil {
+			return "", err
+		}
+		if err := r.client.RemovePullReviewers(owner, repo, index, reviewers); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Removed review requests for %s on %s#%d.", strings.Join(reviewers, ", "), intent.Target.Repo, index), nil
+
 	case uiactions.KindUpdateBranch:
 		if err := r.client.UpdatePullRequest(owner, repo, index); err != nil {
 			return "", err
@@ -774,6 +785,8 @@ func actionLabel(kind uiactions.Kind) string {
 		return "review"
 	case uiactions.KindRequestReviewers:
 		return "request reviewers"
+	case uiactions.KindRemoveReviewers:
+		return "remove reviewers"
 	case uiactions.KindExternalDiff:
 		return "external diff"
 	case uiactions.KindCheckout:
