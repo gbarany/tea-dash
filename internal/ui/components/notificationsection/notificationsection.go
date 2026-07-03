@@ -40,8 +40,12 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		SingularForm: "notification",
 		PluralForm:   "notifications",
 		Limit:        func(c *config.Config) int { return c.Defaults.NotificationsLimit },
-		Fetch: func(ctx stdctx.Context, c *gitea.Client, _ config.PrIssueFilter, limit, _ int) ([]data.Notification, int, error) {
-			return c.ListNotifications(ctx, limit)
+		Fetch: func(fetchCtx stdctx.Context, c *gitea.Client, _ config.PrIssueFilter, limit, _ int) ([]data.Notification, int, error) {
+			includeRead := true
+			if ctx.Config != nil {
+				includeRead = ctx.Config.Defaults.IncludeReadNotificationsEnabled()
+			}
+			return c.ListNotifications(fetchCtx, limit, includeRead)
 		},
 		BuildRow: notificationBuildRow,
 	})

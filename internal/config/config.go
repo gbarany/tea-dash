@@ -69,14 +69,15 @@ func (c *Config) SmartFilteringEnabled() bool {
 // cap used when a section omits its own Limit. Precedence: section Limit ->
 // per-view default -> 50.
 type Defaults struct {
-	View                   string        `yaml:"view"` // "prs" | "issues" | "notifications" | "actions" | "branches"
-	Preview                PreviewConfig `yaml:"preview"`
-	RefetchIntervalMinutes int           `yaml:"refetchIntervalMinutes"`
-	PRsLimit               int           `yaml:"prsLimit"`
-	IssuesLimit            int           `yaml:"issuesLimit"`
-	NotificationsLimit     int           `yaml:"notificationsLimit"`
-	ActionsLimit           int           `yaml:"actionsLimit"`
-	BranchesLimit          int           `yaml:"branchesLimit"`
+	View                     string        `yaml:"view"` // "prs" | "issues" | "notifications" | "actions" | "branches"
+	Preview                  PreviewConfig `yaml:"preview"`
+	RefetchIntervalMinutes   int           `yaml:"refetchIntervalMinutes"`
+	PRsLimit                 int           `yaml:"prsLimit"`
+	IssuesLimit              int           `yaml:"issuesLimit"`
+	NotificationsLimit       int           `yaml:"notificationsLimit"`
+	IncludeReadNotifications *bool         `yaml:"includeReadNotifications"`
+	ActionsLimit             int           `yaml:"actionsLimit"`
+	BranchesLimit            int           `yaml:"branchesLimit"`
 }
 
 // PreviewConfig controls the side preview pane. Open is a pointer so an omitted
@@ -102,6 +103,17 @@ func (p PreviewConfig) PreviewWidth() int {
 		return 0
 	}
 	return p.Width
+}
+
+// IncludeReadNotificationsEnabled reports whether notification sections with no
+// explicit status filter should include read notifications. It defaults to true
+// to match gh-dash and GitHub's notification view; configuring false restores
+// an unread/pinned-only inbox.
+func (d Defaults) IncludeReadNotificationsEnabled() bool {
+	if d.IncludeReadNotifications == nil {
+		return true
+	}
+	return *d.IncludeReadNotifications
 }
 
 // RefetchInterval returns the configured automatic refetch interval. A zero or

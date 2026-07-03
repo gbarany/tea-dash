@@ -86,6 +86,7 @@ defaults:
   prsLimit: 25
   issuesLimit: 40
   notificationsLimit: 30
+  includeReadNotifications: true
   actionsLimit: 20
   branchesLimit: 100
 prSections:
@@ -127,7 +128,7 @@ localRepos:
 	}
 	if c.Defaults.View != "notifications" || c.Defaults.PRsLimit != 25 || c.Defaults.IssuesLimit != 40 ||
 		c.Defaults.NotificationsLimit != 30 || c.Defaults.ActionsLimit != 20 || c.Defaults.BranchesLimit != 100 ||
-		c.Defaults.RefetchIntervalMinutes != 3 {
+		c.Defaults.RefetchIntervalMinutes != 3 || !c.Defaults.IncludeReadNotificationsEnabled() {
 		t.Fatalf("defaults = %+v", c.Defaults)
 	}
 	if c.Defaults.Preview.Open == nil || *c.Defaults.Preview.Open || c.Defaults.Preview.Width != 72 {
@@ -161,6 +162,27 @@ localRepos:
 	if len(c.LocalRepos) != 1 || c.LocalRepos[0].Name != "tea-dash" ||
 		c.LocalRepos[0].Path != "/path/to/tea-dash" {
 		t.Fatalf("localRepos = %+v", c.LocalRepos)
+	}
+}
+
+func TestDefaultsIncludeReadNotificationsDefaultsToEnabled(t *testing.T) {
+	var d Defaults
+	if !d.IncludeReadNotificationsEnabled() {
+		t.Fatal("IncludeReadNotificationsEnabled should default to true when omitted")
+	}
+}
+
+func TestDefaultsIncludeReadNotificationsCanBeDisabled(t *testing.T) {
+	const y = `
+defaults:
+  includeReadNotifications: false
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Defaults.IncludeReadNotificationsEnabled() {
+		t.Fatal("IncludeReadNotificationsEnabled should be false when configured false")
 	}
 }
 
