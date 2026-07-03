@@ -1,3 +1,5 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/gbarany/tea-dash/main/schema.json
+#
 # tea-dash example configuration.
 #
 # Copy this to one of tea-dash's config locations and adjust the repo names,
