@@ -66,6 +66,7 @@ make build      # -> ./bin/tea-dash
 ```sh
 tea-dash            # start the dashboard
 tea-dash --config ./team.tea-dash.yml
+tea-dash --debug    # append debug output to ./debug.log
 tea-dash --version  # print version info
 tea-dash --help
 ```
