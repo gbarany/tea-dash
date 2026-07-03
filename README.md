@@ -113,7 +113,8 @@ tea-dash --help
 | `?`             | show / hide full help   |
 | `q` / `ctrl+c`  | quit                    |
 
-The merge picker includes each merge strategy plus a `+ delete branch` variant.
+The merge picker includes each merge strategy plus explicit `+ delete branch`,
+`+ force merge`, and combined variants.
 
 ## Configuration
 

@@ -285,6 +285,26 @@ func TestDispatchMergeAndReview(t *testing.T) {
 		t.Fatalf("merge options = %+v, want squash with DeleteBranch", client.merge)
 	}
 
+	forceMerge := pullIntent(uiactions.KindMerge)
+	forceMerge.Prompt.Value = "squash+force"
+	got = runDispatch(t, r, forceMerge)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("squash force merge result = %+v", got)
+	}
+	if client.merge.Style != data.MergeStyleSquash || !client.merge.ForceMerge {
+		t.Fatalf("merge options = %+v, want squash with ForceMerge", client.merge)
+	}
+
+	forceDelete := pullIntent(uiactions.KindMerge)
+	forceDelete.Prompt.Value = "squash+delete+force"
+	got = runDispatch(t, r, forceDelete)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("squash force delete-branch merge result = %+v", got)
+	}
+	if client.merge.Style != data.MergeStyleSquash || !client.merge.DeleteBranch || !client.merge.ForceMerge {
+		t.Fatalf("merge options = %+v, want squash with DeleteBranch and ForceMerge", client.merge)
+	}
+
 	review := pullIntent(uiactions.KindReview)
 	review.Prompt.Value = "approve"
 	got = runDispatch(t, r, review)
