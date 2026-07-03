@@ -641,6 +641,152 @@ func (s *Store) SetPullDraft(repo string, num int64, draft bool) error {
 	return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
 }
 
+// SetPullTitle sets a pull's title. It errors if the pull is unknown. Callers
+// implementing the WIP-title-prefix draft mechanism (see
+// internal/gitea/mutation.go's setPullDraft/draftTitle) should follow this
+// with a separate SetPullDraft call — the two are independent mutators here,
+// matching how the real client sends them as (at most) one title-bearing
+// PATCH with no dedicated draft field.
+func (s *Store) SetPullTitle(repo string, num int64, title string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pullLocked(repo, num)
+	if p == nil {
+		return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+	}
+	p.Title = title
+	p.Updated = time.Now()
+	return nil
+}
+
+// TouchPull bumps a pull's Updated timestamp with no other change,
+// simulating UpdatePullRequest's "pull in commits from the base branch"
+// action, which has no equivalent state in the fake store. Errors if the
+// pull is unknown.
+func (s *Store) TouchPull(repo string, num int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pullLocked(repo, num)
+	if p == nil {
+		return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+	}
+	p.Updated = time.Now()
+	return nil
+}
+
+// SetItemAssignees replaces whichever issue or pull exists at (repo, num)'s
+// assignee list with the given usernames, resolved the same way comment
+// authors are (a registered user, the authenticated user, or a bare User
+// with just the login set). This is a full replacement, matching the real
+// EditIssue/EditPullRequestOption.Assignees contract: the client always
+// recomputes and sends the complete target list (see
+// internal/gitea/mutation.go's updateAssigneeLogins), never a delta. Errors
+// if neither an issue nor a pull exists at that number.
+func (s *Store) SetItemAssignees(repo string, num int64, logins []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	assignees := make([]*User, 0, len(logins))
+	for _, login := range logins {
+		assignees = append(assignees, s.resolveUserLocked(login))
+	}
+	if p := s.pullLocked(repo, num); p != nil {
+		p.Assignees = assignees
+		p.Updated = time.Now()
+		return nil
+	}
+	if i := s.issueLocked(repo, num); i != nil {
+		i.Assignees = assignees
+		i.Updated = time.Now()
+		return nil
+	}
+	return fmt.Errorf("mockgitea: unknown issue/pull %s#%d", repo, num)
+}
+
+// AddPullReviewers appends the given usernames (resolved the same way
+// comment authors are) to a pull's requested reviewers, skipping logins
+// already present. Errors if the pull is unknown.
+func (s *Store) AddPullReviewers(repo string, num int64, logins []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pullLocked(repo, num)
+	if p == nil {
+		return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+	}
+	have := make(map[string]bool, len(p.Reviewers))
+	for _, u := range p.Reviewers {
+		if u != nil {
+			have[u.Login] = true
+		}
+	}
+	for _, login := range logins {
+		if have[login] {
+			continue
+		}
+		p.Reviewers = append(p.Reviewers, s.resolveUserLocked(login))
+		have[login] = true
+	}
+	return nil
+}
+
+// RemovePullReviewers removes the given usernames from a pull's requested
+// reviewers. Errors if the pull is unknown.
+func (s *Store) RemovePullReviewers(repo string, num int64, logins []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pullLocked(repo, num)
+	if p == nil {
+		return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+	}
+	remove := make(map[string]bool, len(logins))
+	for _, login := range logins {
+		remove[login] = true
+	}
+	kept := make([]*User, 0, len(p.Reviewers))
+	for _, u := range p.Reviewers {
+		if u != nil && remove[u.Login] {
+			continue
+		}
+		kept = append(kept, u)
+	}
+	p.Reviewers = kept
+	return nil
+}
+
+// AddReview appends a submitted review to a pull, assigning it an ID if it
+// doesn't already have one. Errors if the pull is unknown.
+func (s *Store) AddReview(repo string, num int64, review *Review) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pullLocked(repo, num)
+	if p == nil {
+		return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+	}
+	if review.ID == 0 {
+		review.ID = s.id()
+	}
+	p.Reviews = append(p.Reviews, review)
+	return nil
+}
+
+// SetSubscription sets whether login is subscribed to the issue at (repo,
+// num), reporting the prior subscription state. Gitea's real subscribe/
+// unsubscribe endpoints 201 on an actual state change and treat a redundant
+// re-subscribe/re-unsubscribe as an error the caller reports as "already
+// subscribed"/"already unsubscribed" (see the SDK's AddIssueSubscription/
+// DeleteIssueSubscription) — wasSubscribed lets the handler reproduce that.
+// Errors if the issue is unknown.
+func (s *Store) SetSubscription(repo string, num int64, login string, subscribed bool) (wasSubscribed bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.issueLocked(repo, num)
+	if i == nil {
+		return false, fmt.Errorf("mockgitea: unknown issue %s#%d", repo, num)
+	}
+	wasSubscribed = i.Subscribers[login]
+	i.Subscribers[login] = subscribed
+	return wasSubscribed, nil
+}
+
 // AddRun registers an Actions workflow run under its repo.
 func (s *Store) AddRun(run *ActionRun) {
 	s.mu.Lock()
@@ -735,6 +881,96 @@ func (s *Store) labelDefsLocked(repo string) []*Label {
 	return s.labels[repo]
 }
 
+// labelDefByIDLocked finds one repo label definition by ID. Callers must
+// hold s.mu.
+func (s *Store) labelDefByIDLocked(repo string, id int64) *Label {
+	for _, l := range s.labels[repo] {
+		if l.ID == id {
+			return l
+		}
+	}
+	return nil
+}
+
+// AddItemLabels adds label defs (by ID) to whichever issue or pull exists at
+// (repo, num) — Gitea models PR labels through the same issue-label API, so
+// this one mutator serves both — skipping IDs already present. Errors if any
+// ID doesn't match a registered label definition, or if neither an issue nor
+// a pull exists at that number.
+func (s *Store) AddItemLabels(repo string, num int64, ids []int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defs := make([]*Label, 0, len(ids))
+	for _, id := range ids {
+		l := s.labelDefByIDLocked(repo, id)
+		if l == nil {
+			return fmt.Errorf("mockgitea: unknown label id %d in %s", id, repo)
+		}
+		defs = append(defs, l)
+	}
+	if p := s.pullLocked(repo, num); p != nil {
+		p.Labels = appendMissingLabels(p.Labels, defs)
+		p.Updated = time.Now()
+		return nil
+	}
+	if i := s.issueLocked(repo, num); i != nil {
+		i.Labels = appendMissingLabels(i.Labels, defs)
+		i.Updated = time.Now()
+		return nil
+	}
+	return fmt.Errorf("mockgitea: unknown issue/pull %s#%d", repo, num)
+}
+
+// RemoveItemLabel removes one label def (by ID) from whichever issue or pull
+// exists at (repo, num). It is a no-op, not an error, when the label wasn't
+// attached — matching the real DELETE endpoint's idempotent semantics.
+// Errors only if neither an issue nor a pull exists at that number.
+func (s *Store) RemoveItemLabel(repo string, num int64, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p := s.pullLocked(repo, num); p != nil {
+		p.Labels = removeLabelByID(p.Labels, id)
+		p.Updated = time.Now()
+		return nil
+	}
+	if i := s.issueLocked(repo, num); i != nil {
+		i.Labels = removeLabelByID(i.Labels, id)
+		i.Updated = time.Now()
+		return nil
+	}
+	return fmt.Errorf("mockgitea: unknown issue/pull %s#%d", repo, num)
+}
+
+// appendMissingLabels returns labels with every entry from add whose ID
+// isn't already present appended.
+func appendMissingLabels(labels []*Label, add []*Label) []*Label {
+	have := make(map[int64]bool, len(labels))
+	for _, l := range labels {
+		if l != nil {
+			have[l.ID] = true
+		}
+	}
+	for _, l := range add {
+		if !have[l.ID] {
+			labels = append(labels, l)
+			have[l.ID] = true
+		}
+	}
+	return labels
+}
+
+// removeLabelByID returns labels with any entry matching id filtered out.
+func removeLabelByID(labels []*Label, id int64) []*Label {
+	out := make([]*Label, 0, len(labels))
+	for _, l := range labels {
+		if l != nil && l.ID == id {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // AddMilestoneDef registers a milestone definition available in one repo.
 func (s *Store) AddMilestoneDef(repo string, m *Milestone) {
 	s.mu.Lock()
@@ -756,4 +992,38 @@ func (s *Store) MilestoneDefs(repo string) []*Milestone {
 // inside WithLock. Callers must hold s.mu.
 func (s *Store) milestoneDefsLocked(repo string) []*Milestone {
 	return s.milestones[repo]
+}
+
+// SetItemMilestone sets whichever issue or pull exists at (repo, num) to the
+// milestone def matching id, or clears it when id is 0 (matching Gitea's
+// "milestone 0 means none" convention — the store's own IDs start at 1000+,
+// so a real milestone ID is never 0). Errors if id is non-zero and doesn't
+// match a registered milestone, or if neither an issue nor a pull exists at
+// that number.
+func (s *Store) SetItemMilestone(repo string, num int64, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var m *Milestone
+	if id != 0 {
+		for _, def := range s.milestones[repo] {
+			if def.ID == id {
+				m = def
+				break
+			}
+		}
+		if m == nil {
+			return fmt.Errorf("mockgitea: unknown milestone id %d in %s", id, repo)
+		}
+	}
+	if p := s.pullLocked(repo, num); p != nil {
+		p.Milestone = m
+		p.Updated = time.Now()
+		return nil
+	}
+	if i := s.issueLocked(repo, num); i != nil {
+		i.Milestone = m
+		i.Updated = time.Now()
+		return nil
+	}
+	return fmt.Errorf("mockgitea: unknown issue/pull %s#%d", repo, num)
 }

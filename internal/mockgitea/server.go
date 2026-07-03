@@ -35,6 +35,17 @@ func (s *Server) Close() { s.http.Close() }
 // registration is grouped by domain: routes() wires the version/user/repo
 // probes directly and delegates everything else to a per-domain
 // server_<domain>.go file (e.g. searchRoutes).
+//
+// Picking a response helper: a single nullable object -> respondOr404; an
+// array the client reads via X-Total-Count -> respondList/respondListOr404;
+// a response whose total lives IN the body (an envelope like actions runs'
+// {"total_count", "workflow_runs"}) -> manual WithLock + writeJSON, since
+// writeList's header would go unread; raw non-JSON bytes (diffs, logs) ->
+// manual WithLock + a plain io.WriteString with the right Content-Type.
+// Mutations follow the check-then-mutate-then-respond template documented on
+// handleMarkNotification: store mutators self-lock and run outside WithLock,
+// with a WithLock re-fetch afterward (via respondOr404/respondListOr404) for
+// any response body.
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"version": "1.24.3"})
@@ -51,6 +62,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.detailRoutes(mux)
 	s.notificationRoutes(mux)
 	s.actionRoutes(mux)
+	s.mutationRoutes(mux)
 	// Catch-all LAST: unknown paths fail loudly so drift surfaces in tests.
 	mux.HandleFunc("/", notFound)
 }
