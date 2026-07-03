@@ -354,6 +354,7 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 
 	ok := Config{Keybindings: Keybindings{Universal: []Keybinding{
 		{Key: "R", Builtin: "refreshAll"},
+		{Key: "ctrl+l", Builtin: "redraw"},
 		{Key: "t", Builtin: "toggleSmartFiltering"},
 		{Key: "g", Command: "lazygit"},
 	}, PRs: []Keybinding{

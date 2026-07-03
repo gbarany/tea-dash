@@ -2004,6 +2004,24 @@ func TestConfigKeybindingRebindsBuiltin(t *testing.T) {
 	}
 }
 
+func TestRedrawBuiltinClearsScreen(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	next, cmd, handled := m.handleBuiltinKeybinding(config.Keybinding{Builtin: "redraw"})
+	if !handled {
+		t.Fatal("redraw builtin should be handled")
+	}
+	if cmd == nil {
+		t.Fatal("redraw builtin should return a command")
+	}
+	msg := cmd()
+	if got, want := fmt.Sprintf("%T", msg), fmt.Sprintf("%T", tea.ClearScreen()); got != want {
+		t.Fatalf("redraw command returned %T, want %T", msg, tea.ClearScreen())
+	}
+	if next.notice != "" {
+		t.Fatalf("redraw should not set a notice, got %q", next.notice)
+	}
+}
+
 func TestConfigCustomKeybindingDispatchesSelectedRowCommand(t *testing.T) {
 	cfg := &config.Config{
 		RepoPaths: map[string]string{"gbarany/tea-dash": "/src/tea-dash"},

@@ -206,6 +206,8 @@ keybindings:
   universal:
     - key: tab
       builtin: nextSection
+    - key: ctrl+l
+      builtin: redraw
     - key: H
       builtin: help
   prs:
@@ -280,6 +282,8 @@ and exactly one of `builtin` or `command`. Built-ins remap implemented tea-dash
 actions; commands run through your shell with row template fields such as
 `RepoName`, `RepoPath`, `PrIndex`/`PrNumber`, `IssueIndex`/`IssueNumber`,
 `RunID`, `Title`, `Author`, `Sha`, `InstanceURL`, and `Url`/`URL`.
+The universal `redraw` builtin asks Bubble Tea to clear and repaint the screen,
+which is useful if a terminal leaves visual artifacts.
 
 > **Note:** the me-scoped author fields (`createdBy`, `assignedBy`, `mentioned`,
 > `reviewRequested`) support the sentinel `"@me"` on cross-repo sections.

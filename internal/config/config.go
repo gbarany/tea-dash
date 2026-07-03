@@ -393,7 +393,7 @@ var universalBuiltins = builtinSet(
 	"toggleSmartFiltering", "toggleSmartFilter", "currentRepo",
 	"pageUp", "pageDown", "scrollUp", "scrollDown", "prevSection",
 	"previousSection", "nextSection", "switchView", "copyurl", "copyNumber",
-	"help", "quit", "expand", "summaryViewMore",
+	"help", "quit", "redraw", "expand", "summaryViewMore",
 )
 
 var prBuiltins = builtinSet(
