@@ -1598,7 +1598,7 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "markallasread", "markallread", "markallasdone", "markalldone":
 		next, cmd := m.markAllNotificationsRead()
 		return next, cmd, true
-	case "pin", "togglepin", "togglepinned":
+	case "pin", "togglepin", "togglepinned", "togglebookmark":
 		next, cmd := m.toggleSelectedNotificationPin()
 		return next, cmd, true
 	case "unpin":
