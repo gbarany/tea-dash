@@ -276,13 +276,40 @@ func TestDispatchMergeAndReview(t *testing.T) {
 	}
 
 	review := pullIntent(uiactions.KindReview)
-	review.Prompt.Value = "request_changes"
+	review.Prompt.Value = "approve"
 	got = runDispatch(t, r, review)
 	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
 		t.Fatalf("review result = %+v", got)
 	}
-	if client.review.Event != data.PullReviewEventRequestChanges {
-		t.Fatalf("review event = %q, want request-changes", client.review.Event)
+	if client.review.Event != data.PullReviewEventApprove {
+		t.Fatalf("review event = %q, want approve", client.review.Event)
+	}
+}
+
+func TestDispatchReviewRequestChangesPassesBody(t *testing.T) {
+	client := &fakeClient{}
+	intent := pullIntent(uiactions.KindReview)
+	intent.Prompt.Value = "request_changes"
+	intent.Prompt.Body = "Needs tests before merge."
+
+	got := runDispatch(t, New(Options{Client: client}), intent)
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("review result = %+v", got)
+	}
+	if client.review.Event != data.PullReviewEventRequestChanges || client.review.Body != "Needs tests before merge." {
+		t.Fatalf("review = %+v, want request-changes with body", client.review)
+	}
+}
+
+func TestDispatchReviewRequestChangesRejectsEmptyBody(t *testing.T) {
+	intent := pullIntent(uiactions.KindReview)
+	intent.Prompt.Value = "request_changes"
+	intent.Prompt.Body = "  "
+
+	got := runDispatch(t, New(Options{Client: &fakeClient{}}), intent)
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "review body cannot be empty") {
+		t.Fatalf("empty review body result = %+v", got)
 	}
 }
 

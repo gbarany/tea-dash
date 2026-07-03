@@ -1939,7 +1939,17 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 		{name: "reopen", key: tea.KeyPressMsg{Code: 'X', Text: "X"}, kind: actions.KindReopen},
 		{name: "update branch", key: tea.KeyPressMsg{Code: 'u', Text: "u"}, kind: actions.KindUpdateBranch},
 		{name: "mark ready", key: tea.KeyPressMsg{Code: 'W', Text: "W"}, kind: actions.KindMarkReady},
-		{name: "review", key: tea.KeyPressMsg{Code: 'v', Text: "v"}, kind: actions.KindReview},
+		{
+			name:        "approve review",
+			key:         tea.KeyPressMsg{Code: 'v', Text: "v"},
+			kind:        actions.KindReview,
+			beforeEnter: []tea.KeyPressMsg{{Code: 'j', Text: "j"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptPicker,
+				Value: "approve",
+				Label: "Approve",
+			},
+		},
 		{
 			name:      "request reviewers",
 			key:       tea.KeyPressMsg{Code: '@', Text: "@"},
@@ -2007,6 +2017,48 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 				t.Fatalf("prompt = %+v, want %+v", got[0].Prompt, tt.wantPrompt)
 			}
 		})
+	}
+}
+
+func TestReviewRequestChangesPromptsForBodyBeforeDispatch(t *testing.T) {
+	var got []actions.Intent
+	m := New(&config.Config{}, nil)
+	m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+		got = append(got, intent)
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open", HTMLURL: "https://example.test/gbarany/tea-dash/pulls/42",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(got) != 0 {
+		t.Fatalf("review request-changes picker should not dispatch before body, got %+v", got)
+	}
+	if !m.actionPrompt.Active() || !strings.Contains(m.actionPrompt.View(120), "Review message") {
+		t.Fatalf("request-changes should open a review body prompt, got:\n%s", m.actionPrompt.View(120))
+	}
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'n', Text: "n"}, {Code: 'e', Text: "e"}, {Code: 'e', Text: "e"}, {Code: 'd', Text: "d"}, {Code: 's', Text: "s"},
+		{Code: ' ', Text: " "}, {Code: 'w', Text: "w"}, {Code: 'o', Text: "o"}, {Code: 'r', Text: "r"}, {Code: 'k', Text: "k"},
+	} {
+		m = update(t, m, key)
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if len(got) != 1 {
+		t.Fatalf("dispatcher calls = %d, want 1", len(got))
+	}
+	if got[0].Kind != actions.KindReview ||
+		got[0].Prompt.Value != "request_changes" ||
+		got[0].Prompt.Label != "Request changes" ||
+		got[0].Prompt.Body != "needs work" {
+		t.Fatalf("intent prompt = %+v, want request_changes body", got[0].Prompt)
 	}
 }
 
