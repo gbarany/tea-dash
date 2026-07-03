@@ -464,6 +464,68 @@ func TestSwitchBranchWorktreeConflictFailureIsActionable(t *testing.T) {
 	}
 }
 
+func TestPushBranchRunsGitPushSetUpstream(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{{ExitCode: 0}}}
+
+	result, err := PushBranch(context.Background(), PushBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Remote:   "origin",
+		Runner:   runner,
+	})
+	if err != nil {
+		t.Fatalf("PushBranch: %v", err)
+	}
+	if result.RepoPath != repo || result.Branch != "feature/local-ops" || result.Remote != "origin" {
+		t.Fatalf("result = %+v", result)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"push", "-u", "origin", "feature/local-ops"}},
+	})
+}
+
+func TestDeleteBranchRunsSafeGitBranchDelete(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{
+		{Stdout: "main\n", ExitCode: 0},
+		{ExitCode: 0},
+	}}
+
+	result, err := DeleteBranch(context.Background(), DeleteBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err != nil {
+		t.Fatalf("DeleteBranch: %v", err)
+	}
+	if result.RepoPath != repo || result.Branch != "feature/local-ops" {
+		t.Fatalf("result = %+v", result)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"branch", "--show-current"}},
+		{Dir: repo, Name: "git", Args: []string{"branch", "-d", "feature/local-ops"}},
+	})
+}
+
+func TestDeleteBranchRefusesCurrentBranch(t *testing.T) {
+	repo := t.TempDir()
+	runner := &fakeRunner{results: []Result{{Stdout: "feature/local-ops\n", ExitCode: 0}}}
+
+	_, err := DeleteBranch(context.Background(), DeleteBranchOptions{
+		RepoPath: repo,
+		Branch:   "feature/local-ops",
+		Runner:   runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "current") {
+		t.Fatalf("DeleteBranch current error = %v", err)
+	}
+	assertCommands(t, runner.commands, []Command{
+		{Dir: repo, Name: "git", Args: []string{"branch", "--show-current"}},
+	})
+}
+
 func makeGitDir(t *testing.T, remoteURL string) string {
 	return makeGitDirWithRemote(t, "origin", remoteURL)
 }

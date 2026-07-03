@@ -300,6 +300,10 @@ keybindings:
   branches:
     - key: B
       command: git -C {{.RepoPath}} status
+    - key: P
+      builtin: push
+    - key: d
+      builtin: delete
 `
 	var c Config
 	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
@@ -327,7 +331,10 @@ keybindings:
 		c.Keybindings.Notifications[2].Builtin != "unpin" ||
 		c.Keybindings.Notifications[3].Builtin != "markAllRead" ||
 		c.Keybindings.Actions[0].Key != "a" ||
-		c.Keybindings.Branches[0].Command == "" {
+		len(c.Keybindings.Branches) != 3 ||
+		c.Keybindings.Branches[0].Command == "" ||
+		c.Keybindings.Branches[1].Builtin != "push" ||
+		c.Keybindings.Branches[2].Builtin != "delete" {
 		t.Fatalf("keybindings = %+v", c.Keybindings)
 	}
 }
@@ -431,6 +438,9 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "U", Builtin: "removeLabel"},
 	}, Notifications: []Keybinding{
 		{Key: "b", Builtin: "toggleBookmark"},
+	}, Branches: []Keybinding{
+		{Key: "P", Builtin: "push"},
+		{Key: "d", Builtin: "delete"},
 	}}}
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("Validate() rejected valid keybindings: %v", err)

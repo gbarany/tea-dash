@@ -55,6 +55,12 @@ type IssueCheckoutFunc func(context.Context, localgit.IssueCheckoutOptions) (loc
 // BranchSwitchFunc runs or fakes a local branch switch.
 type BranchSwitchFunc func(context.Context, localgit.SwitchBranchOptions) (localgit.SwitchBranchResult, error)
 
+// BranchPushFunc runs or fakes a local branch push.
+type BranchPushFunc func(context.Context, localgit.PushBranchOptions) (localgit.PushBranchResult, error)
+
+// BranchDeleteFunc runs or fakes a local branch deletion.
+type BranchDeleteFunc func(context.Context, localgit.DeleteBranchOptions) (localgit.DeleteBranchResult, error)
+
 // ExecProcessFunc wraps Bubble Tea's ExecProcess for interactive shell
 // commands. Tests replace it to avoid running a real process.
 type ExecProcessFunc func(*exec.Cmd, tea.ExecCallback) tea.Cmd
@@ -70,6 +76,8 @@ type Options struct {
 	Checkout      CheckoutFunc
 	IssueCheckout IssueCheckoutFunc
 	BranchSwitch  BranchSwitchFunc
+	BranchPush    BranchPushFunc
+	BranchDelete  BranchDeleteFunc
 	ExecProcess   ExecProcessFunc
 }
 
@@ -84,6 +92,8 @@ type Runner struct {
 	checkout      CheckoutFunc
 	issueCheckout IssueCheckoutFunc
 	branchSwitch  BranchSwitchFunc
+	branchPush    BranchPushFunc
+	branchDelete  BranchDeleteFunc
 	execProcess   ExecProcessFunc
 }
 
@@ -109,6 +119,14 @@ func New(opts Options) Runner {
 	if branchSwitch == nil {
 		branchSwitch = localgit.SwitchBranch
 	}
+	branchPush := opts.BranchPush
+	if branchPush == nil {
+		branchPush = localgit.PushBranch
+	}
+	branchDelete := opts.BranchDelete
+	if branchDelete == nil {
+		branchDelete = localgit.DeleteBranch
+	}
 	execProcess := opts.ExecProcess
 	if execProcess == nil {
 		execProcess = tea.ExecProcess
@@ -123,6 +141,8 @@ func New(opts Options) Runner {
 		checkout:      checkout,
 		issueCheckout: issueCheckout,
 		branchSwitch:  branchSwitch,
+		branchPush:    branchPush,
+		branchDelete:  branchDelete,
 		execProcess:   execProcess,
 	}
 }
@@ -219,6 +239,29 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			return "", err
 		}
 		return fmt.Sprintf("Switched to %s in %s.", branch.Branch, branch.RepoPath), nil
+	}
+	if intent.Kind == uiactions.KindPushBranch {
+		branch, err := r.branchPush(ctx, localgit.PushBranchOptions{
+			RepoPath: intent.Target.RepositoryPath,
+			Branch:   intent.Target.Title,
+			Remote:   "origin",
+			Runner:   r.gitRunner,
+		})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Pushed %s to %s in %s.", branch.Branch, branch.Remote, branch.RepoPath), nil
+	}
+	if intent.Kind == uiactions.KindDeleteBranch {
+		branch, err := r.branchDelete(ctx, localgit.DeleteBranchOptions{
+			RepoPath: intent.Target.RepositoryPath,
+			Branch:   intent.Target.Title,
+			Runner:   r.gitRunner,
+		})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Deleted %s in %s.", branch.Branch, branch.RepoPath), nil
 	}
 	if r.client == nil {
 		return "", fmt.Errorf("%s is unavailable: no Gitea client", actionLabel(intent.Kind))
@@ -619,6 +662,10 @@ func actionLabel(kind uiactions.Kind) string {
 		return "checkout"
 	case uiactions.KindSwitchBranch:
 		return "switch branch"
+	case uiactions.KindPushBranch:
+		return "push branch"
+	case uiactions.KindDeleteBranch:
+		return "delete branch"
 	case uiactions.KindRerunRun:
 		return "rerun"
 	case uiactions.KindCancelRun:

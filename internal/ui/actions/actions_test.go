@@ -19,6 +19,8 @@ func TestKindConstants(t *testing.T) {
 		KindReview:       "review",
 		KindExternalDiff: "external_diff",
 		KindCheckout:     "checkout",
+		KindPushBranch:   "push_branch",
+		KindDeleteBranch: "delete_branch",
 		KindRerunRun:     "rerun_run",
 		KindCancelRun:    "cancel_run",
 	}
