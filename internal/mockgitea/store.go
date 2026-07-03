@@ -514,6 +514,12 @@ func (s *Store) AddNotification(n *Notification) {
 func (s *Store) Notifications() []*Notification {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.notificationsLocked()
+}
+
+// notificationsLocked is Notifications without taking the lock, for use from
+// inside WithLock. Callers must hold s.mu.
+func (s *Store) notificationsLocked() []*Notification {
 	return s.notifications
 }
 

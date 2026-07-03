@@ -49,6 +49,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	})
 	s.searchRoutes(mux)
 	s.detailRoutes(mux)
+	s.notificationRoutes(mux)
 	// Catch-all LAST: unknown paths fail loudly so drift surfaces in tests.
 	mux.HandleFunc("/", notFound)
 }
