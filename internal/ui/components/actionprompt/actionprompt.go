@@ -13,9 +13,10 @@ import (
 type Mode string
 
 const (
-	ModeConfirm Mode = "confirm"
-	ModeText    Mode = "text"
-	ModePicker  Mode = "picker"
+	ModeConfirm     Mode = "confirm"
+	ModeText        Mode = "text"
+	ModePicker      Mode = "picker"
+	ModeMultiPicker Mode = "multi-picker"
 )
 
 // Option is a selectable picker entry.
@@ -44,10 +45,11 @@ type Result struct {
 
 // Model owns the active prompt state.
 type Model struct {
-	active   bool
-	cfg      Config
-	input    textinput.Model
-	selected int
+	active        bool
+	cfg           Config
+	input         textinput.Model
+	selected      int
+	multiSelected map[int]bool
 }
 
 func New() Model {
@@ -63,6 +65,7 @@ func (m Model) Focus(cfg Config) Model {
 	m.cfg = cfg
 	m.input = newInput(cfg)
 	m.selected = 0
+	m.multiSelected = map[int]bool{}
 	return m
 }
 
@@ -96,7 +99,7 @@ func (m Model) Update(msg tea.Msg) (Model, Result, tea.Cmd) {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, Result{}, cmd
-	case ModePicker:
+	case ModePicker, ModeMultiPicker:
 		switch key.String() {
 		case "j", "down", "right":
 			if m.selected < len(m.cfg.Options)-1 {
@@ -105,6 +108,14 @@ func (m Model) Update(msg tea.Msg) (Model, Result, tea.Cmd) {
 		case "k", "up", "left":
 			if m.selected > 0 {
 				m.selected--
+			}
+		case " ", "space":
+			if m.cfg.Mode == ModeMultiPicker && len(m.cfg.Options) > 0 {
+				if m.multiSelected[m.selected] {
+					delete(m.multiSelected, m.selected)
+				} else {
+					m.multiSelected[m.selected] = true
+				}
 			}
 		}
 	case ModeConfirm:
@@ -137,7 +148,7 @@ func (m Model) View(width int) string {
 			value = m.cfg.Placeholder
 		}
 		lines = append(lines, "> "+value)
-	case ModePicker:
+	case ModePicker, ModeMultiPicker:
 		if len(m.cfg.Options) == 0 {
 			lines = append(lines, "No choices available")
 		}
@@ -146,12 +157,22 @@ func (m Model) View(width int) string {
 			if i == m.selected {
 				prefix = "> "
 			}
+			if m.cfg.Mode == ModeMultiPicker {
+				mark := "[ ] "
+				if m.multiSelected[i] {
+					mark = "[x] "
+				}
+				lines = append(lines, prefix+mark+option.Label)
+				continue
+			}
 			lines = append(lines, prefix+option.Label)
 		}
 	default:
 		lines = append(lines, "enter: confirm | esc: cancel")
 	}
-	if m.cfg.Mode != ModeConfirm {
+	if m.cfg.Mode == ModeMultiPicker {
+		lines = append(lines, "space: toggle | enter: submit | esc: cancel")
+	} else if m.cfg.Mode != ModeConfirm {
 		lines = append(lines, "enter: submit | esc: cancel")
 	}
 	for i, line := range lines {
@@ -185,6 +206,17 @@ func (m Model) result() Result {
 		}
 		option := m.cfg.Options[m.selected]
 		return Result{Submitted: true, Value: option.Value, Label: option.Label}
+	case ModeMultiPicker:
+		var values []string
+		var labels []string
+		for i, option := range m.cfg.Options {
+			if !m.multiSelected[i] {
+				continue
+			}
+			values = append(values, option.Value)
+			labels = append(labels, option.Label)
+		}
+		return Result{Submitted: true, Value: strings.Join(values, ","), Label: strings.Join(labels, ", ")}
 	default:
 		return Result{Submitted: true, Value: "confirm"}
 	}

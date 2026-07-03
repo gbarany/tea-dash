@@ -90,6 +90,12 @@ type copyResultMsg struct {
 	err   error
 }
 
+type reviewersLoadedMsg struct {
+	intent    actions.Intent
+	reviewers []data.User
+	err       error
+}
+
 // autoRefreshMsg is emitted by the optional background refetch timer.
 type autoRefreshMsg struct{}
 
@@ -369,6 +375,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = fmt.Sprintf("Copied %s.", msg.value)
 		}
 		return m, nil
+
+	case reviewersLoadedMsg:
+		return m.handleReviewersLoaded(msg), nil
 
 	case actions.ResultMsg:
 		m.notice = ""
@@ -1513,6 +1522,10 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 		return m.dispatchActionIntent(intent)
 	}
 	m.pendingAction = intent
+	if reviewerPickerAction(kind) && m.ctx.Client != nil {
+		m.notice = "Loading reviewers..."
+		return loadReviewersCmd(m.ctx.Client, intent)
+	}
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(kind, target))
 	return nil
 }
@@ -1793,6 +1806,77 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 		return cmd
 	}
 	return tea.Batch(cmd, dispatchCmd)
+}
+
+func (m *Model) handleReviewersLoaded(msg reviewersLoadedMsg) Model {
+	if !reviewerPickerAction(msg.intent.Kind) {
+		return *m
+	}
+	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
+		return *m
+	}
+	m.pendingAction = msg.intent
+	if msg.err != nil {
+		m.notice = fmt.Sprintf("Couldn't load reviewers: %v. Enter usernames manually.", msg.err)
+		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
+		return *m
+	}
+	if len(msg.reviewers) == 0 {
+		m.notice = "No requestable reviewers found. Enter usernames manually."
+		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
+		return *m
+	}
+	cfg := reviewerPickerPromptConfig(msg.intent.Kind, msg.intent.Target, msg.reviewers)
+	if len(cfg.Options) == 0 {
+		m.notice = "No requestable reviewers found. Enter usernames manually."
+		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
+		return *m
+	}
+	m.notice = ""
+	m.pendingAction.Prompt.Mode = actions.PromptMultiPicker
+	m.actionPrompt = m.actionPrompt.Focus(cfg)
+	return *m
+}
+
+func reviewerPickerAction(kind actions.Kind) bool {
+	return kind == actions.KindRequestReviewers || kind == actions.KindRemoveReviewers
+}
+
+func loadReviewersCmd(client *gitea.Client, intent actions.Intent) tea.Cmd {
+	return func() tea.Msg {
+		owner, repo, ok := strings.Cut(intent.Target.Repo, "/")
+		if !ok || owner == "" || repo == "" {
+			return reviewersLoadedMsg{intent: intent, err: fmt.Errorf("invalid repository %q", intent.Target.Repo)}
+		}
+		reviewers, err := client.ListReviewers(owner, repo)
+		return reviewersLoadedMsg{intent: intent, reviewers: reviewers, err: err}
+	}
+}
+
+func reviewerPickerPromptConfig(kind actions.Kind, target actions.Target, reviewers []data.User) actionprompt.Config {
+	cfg := promptConfigForAction(kind, target)
+	cfg.Mode = actionprompt.ModeMultiPicker
+	cfg.Placeholder = ""
+	cfg.Options = make([]actionprompt.Option, 0, len(reviewers))
+	for _, reviewer := range reviewers {
+		if strings.TrimSpace(reviewer.Login) == "" {
+			continue
+		}
+		cfg.Options = append(cfg.Options, actionprompt.Option{
+			Label: reviewerOptionLabel(reviewer),
+			Value: reviewer.Login,
+		})
+	}
+	return cfg
+}
+
+func reviewerOptionLabel(user data.User) string {
+	fullName := strings.TrimSpace(user.FullName)
+	login := strings.TrimSpace(user.Login)
+	if fullName == "" {
+		return login
+	}
+	return fmt.Sprintf("%s (%s)", fullName, login)
 }
 
 func reviewPromptNeedsBody(value string) bool {

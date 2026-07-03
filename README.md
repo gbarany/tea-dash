@@ -98,7 +98,7 @@ tea-dash --help
 | `u`             | update PR branch from its base branch |
 | `W`             | mark draft PR ready for review |
 | `w`             | show/watch PR checks in the Actions view |
-| `@`             | request PR review from one or more users |
+| `@`             | request PR review from one or more users (picker when the server exposes reviewers) |
 | `m` / `u` / `M` | mark notification read / unread / all read |
 | `b` / `B`       | pin / unpin notification |
 | `x` / `X`       | close / reopen          |

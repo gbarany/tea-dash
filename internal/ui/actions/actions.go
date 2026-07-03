@@ -50,9 +50,10 @@ const (
 type PromptMode string
 
 const (
-	PromptConfirm PromptMode = "confirm"
-	PromptText    PromptMode = "text"
-	PromptPicker  PromptMode = "picker"
+	PromptConfirm     PromptMode = "confirm"
+	PromptText        PromptMode = "text"
+	PromptPicker      PromptMode = "picker"
+	PromptMultiPicker PromptMode = "multi_picker"
 )
 
 // Target is the immutable row/section context for an action.
