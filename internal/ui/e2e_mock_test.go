@@ -224,6 +224,48 @@ func TestE2EViewJumpAndPreviewFocus(t *testing.T) {
 	}
 }
 
+// TestE2EMouseWheelOverPreviewScrollsWithoutMovingSelectionOrFocus covers
+// Task 6's wheel-over-preview requirement end to end. Wheel messages are
+// synchronous (no Cmd to drain, unlike the fetch chains the rest of this
+// file exercises), so this is a direct Update call against the same real,
+// already-drained e2e model — the preview pane holds a REAL fetched PR
+// body, not an injected fixture. It intentionally doesn't assert the
+// preview's rendered content visibly changed: the real seeded demo body is
+// short enough that it may already fit entirely (nothing to scroll into),
+// so that exact assertion — with a body deliberately made long enough to
+// need it — lives in the app-level
+// TestMouseWheelInPreviewScrollsRegardlessOfFocus instead. What e2e adds is
+// confirming the real click-free wheel routing (zones built from a real
+// render, hit-tested against a real layout) doesn't disturb selection or
+// focus.
+func TestE2EMouseWheelOverPreviewScrollsWithoutMovingSelectionOrFocus(t *testing.T) {
+	m, _ := newE2EModel(t)
+	if !m.previewVisible() {
+		t.Fatal("preview should be visible at 120x40 by default")
+	}
+	before, ok := m.selectedActionTarget()
+	if !ok {
+		t.Fatal("no row selected in My Pull Requests")
+	}
+
+	m = viewed(m)
+	next, cmd := m.Update(tea.MouseWheelMsg{
+		X:      m.layout.PreviewInterior.X,
+		Y:      m.layout.PreviewInterior.Y,
+		Button: tea.MouseWheelDown,
+	})
+	m = next.(Model)
+	m = drain(t, m, cmd, drainDepth).(Model)
+
+	after, ok := m.selectedActionTarget()
+	if !ok || after != before {
+		t.Fatalf("wheel over preview should not move list selection: before=%+v after=%+v", before, after)
+	}
+	if m.previewFocused {
+		t.Fatal("wheel over preview should scroll it, not focus it")
+	}
+}
+
 // TestE2EMergeRoundTrip drives a real merge end to end: open the merge
 // picker (which itself round-trips to the mock server for real merge
 // capabilities), submit the plain first option, and confirm both that the

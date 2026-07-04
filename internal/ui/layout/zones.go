@@ -13,6 +13,13 @@ const (
 	ZonePreviewBody
 	ZoneListBody
 	ZoneStatusBar
+	// ZoneOverlay covers a currently open modal (the Task 5 help overlay
+	// today; Task 7's command palette will share it) — registered instead
+	// of the list/preview/tab zones below it while one is open, since spec
+	// §3's "click outside dismisses" rule needs a single rect to test
+	// against rather than "not one of several other zones". Payload unused
+	// (always 0).
+	ZoneOverlay
 )
 
 // Zone is one hit-testable region of the shell.

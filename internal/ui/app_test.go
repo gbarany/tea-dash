@@ -21,6 +21,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/header"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
@@ -32,6 +33,17 @@ func update(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	next, _ := m.Update(msg)
 	return next.(Model)
+}
+
+// viewed renders m once and returns it unchanged, so its mouse hit-testing
+// zones (m.zones, rebuilt by every View() call — see rebuildZones's doc
+// comment) reflect the model's CURRENT state before a test dispatches a
+// mouse message. This mirrors the real bubbletea loop, which always calls
+// View() immediately after an Update that could have changed geometry,
+// well before the terminal can produce the next input event.
+func viewed(m Model) Model {
+	_ = m.View()
+	return m
 }
 
 func fetchedMsg(prs []data.PullRequest) context.TaskFinishedMsg {
@@ -603,7 +615,8 @@ func TestMouseClickSelectsVisibleRowAndRefreshesPreview(t *testing.T) {
 		pull: &data.PullDetail{Body: "firstdetailtoken", BaseRef: "main", HeadRef: "first"},
 	})
 
-	click := tea.MouseClickMsg{X: 3, Y: m.tableDataStartY() + 1, Button: tea.MouseLeft}
+	m = viewed(m) // render once so mouse zones reflect this state
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y + 1, Button: tea.MouseLeft}
 	next, _ := m.Update(click)
 	m = next.(Model)
 
@@ -627,8 +640,9 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 	}))
 
+	m = viewed(m)
 	previewX := m.layout.PreviewInterior.X
-	click := tea.MouseClickMsg{X: previewX, Y: m.tableDataStartY() + 1, Button: tea.MouseLeft}
+	click := tea.MouseClickMsg{X: previewX, Y: m.layout.ListRows.Y + 1, Button: tea.MouseLeft}
 	m = update(t, m, click)
 
 	if got := m.getCurrRowData().GetNumber(); got != 1 {
@@ -812,12 +826,16 @@ func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) 
 		pull: &data.PullDetail{Body: "open-detail-token", BaseRef: "main", HeadRef: "open"},
 	})
 
-	firstWidth := m.tabs.TabWidth(0)
-	// Offsets are relative to the screen: sectionTabsOriginX() + the leading
-	// "─" (1) + firstWidth + the "──" separator (2) lands inside the second
-	// tab (see components/tabs.TabAt's embedding format).
-	x := m.sectionTabsOriginX() + 1 + firstWidth + 2
-	next, _ := m.Update(tea.MouseClickMsg{X: x, Y: m.tabBarY(), Button: tea.MouseLeft})
+	m = viewed(m)
+	// Ranges() offsets are relative to the tab segment's own left edge; the
+	// zone registration (rebuildZones) adds the list panel's own left
+	// border column on top of that to get an absolute screen column.
+	ranges := m.tabs.Ranges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 rendered tab ranges, got %+v", ranges)
+	}
+	x := m.layout.ListPanel.X + 1 + ranges[1].Start
+	next, _ := m.Update(tea.MouseClickMsg{X: x, Y: m.layout.SectionTabsRow, Button: tea.MouseLeft})
 	m = next.(Model)
 
 	if m.currSectionId != 1 {
@@ -850,8 +868,9 @@ func TestMouseWheelMovesSelectionInList(t *testing.T) {
 		pull: &data.PullDetail{Body: "firstdetailtoken", BaseRef: "main", HeadRef: "first"},
 	})
 
-	listY := m.tableDataStartY()
-	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelDown})
+	m = viewed(m)
+	listX, listY := m.layout.ListRows.X, m.layout.ListRows.Y
+	m = update(t, m, tea.MouseWheelMsg{X: listX, Y: listY, Button: tea.MouseWheelDown})
 	if got := m.getCurrRowData().GetNumber(); got != 2 {
 		t.Fatalf("wheel down selected row = %d, want 2", got)
 	}
@@ -859,28 +878,297 @@ func TestMouseWheelMovesSelectionInList(t *testing.T) {
 	if strings.Contains(view, "firstdetailtoken") || !strings.Contains(view, "Loading") {
 		t.Fatalf("wheel down should refresh preview to the selected row loading state:\n%s", view)
 	}
-	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelDown})
+	m = update(t, m, tea.MouseWheelMsg{X: listX, Y: listY, Button: tea.MouseWheelDown})
 	if got := m.getCurrRowData().GetNumber(); got != 3 {
 		t.Fatalf("second wheel down selected row = %d, want 3", got)
 	}
-	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelUp})
+	m = update(t, m, tea.MouseWheelMsg{X: listX, Y: listY, Button: tea.MouseWheelUp})
 	if got := m.getCurrRowData().GetNumber(); got != 2 {
 		t.Fatalf("wheel up selected row = %d, want 2", got)
 	}
 }
 
-func TestMouseWheelInPreviewDoesNotMoveListSelection(t *testing.T) {
+// TestMouseWheelInPreviewScrollsRegardlessOfFocus covers spec §3's "wheel
+// over preview -> scroll preview content" (not just "doesn't move the
+// list", which was all the pre-Task-6 behavior did): list selection and
+// previewFocused stay untouched, and the preview's own viewport actually
+// scrolls — a body long enough to overflow the pane is required to observe
+// that (see components/sidebar's identical longContent-style setup).
+func TestMouseWheelInPreviewScrollsRegardlessOfFocus(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = update(t, m, fetchedMsg([]data.PullRequest{
 		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 	}))
+	longBody := strings.Repeat("line of preview content\n", 100)
+	m = update(t, m, enrichedMsg{
+		key:  m.selKey(),
+		pull: &data.PullDetail{Body: longBody, BaseRef: "main", HeadRef: "first"},
+	})
+	// Un-fold the body: prview folds long bodies behind "Press e to read
+	// more…" by default, which is short enough to already sit at 100%
+	// scroll — nothing to scroll down into without expanding first.
+	m = update(t, m, tea.KeyPressMsg{Code: 'e', Text: "e"})
 
+	m = viewed(m)
+	before := m.sidebar.View()
 	previewX := m.layout.PreviewInterior.X
-	m = update(t, m, tea.MouseWheelMsg{X: previewX, Y: m.tableDataStartY(), Button: tea.MouseWheelDown})
+	m = update(t, m, tea.MouseWheelMsg{X: previewX, Y: m.layout.PreviewInterior.Y, Button: tea.MouseWheelDown})
+
 	if got := m.getCurrRowData().GetNumber(); got != 1 {
 		t.Fatalf("preview wheel changed list selection: row = %d, want 1", got)
+	}
+	if m.previewFocused {
+		t.Fatal("wheel over the preview should scroll it, not focus it")
+	}
+	if after := m.sidebar.View(); after == before {
+		t.Fatalf("wheel over the preview should scroll its content:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+// TestClickViewLabelSwitchesView covers spec §3's "click view label ->
+// switch view", using the exact column range header.Labels (the same
+// function rebuildZones registers ZoneViewLabel from) reports for the
+// Issues label — never a hard-coded column.
+func TestClickViewLabelSwitchesView(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = viewed(m)
+
+	var issuesLabel header.LabelRange
+	found := false
+	for _, lr := range header.Labels(m.layout.Header.W, m.ctx.View, m.ctx.MockHost, m.ctx.User, m.ctx.Styles) {
+		if lr.View == context.IssuesView {
+			issuesLabel = lr
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Issues label not found in header.Labels output")
+	}
+
+	m = update(t, m, tea.MouseClickMsg{X: issuesLabel.Start, Y: m.layout.Header.Y, Button: tea.MouseLeft})
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("clicking the Issues label should switch view, got %v", m.ctx.View)
+	}
+}
+
+// TestDoubleClickListRowFocusesPreview covers spec §3's "double left click
+// list row -> focus preview (same as enter)". The clock is faked via nowFn
+// (tea.MouseClickMsg carries no timestamp of its own) so the test controls
+// exactly how far apart the two clicks land relative to doubleClickWindow.
+func TestDoubleClickListRowFocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+
+	m = update(t, m, click)
+	if m.previewFocused {
+		t.Fatal("a single click should not focus the preview")
+	}
+
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) } // well within the 400ms window
+	m = update(t, m, click)
+	if !m.previewFocused {
+		t.Fatal("a double click within the window should focus the preview")
+	}
+
+	// The double-click consumes lastClickAt, so a third click right after
+	// is treated as a fresh single — it must not toggle focus back off.
+	m.nowFn = func() time.Time { return base.Add(150 * time.Millisecond) }
+	m = update(t, m, click)
+	if !m.previewFocused {
+		t.Fatal("the third click (a fresh single, not a second double) should not unfocus the preview")
+	}
+}
+
+// TestDoubleClickOutsideWindowDoesNotFocusPreview confirms two clicks
+// slower than doubleClickWindow apart are two independent single clicks.
+func TestDoubleClickOutsideWindowDoesNotFocusPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, click)
+
+	m.nowFn = func() time.Time { return base.Add(time.Second) } // past the 400ms window
+	m = update(t, m, click)
+	if m.previewFocused {
+		t.Fatal("two clicks slower than the double-click window apart should not focus the preview")
+	}
+}
+
+// TestDoubleClickListRowInBranchesViewChecksOutInsteadOfFocusing covers the
+// T4 Branches exception carried into mouse routing: double-click there
+// checks out (opens the same confirm prompt enter does), never focuses the
+// preview — Branches rows have no preview drill-in target of their own.
+func TestDoubleClickListRowInBranchesViewChecksOutInsteadOfFocusing(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+		Name: "feature/local-ops", Current: false,
+	}}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, click)
+
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) }
+	m = update(t, m, click)
+
+	if !m.actionPrompt.Active() {
+		t.Fatal("double-click in Branches should open a checkout confirm, not focus the preview")
+	}
+	if m.previewFocused {
+		t.Fatal("double-click in Branches should never focus the preview")
+	}
+}
+
+// TestRightClickListRowSelectsAndSetsPendingRowPaletteSeam covers spec §3's
+// "right click list row -> command palette scoped to that row's actions":
+// Task 7's palette isn't built yet, so this only asserts the documented
+// intent seam (pendingRowPalette) plus the row still being selected.
+func TestRightClickListRowSelectsAndSetsPendingRowPaletteSeam(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	if m.pendingRowPalette != -1 {
+		t.Fatalf("pendingRowPalette = %d before any right click, want -1 (none pending)", m.pendingRowPalette)
+	}
+
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y + 1, Button: tea.MouseRight}
+	m = update(t, m, click)
+
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("right click should still select the row: got %d, want 2", got)
+	}
+	if m.pendingRowPalette != 1 {
+		t.Fatalf("pendingRowPalette = %d, want 1 (Task 7's palette seam)", m.pendingRowPalette)
+	}
+}
+
+// TestClickPreviewTabSwitchesTab covers spec §3's "click preview tab ->
+// switch preview tab", using components/sidebar.TabRanges() (the same
+// source rebuildZones registers ZonePreviewTab from) for the click column.
+func TestClickPreviewTabSwitchesTab(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, enrichedMsg{
+		key:  m.selKey(),
+		pull: &data.PullDetail{Body: "body", BaseRef: "main", HeadRef: "first"},
+	})
+
+	m = viewed(m)
+	ranges := m.sidebar.TabRanges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 preview tab ranges, got %+v", ranges)
+	}
+	x := m.layout.PreviewPanel.X + 1 + ranges[1].Start
+	m = update(t, m, tea.MouseClickMsg{X: x, Y: m.layout.PreviewTabsRow, Button: tea.MouseLeft})
+
+	if got := m.sidebar.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("clicking the second preview tab = %q, want Checks", got)
+	}
+}
+
+// TestClickPreviewBodyFocusesPreview covers spec §3's "click preview body
+// -> focus preview".
+func TestClickPreviewBodyFocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = viewed(m)
+	if m.previewFocused {
+		t.Fatal("preview should start unfocused")
+	}
+
+	m = update(t, m, tea.MouseClickMsg{X: m.layout.PreviewInterior.X, Y: m.layout.PreviewInterior.Y, Button: tea.MouseLeft})
+	if !m.previewFocused {
+		t.Fatal("clicking the preview body should focus it")
+	}
+}
+
+// TestMouseWheelOverHelpOverlayScrollsIt covers spec §3's "wheel over help
+// overlay -> scroll it": a short window so the ~9-group keymap content
+// can't fit, so the very first line ("Views", the first group's title)
+// scrolls out of view after one wheel tick — mirrors keys_test.go's
+// TestHelpOverlayScrollKeysScrollOverlayNotList, but via mouse.
+func TestMouseWheelOverHelpOverlayScrollsIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 14})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = viewed(m)
+
+	opened := m.View().Content
+	if !strings.Contains(opened, "Views") {
+		t.Fatalf("help overlay should open scrolled to the top (Views group visible):\n%s", opened)
+	}
+
+	// Anywhere inside the list+preview interior is "inside the overlay"
+	// while it's open (Task 5's full-interior-replacement design).
+	m = update(t, m, tea.MouseWheelMsg{X: m.layout.ListInterior.X, Y: m.layout.ListInterior.Y, Button: tea.MouseWheelDown})
+
+	scrolled := m.View().Content
+	if strings.Contains(scrolled, "Views") {
+		t.Fatalf("wheel over the overlay should scroll it past the Views group heading:\n%s", scrolled)
+	}
+}
+
+// TestClickOutsideHelpOverlayDismissesIt and
+// TestClickInsideHelpOverlayDoesNotDismissIt cover spec §3's "click outside
+// [the overlay] dismisses" — the T5 review explicitly deferred this to
+// Task 6.
+func TestClickOutsideHelpOverlayDismissesIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = viewed(m)
+	if m.activeOverlay == overlayNone {
+		t.Fatal("'?' should have opened the help overlay")
+	}
+
+	// The header row sits outside the overlay's full list+preview rect.
+	m = update(t, m, tea.MouseClickMsg{X: 0, Y: m.layout.Header.Y, Button: tea.MouseLeft})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("clicking outside the overlay (the header) should dismiss it")
+	}
+}
+
+func TestClickInsideHelpOverlayDoesNotDismissIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = viewed(m)
+
+	m = update(t, m, tea.MouseClickMsg{X: m.layout.ListInterior.X, Y: m.layout.ListInterior.Y, Button: tea.MouseLeft})
+	if m.activeOverlay == overlayNone {
+		t.Fatal("clicking inside the overlay should not dismiss it")
 	}
 }
 

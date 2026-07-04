@@ -91,6 +91,34 @@ type Model struct {
 	// expanded controls whether the preview shows the full body or the folded
 	// (read-more) form. Reset to false each time the preview is (re)opened.
 	expanded bool
+
+	// zones is the mouse hit-testing registry (layout.Zones), rebuilt from
+	// scratch exactly once per render — see rebuildZones's doc comment for
+	// why it's a *pointer* field (View is a value-receiver method; a plain
+	// Zones value field would suffer the exact same lost-mutation bug the
+	// help overlay's viewport sizing had before it was fixed to size via a
+	// pointer-receiver hook) and why registration lives in that one place.
+	// handleMouseClick/handleMouseWheel only ever READ it.
+	zones *layout.Zones
+
+	// lastClickAt/lastClickRow implement double-click detection (spec §3):
+	// two left clicks on the SAME list row within doubleClickWindow count
+	// as a double-click. time.Now() (via clockNow, overridable by tests
+	// through nowFn) is used because tea.MouseClickMsg carries no
+	// timestamp; time.Time's monotonic reading (present on every value
+	// time.Now() returns) makes the Sub() comparison safe even if the wall
+	// clock is adjusted mid-session.
+	lastClickAt  time.Time
+	lastClickRow int
+	nowFn        func() time.Time
+
+	// pendingRowPalette is the Task 6 seam for spec §3's "right-click list
+	// row -> command palette scoped to that row's actions": Task 7's
+	// palette isn't built yet, so a right-click only records the intent
+	// here (the clicked row's index) for it to pick up later. -1 means
+	// none pending. TODO(Task 7): read and clear this when the palette
+	// opens; until then it's a documented no-op beyond selecting the row.
+	pendingRowPalette int
 }
 
 type actionButton struct {
@@ -222,21 +250,23 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 	keys := defaultKeyMap()
 	keys.applyConfig(cfg)
 	m := Model{
-		ctx:             ctx,
-		keys:            keys,
-		tabs:            tabs.New(ctx),
-		sidebar:         sidebar.New(ctx),
-		helpOverlay:     helpoverlay.New(ctx),
-		tasks:           tasks,
-		actionPrompt:    actionprompt.New(),
-		actionFeedback:  actionfeedback.New(),
-		copyToClipboard: writeClipboard,
-		pullDetails:     map[string]*data.PullDetail{},
-		issueDetails:    map[string]*data.IssueDetail{},
-		pullEnrichErr:   map[string]error{},
-		issueEnrichErr:  map[string]error{},
-		actionDetails:   map[string]*data.ActionRunDetail{},
-		actionEnrichErr: map[string]error{},
+		ctx:               ctx,
+		keys:              keys,
+		tabs:              tabs.New(ctx),
+		sidebar:           sidebar.New(ctx),
+		helpOverlay:       helpoverlay.New(ctx),
+		tasks:             tasks,
+		actionPrompt:      actionprompt.New(),
+		actionFeedback:    actionfeedback.New(),
+		copyToClipboard:   writeClipboard,
+		pullDetails:       map[string]*data.PullDetail{},
+		issueDetails:      map[string]*data.IssueDetail{},
+		pullEnrichErr:     map[string]error{},
+		issueEnrichErr:    map[string]error{},
+		actionDetails:     map[string]*data.ActionRunDetail{},
+		actionEnrichErr:   map[string]error{},
+		zones:             &layout.Zones{},
+		pendingRowPalette: -1,
 	}
 	// Build only the starting view's sections; the other slice stays nil until
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
@@ -721,6 +751,10 @@ func (m Model) View() tea.View {
 	l := m.layout
 	var content string
 	if l.TooSmall {
+		// Nothing is clickable below the floor (just a centered notice) —
+		// clear the registry rather than leave stale zones from the last
+		// normal-size render sitting around matching bogus coordinates.
+		m.zones.Reset()
 		content = tooSmallNotice(l.Full, m.ctx.Styles)
 	} else {
 		content = m.renderShell(l)
@@ -734,6 +768,12 @@ func (m Model) View() tea.View {
 // fitBlock, and header/statusbar guarantee their own exact width.
 func (m Model) renderShell(l layout.Layout) string {
 	styles := m.ctx.Styles
+
+	// rebuildZones is the ONE place mouse hit-testing zones are ever
+	// written (see its doc comment) — every render recomputes them fresh
+	// from this exact geometry before anything below reads from
+	// m.tabs/m.sidebar, so the zones agree with what's about to be drawn.
+	m.rebuildZones(l)
 
 	host := m.ctx.MockHost
 	if host == "" {
@@ -794,6 +834,75 @@ func (m Model) renderShell(l layout.Layout) string {
 
 	rows = append(rows, m.statusBarRow(l))
 	return strings.Join(rows, "\n")
+}
+
+// rebuildZones repopulates m.zones (a pointer field — see its doc comment)
+// with every mouse hit-testable region for the CURRENT frame, in Z-order
+// (later Add calls win overlapping hits, per layout.Zones.Hit). This is the
+// single place zones are ever written: handleMouseClick/handleMouseWheel
+// (Update) only ever call m.zones.Hit, relying on it reflecting the most
+// recently rendered frame — true in the live bubbletea loop, since View()
+// always runs immediately after the Update that could have changed
+// geometry (selecting a row, switching sections, data arriving, ...); a
+// unit test that changes state without an intervening m.View() call is
+// exercising a sequence that can't happen for real, so mouse tests call
+// View() once to render before dispatching a mouse message, exactly
+// mirroring that real ordering.
+func (m Model) rebuildZones(l layout.Layout) {
+	m.zones.Reset()
+	m.zones.Add(layout.ZoneStatusBar, l.StatusBar, 0)
+
+	host := m.ctx.MockHost
+	if host == "" {
+		host = m.ctx.InstanceHost
+	}
+	for _, lr := range header.Labels(l.Header.W, m.ctx.View, host, m.ctx.User, m.ctx.Styles) {
+		m.zones.Add(layout.ZoneViewLabel,
+			layout.Rect{X: lr.Start, Y: l.Header.Y, W: lr.End - lr.Start, H: 1},
+			int(lr.View))
+	}
+
+	// The action prompt swallows all mouse input unconditionally (see
+	// handleMouseClick) — no zones needed for that region. An open overlay
+	// (help today) replaces list+preview with one clickable region so
+	// spec §3's "click outside dismisses" has a single rect to test
+	// against instead of "didn't hit any of several other zones".
+	if m.actionPrompt.Active() {
+		return
+	}
+	if m.activeOverlay != overlayNone {
+		fullPanel := layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
+		m.zones.Add(layout.ZoneOverlay, fullPanel, 0)
+		return
+	}
+
+	m.zones.Add(layout.ZoneListBody, l.ListInterior, 0)
+	sectionTabsOriginX := l.ListPanel.X + 1
+	for _, r := range m.tabs.Ranges() {
+		m.zones.Add(layout.ZoneSectionTab,
+			layout.Rect{X: sectionTabsOriginX + r.Start, Y: l.SectionTabsRow, W: r.End - r.Start, H: 1},
+			r.Index)
+	}
+	if s := m.getCurrSection(); s != nil && !s.GetIsLoading() && s.GetError() == nil {
+		top, height := l.ListRows.Y, l.ListRows.H
+		for i := 0; i < s.NumRows() && i < height; i++ {
+			m.zones.Add(layout.ZoneListRow,
+				layout.Rect{X: l.ListRows.X, Y: top + i, W: l.ListRows.W, H: 1},
+				i)
+		}
+	}
+
+	showPreview := l.PreviewPanel.W > 0 && l.PreviewPanel.H > 0
+	if !showPreview {
+		return
+	}
+	m.zones.Add(layout.ZonePreviewBody, l.PreviewInterior, 0)
+	previewTabsOriginX := l.PreviewPanel.X + 1
+	for _, r := range m.sidebar.TabRanges() {
+		m.zones.Add(layout.ZonePreviewTab,
+			layout.Rect{X: previewTabsOriginX + r.Start, Y: l.PreviewTabsRow, W: r.End - r.Start, H: 1},
+			r.Index)
+	}
 }
 
 // overlayContent returns the content that should replace the list/preview
@@ -1515,29 +1624,6 @@ func (m *Model) switchToView(view context.ViewType) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// tableDataStartY is the screen row the first data row renders on — the
-// list panel's ListRows.Y, which already accounts for the panel border, the
-// table header row, and (when open) the search bar row (layout.Compute).
-func (m Model) tableDataStartY() int {
-	return m.layout.ListRows.Y
-}
-
-// tabBarY is the list panel's top border row (where section tabs embed), or
-// -1 when the tab bar is hidden (fewer than two sections) — mirroring
-// components/tabs.View()'s own hidden-bar contract.
-func (m Model) tabBarY() int {
-	if len(m.currentViewSections()) < 2 {
-		return -1
-	}
-	return m.layout.SectionTabsRow
-}
-
-// sectionTabsOriginX is the screen column the embedded tab segment's own
-// left edge (components/tabs.View()'s leading "─", offset 0) renders at.
-func (m Model) sectionTabsOriginX() int {
-	return m.layout.ListPanel.X + 1
-}
-
 func (m Model) switchSectionTo(id int) (Model, tea.Cmd) {
 	if id < 0 || id >= len(m.currentViewSections()) || id == m.currSectionId {
 		return m, nil
@@ -1549,37 +1635,6 @@ func (m Model) switchSectionTo(id int) (Model, tea.Cmd) {
 		return m, m.enrichCurrRow()
 	}
 	return m, nil
-}
-
-func (m Model) inMainListPane(x, y int) bool {
-	r := m.layout.ListInterior
-	if r.W <= 0 || r.H <= 0 {
-		return false
-	}
-	return x >= r.X && x < r.X+r.W && y >= m.tableDataStartY() && y < r.Y+r.H
-}
-
-func (m Model) rowIndexAtY(y int) (int, bool) {
-	s := m.getCurrSection()
-	if s == nil || s.GetIsLoading() || s.GetError() != nil {
-		return 0, false
-	}
-	i := y - m.tableDataStartY()
-	if i < 0 || i >= s.NumRows() {
-		return 0, false
-	}
-	return i, true
-}
-
-func (m Model) selectRowFromMouse(x, y int) (Model, tea.Cmd) {
-	if !m.inMainListPane(x, y) {
-		return m, nil
-	}
-	i, ok := m.rowIndexAtY(y)
-	if !ok {
-		return m, nil
-	}
-	return m.selectCurrentSectionRow(i)
 }
 
 func (m Model) selectCurrentSectionRow(i int) (Model, tea.Cmd) {
@@ -1597,30 +1652,176 @@ func (m Model) selectCurrentSectionRow(i int) (Model, tea.Cmd) {
 	return m, tea.Batch(moreCmd, m.enrichCurrRow())
 }
 
-func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
-	if msg.Button != tea.MouseLeft {
-		return m, nil
+// doubleClickWindow is spec §3's double-click threshold: two left clicks on
+// the same list row within this long count as one double-click.
+const doubleClickWindow = 400 * time.Millisecond
+
+// clockNow returns the current time for double-click timing, via nowFn when
+// a test has set one (tea.MouseClickMsg carries no timestamp of its own, so
+// there's nothing to read the real click time from) — real usage always
+// gets time.Now().
+func (m Model) clockNow() time.Time {
+	if m.nowFn != nil {
+		return m.nowFn()
 	}
+	return time.Now()
+}
+
+// handleMouseClick is the single zoneAt(x, y) dispatch every click resolves
+// through (spec §3's table): an open overlay or the action prompt claims
+// all mouse input first (overlay: click inside is a no-op today — Task 7's
+// palette adds item-activation — click outside dismisses; action prompt:
+// unconditionally swallowed, unchanged from its pre-Task-6 behavior);
+// otherwise the hit zone (if any) drives a left- or right-click handler.
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if m.actionPrompt.Active() {
 		return m, nil
 	}
-	if msg.Y == m.tabBarY() {
-		if id, ok := m.tabs.TabAt(msg.X - m.sectionTabsOriginX()); ok {
-			return m.switchSectionTo(id)
+	if m.activeOverlay != overlayNone {
+		if zone, ok := m.zones.Hit(msg.X, msg.Y); ok && zone.Kind == layout.ZoneOverlay {
+			return m, nil
 		}
+		return m.dismissTop()
 	}
-	return m.selectRowFromMouse(msg.X, msg.Y)
-}
-
-func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
-	if !m.inMainListPane(msg.X, msg.Y) {
+	zone, ok := m.zones.Hit(msg.X, msg.Y)
+	if !ok {
 		return m, nil
 	}
 	switch msg.Button {
-	case tea.MouseWheelUp:
-		return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
-	case tea.MouseWheelDown:
-		return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyDown})
+	case tea.MouseLeft:
+		return m.handleZoneLeftClick(zone)
+	case tea.MouseRight:
+		return m.handleZoneRightClick(zone)
+	default:
+		return m, nil
+	}
+}
+
+// handleZoneLeftClick dispatches a left click by zone kind (spec §3): view
+// label switches view, section tab switches section, a list row selects
+// (and double-click focuses/checks out — see clickListRow), a preview tab
+// switches the sidebar's tab, and the preview body focuses it. Zones with
+// no defined click behavior (list/preview body background, status bar) are
+// simply not listed, falling through to the no-op default.
+func (m Model) handleZoneLeftClick(zone layout.Zone) (Model, tea.Cmd) {
+	switch zone.Kind {
+	case layout.ZoneViewLabel:
+		return m, m.switchToView(context.ViewType(zone.Payload))
+	case layout.ZoneSectionTab:
+		return m.switchSectionTo(zone.Payload)
+	case layout.ZoneListRow:
+		return m.clickListRow(zone.Payload)
+	case layout.ZonePreviewTab:
+		m.sidebar.SelectTab(zone.Payload)
+		return m, nil
+	case layout.ZonePreviewBody:
+		return m.focusPreviewIfVisible()
+	default:
+		return m, nil
+	}
+}
+
+// handleZoneRightClick implements spec §3's "right click list row -> command
+// palette scoped to that row's actions". Task 7's palette isn't built yet,
+// so this only selects the row (consistent with a left click) and records
+// the intent in pendingRowPalette for the palette to pick up when it lands
+// — see that field's doc comment.
+func (m Model) handleZoneRightClick(zone layout.Zone) (Model, tea.Cmd) {
+	if zone.Kind != layout.ZoneListRow {
+		return m, nil
+	}
+	next, cmd := m.selectCurrentSectionRow(zone.Payload)
+	next.pendingRowPalette = zone.Payload
+	return next, cmd
+}
+
+// clickListRow selects the clicked row, then checks whether this click and
+// the previous one form a double-click on the SAME row within
+// doubleClickWindow (spec §3: "double left click list row -> focus preview,
+// same as enter"). A detected double-click consumes lastClickAt (reset to
+// the zero value) so a third quick click starts a fresh pair rather than
+// immediately re-triggering.
+func (m Model) clickListRow(row int) (Model, tea.Cmd) {
+	next, cmd := m.selectCurrentSectionRow(row)
+	now := m.clockNow()
+	isDouble := !m.lastClickAt.IsZero() && row == m.lastClickRow && now.Sub(m.lastClickAt) < doubleClickWindow
+	if isDouble {
+		next.lastClickAt = time.Time{}
+		clicked, dblCmd := next.doubleClickRow()
+		return clicked, tea.Batch(cmd, dblCmd)
+	}
+	next.lastClickAt = now
+	next.lastClickRow = row
+	return next, cmd
+}
+
+// doubleClickRow is a double-click's action on the already-selected row:
+// the same "focus preview" toggle enter performs (spec §3: "same as
+// enter"), except in the Branches view, which keeps enter/double-click
+// meaning checkout instead (T4's Branches exception — its rows have no
+// preview drill-in target of their own).
+func (m Model) doubleClickRow() (Model, tea.Cmd) {
+	if m.ctx.View == context.BranchesView {
+		return m, m.startAction(actions.KindSwitchBranch)
+	}
+	return m.focusPreviewIfVisible()
+}
+
+func (m Model) focusPreviewIfVisible() (Model, tea.Cmd) {
+	if m.previewVisible() {
+		m.previewFocused = !m.previewFocused
+	}
+	return m, nil
+}
+
+// handleMouseWheel is the wheel half of the zoneAt dispatch: over the
+// overlay it scrolls the overlay (reusing updateOverlay, the same routing
+// keyboard j/k use, so overlay-scroll logic lives in exactly one place);
+// over the list it moves the selection (existing behavior, via the same
+// synthetic up/down key messages keyboard nav uses); over the preview it
+// scrolls the preview's own viewport regardless of focus (spec §3) without
+// touching list selection or previewFocused.
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
+	zone, ok := m.zones.Hit(msg.X, msg.Y)
+	if !ok {
+		return m, nil
+	}
+	if m.activeOverlay != overlayNone {
+		if zone.Kind != layout.ZoneOverlay {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			return m.updateOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
+		case tea.MouseWheelDown:
+			return m.updateOverlay(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		default:
+			return m, nil
+		}
+	}
+	switch zone.Kind {
+	case layout.ZoneListRow, layout.ZoneListBody:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
+		case tea.MouseWheelDown:
+			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyDown})
+		default:
+			return m, nil
+		}
+	case layout.ZonePreviewBody, layout.ZonePreviewTab:
+		var key tea.KeyPressMsg
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			key = tea.KeyPressMsg{Code: tea.KeyUp}
+		case tea.MouseWheelDown:
+			key = tea.KeyPressMsg{Code: tea.KeyDown}
+		default:
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.sidebar, cmd, _ = m.sidebar.Update(key)
+		return m, cmd
 	default:
 		return m, nil
 	}

@@ -84,6 +84,19 @@ func (m *Model) PrevTab() {
 	m.vp.GotoTop()
 }
 
+// SelectTab jumps directly to tab i (Task 6's ZonePreviewTab click
+// handler; NextTab/PrevTab are relative, for the keyboard's "["/"]"). Out
+// of range or already-selected is a no-op — clicking the tab you're
+// already on shouldn't reset its scroll position back to the top.
+func (m *Model) SelectTab(i int) {
+	if i < 0 || i >= len(m.tabs) || i == m.tab {
+		return
+	}
+	m.tab = i
+	m.syncViewport()
+	m.vp.GotoTop()
+}
+
 // Update handles preview-focused navigation (spec §2's "Preview (focused)"
 // row): j/k line scroll, g/G top/bottom, d/u half-page, [/] tab cycling
 // (ctrl+d/ctrl+u are also accepted, for custom keybindings still built
@@ -143,23 +156,108 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), indicator)
 }
 
-// TabsBorderSegment renders the sidebar's tabs as a segment embeddable in
-// the preview panel's top border line — "─ Overview ── Checks ─" — or ""
-// when there are fewer than two tabs (the border row is then a plain dash
-// rule), mirroring components/tabs' embedding format.
-func (m Model) TabsBorderSegment() string {
+// TabRange is the 0-based column range (relative to TabsBorderSegment's own
+// left edge — the leading "─", offset 0) a preview tab occupies in whatever
+// TabsBorderSegment() currently renders. Mirrors components/tabs.Range;
+// Task 6's ZonePreviewTab mouse-hit registration (app.go) builds its Rects
+// straight from these.
+type TabRange struct {
+	Index      int
+	Start, End int
+}
+
+// tabsBorder lays out every preview tab exactly like
+// components/tabs.Model.render does (same whole-label priority truncation,
+// ellipsizing the first tab that doesn't fit and dropping every one after
+// it — see that function's doc comment for the full rationale, including
+// why width is measured on the styled text) once ctx.PreviewWidth is set
+// and positive; <= 0 (the zero value plain-struct test callers get when
+// they don't set it) means unconstrained, matching pre-Task-6 behavior.
+func (m Model) tabsBorder() (string, []TabRange) {
 	if len(m.tabs) <= 1 {
-		return ""
+		return "", nil
 	}
-	rendered := make([]string, len(m.tabs))
+	maxW := 0
+	if m.ctx != nil {
+		maxW = m.ctx.PreviewWidth
+	}
+
+	var b strings.Builder
+	b.WriteString("─")
+	pos := 1
+	var ranges []TabRange
 	for i, t := range m.tabs {
 		style := m.ctx.Styles.Tab
 		if i == m.tab {
 			style = m.ctx.Styles.ActiveTab
 		}
-		rendered[i] = style.Render(t.Title)
+		rendered := style.Render(t.Title)
+		renderedW := lipgloss.Width(rendered)
+
+		sepW := 0
+		if i > 0 {
+			sepW = 2
+		}
+		truncated := false
+		if maxW > 0 {
+			remaining := maxW - pos - sepW
+			if remaining <= 0 {
+				break
+			}
+			if renderedW > remaining {
+				if remaining < 2 {
+					break
+				}
+				rendered = ellipsize(rendered, remaining)
+				renderedW = lipgloss.Width(rendered)
+				truncated = true
+			}
+		}
+
+		if i > 0 {
+			b.WriteString("──")
+			pos += 2
+		}
+		ranges = append(ranges, TabRange{Index: i, Start: pos, End: pos + renderedW})
+		b.WriteString(rendered)
+		pos += renderedW
+
+		if truncated {
+			break
+		}
 	}
-	return "─" + strings.Join(rendered, "──")
+	return b.String(), ranges
+}
+
+// ellipsize trims a (possibly already ANSI-styled) rendered string to w-1
+// cells and appends "…" (1 cell) — or just "…" alone when w == 1. Mirrors
+// components/tabs' identical helper (app.go's embedInBorderRow/
+// padOrTruncateLine already truncate pre-styled segments the same way).
+func ellipsize(rendered string, w int) string {
+	if lipgloss.Width(rendered) <= w {
+		return rendered
+	}
+	if w <= 1 {
+		return "…"
+	}
+	return lipgloss.NewStyle().MaxWidth(w-1).Render(rendered) + "…"
+}
+
+// TabsBorderSegment renders the sidebar's tabs as a segment embeddable in
+// the preview panel's top border line — "─ Overview ── Checks ─" — or ""
+// when there are fewer than two tabs (the border row is then a plain dash
+// rule) or truncation has dropped every tab, mirroring components/tabs'
+// embedding format.
+func (m Model) TabsBorderSegment() string {
+	s, _ := m.tabsBorder()
+	return s
+}
+
+// TabRanges returns the column range each currently-rendered preview tab
+// occupies — see TabRange's doc comment. Empty when the bar is hidden.
+func (m Model) TabRanges() []TabRange {
+	_, r := m.tabsBorder()
+	return r
 }
 
 // resize sizes the viewport to the preview area, reserving one row for the
