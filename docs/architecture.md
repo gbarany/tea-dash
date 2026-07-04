@@ -79,13 +79,28 @@ is denormalized — each row from the cross-repo search carries its own
 | Package              | Responsibility                                                                                                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `main`               | entrypoint, `--version`/`--help`; loads config, resolves auth, builds the client, starts the Bubble Tea program |
-| `internal/ui`        | root model, table, keybindings, Lipgloss styles, loading/error states                                           |
+| `internal/ui`        | root model, layout/zones, framed shell, overlays, sections, preview, keybindings, icons/state colors, Lipgloss styles |
 | `internal/gitea`     | Gitea SDK wrapper + raw HTTP escape hatch (me-scoped cross-repo search)                                         |
 | `internal/auth`      | resolves the instance URL + token from overrides, env, and `tea`'s config                                       |
 | `internal/data`      | TUI-agnostic domain model (`PullRequest`, `Label`, …)                                                           |
 | `internal/config`    | loads `~/.config/tea-dash/config.yml` (instance block, repos)                                                   |
 | `internal/mockgitea` | in-memory fake Gitea (HTTP) behind `--mock` and the end-to-end tests                                            |
 | `internal/build`     | version metadata injected at link time via `-ldflags`                                                           |
+
+`internal/ui/layout` computes every rectangle of the framed, edge-to-edge
+shell (header, list/preview split, status bar) and the mouse-click zones
+overlaid on them, from one `ScreenWidth`/`ScreenHeight` pair — the root model
+and its overlays (a centered help viewport generated from the live keymap,
+and a fuzzy-filtering command palette) never hand-place a rect themselves.
+Preview focus (`enter`/`tab`) is a boolean on the root model that reroutes
+keys to the sidebar and swaps which panel's border is highlighted, rather
+than a separate mode stack. Transient feedback (success/error/in-flight)
+flows through one `actionfeedback` toast component in the status bar instead
+of ad hoc notice strings. `internal/ui/icons` resolves `theme.icons`
+(unicode/nerd/ascii) into glyphs once per run; `section.StateCell` and
+`section.GlyphText` pair those glyphs with `theme.colors.state.*` to color
+every PR/issue/CI/notification/branch state consistently across list rows,
+the preview pane, and the status bar.
 
 ## Current feature surface
 
@@ -104,7 +119,8 @@ is denormalized — each row from the cross-repo search carries its own
 
 ## Future refinements
 
-- Deeper theme coverage beyond the current core text/background/border palette.
+- Deeper theme coverage beyond the current text/background/border/state palette
+  (e.g. per-label colors, richer Nerd Font glyph coverage).
 - More capability probes for server-version differences that emerge in the
   Forgejo/Gitea Actions and review APIs.
 - Optional multi-instance switching inside one running session; today a session

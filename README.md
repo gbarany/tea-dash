@@ -217,6 +217,7 @@ git:
   issueBranchTemplate: "issue-{{.IssueIndex}}"
 
 theme:
+  icons: unicode # "unicode" (default) | "nerd" (needs a Nerd Font) | "ascii"
   colors:
     text:
       primary: "#CBE3E7"   # title, active tab, spinner, table header, action buttons
@@ -227,6 +228,9 @@ theme:
       selected: "#3E3859"  # selected-row background
     border:
       primary: "#585273"   # parsed for gh-dash theme compatibility; deeper border theming is future work
+    state: # PR/issue/CI state colors (list state cells, preview headers, CI check lines)
+      open: "#2da44e"      # also draft/merged/closed/success/failure/running/neutral
+      failure: "#cf222e"   # shown here as an example override; omit any key to keep its gh-style default
 
 # Each section becomes a tab you page through with h/l. A section-level repo:
 # overrides global repos: for that tab. Omit prSections to get two
@@ -365,6 +369,16 @@ keybindings:
 tea-dash publishes a JSON Schema at
 [`schema.json`](schema.json). Add the `yaml-language-server` comment above to
 your config file to get editor validation and autocomplete in YAML-aware editors.
+
+`theme.icons` picks the glyph set used for state indicators (list state cells,
+preview headers, CI check lines, notification unread dots, branch ahead/behind
+markers): `unicode` (default, plain symbols that render in any modern
+monospace font), `ascii` (7-bit fallback for fonts/terminals with no Unicode
+glyph coverage), or `nerd` (git/CI icons from [Nerd
+Fonts](https://www.nerdfonts.com) — **requires a Nerd Font installed and
+selected as your terminal's font**; without one, `nerd` glyphs render as blank
+or "tofu" boxes). `theme.colors.state` overrides the color each state renders
+in, independently of the icon set.
 
 Use `include` to share config across files. Include paths are resolved relative
 to the file declaring them unless they are absolute or start with `~`. Includes

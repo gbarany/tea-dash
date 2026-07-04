@@ -475,6 +475,11 @@ func (k *keyMap) applyConfig(cfg *config.Config) {
 	}
 }
 
+// rebindBuiltin is one of three parallel builtin-name switches — see
+// app.go's handleBuiltinKeybinding doc comment for why they're a documented
+// cross-reference rather than one merged table (this one writes a keyMap
+// field; bindingForBuiltin below reads one back; handleBuiltinKeybinding
+// runs the actual behavior).
 func (k *keyMap) rebindBuiltin(name, keyName string) {
 	keyName = strings.TrimSpace(keyName)
 	if keyName == "" {

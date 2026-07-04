@@ -45,6 +45,18 @@ git:
   remote: origin
   prBranchTemplate: "pr-{{.Owner}}-{{.Repo}}-{{.PrIndex}}"
 
+# Uncomment to customize icons and/or state colors. icons defaults to
+# "unicode" (plain symbols, no special font needed); "nerd" needs a Nerd
+# Font installed and selected as your terminal's font, or its glyphs render
+# blank; "ascii" is the 7-bit fallback. colors.state overrides are optional
+# per-key — omit any key to keep its gh-style default.
+# theme:
+#   icons: unicode # unicode | nerd | ascii
+#   colors:
+#     state:
+#       open: "#2da44e"
+#       failure: "#cf222e"
+
 prSections:
   - title: Open PRs
     columns:

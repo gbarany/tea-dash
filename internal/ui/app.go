@@ -2131,6 +2131,22 @@ func (m *Model) startCustomCommand(binding config.Keybinding) tea.Cmd {
 	return m.dispatchActionIntent(intent)
 }
 
+// handleBuiltinKeybinding is one of three parallel builtin-name switches
+// (T7/T10 review note — considered consolidating into one shared table,
+// deferred: each switch's cases carry a different payload — this one runs
+// the actual behavior, keys.go's rebindBuiltin writes a keyMap field, and
+// keys.go's bindingForBuiltin reads one back for the palette's key hint —
+// and several builtins are asymmetric across them (e.g. "quit"/"redraw"/
+// "pageup" dispatch here with no keyMap field to rebind or read at all;
+// "firstline"/"lastline" dispatch here and have a keyMap field for the help
+// overlay's display but no rebindBuiltin case, since g/G aren't
+// user-remappable today). A single shared table would need to model that
+// asymmetry (optional keyMap field, optional behavior closure) rather than
+// just merging three flat maps, so it stayed a documented three-way
+// cross-reference instead of a mechanical merge. normalizeBuiltin is the
+// one piece already shared (case/punctuation canonicalization); the alias
+// groupings themselves (e.g. "opengithub"/"open"/"openbrowser") are
+// independently listed in each switch and must be kept in sync by hand.
 func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cmd, bool) {
 	switch normalizeBuiltin(binding.Builtin) {
 	case "refresh":
