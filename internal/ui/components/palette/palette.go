@@ -122,9 +122,16 @@ func (m *Model) Open(items []Item) tea.Cmd {
 	return cmd
 }
 
-// SetSize sizes the item list's visible window, reserving FooterRows out of
-// h for the footer hint line View() always appends. Safe to call every
-// render (idempotent), mirroring helpoverlay.Model.SetSize.
+// SetSize sizes the item list's visible window. h is the FULL content
+// budget View() renders into (the same full interior height app.go's
+// resizePalette hands helpoverlay too) — not just the item rows — so this
+// reserves both HeaderRows (the input line + blank separator) and
+// FooterRows (the footer hint line) out of it before sizing the item
+// window. Without reserving HeaderRows too, a full (unfiltered, tall
+// enough) item list plus the 2 header lines would overflow h, and
+// fitBlock's crop would take the footer (and the last item) with it
+// instead of anything actually missing from the visible item count. Safe
+// to call every render (idempotent), mirroring helpoverlay.Model.SetSize.
 func (m *Model) SetSize(w, h int) {
 	if w < 0 {
 		w = 0
@@ -133,7 +140,7 @@ func (m *Model) SetSize(w, h int) {
 		h = 1
 	}
 	m.width = w
-	itemRows := h - FooterRows
+	itemRows := h - HeaderRows - FooterRows
 	if itemRows < 1 {
 		itemRows = 1
 	}

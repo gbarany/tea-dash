@@ -1,6 +1,7 @@
 package palette
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -216,9 +217,9 @@ func TestSelected_EmptyFilteredListIsFalse(t *testing.T) {
 func TestVisible_WindowsAndTracksSelection(t *testing.T) {
 	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
 	m.Open(sampleItems())
-	// height 3: SetSize reserves FooterRows(1) for the footer hint, leaving
-	// a 2-item window.
-	m.SetSize(40, 3)
+	// height 5: SetSize reserves HeaderRows(2) + FooterRows(1), leaving a
+	// 2-item window.
+	m.SetSize(40, 5)
 
 	items, sel := m.Visible()
 	if len(items) != 2 || sel != 0 || items[0].Label != "Open" {
@@ -236,9 +237,9 @@ func TestVisible_WindowsAndTracksSelection(t *testing.T) {
 func TestItemAtVisibleIndex(t *testing.T) {
 	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
 	m.Open(sampleItems())
-	// height 3: SetSize reserves FooterRows(1) for the footer hint, leaving
-	// a 2-item window.
-	m.SetSize(40, 3)
+	// height 5: SetSize reserves HeaderRows(2) + FooterRows(1), leaving a
+	// 2-item window.
+	m.SetSize(40, 5)
 
 	item, ok := m.ItemAtVisibleIndex(1)
 	if !ok || item.Label != "Refresh" {
@@ -284,6 +285,41 @@ func TestView_FooterHint(t *testing.T) {
 	empty := typeString(t, m, "zzzznomatch")
 	if !strings.Contains(empty.View(), footerHint) {
 		t.Fatalf("no-matches view missing footer hint:\n%s", empty.View())
+	}
+}
+
+// TestSetSize_FooterSurvivesFullItemList is a regression test for a bug
+// caught live at 80×24 after this package's initial review: SetSize
+// reserved FooterRows out of h but not HeaderRows (the input line + blank
+// separator View() always emits first), so whenever the item list filled
+// its window View() produced h+2 lines — 2 more than the caller's height
+// budget. app.go's fitBlock crops every overlay's content to exactly that
+// budget, so the overflow (the footer line, plus the last visible item)
+// was silently cropped away instead of anything genuinely not fitting.
+// TestView_FooterHint didn't catch this: it never constrains the height
+// against a list big enough to fill the window, so the pre-fix h+2 lines
+// still contained the footer — the bug only shows up once something
+// downstream (fitBlock) enforces the exact-h budget this test checks
+// directly instead.
+func TestSetSize_FooterSurvivesFullItemList(t *testing.T) {
+	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
+	items := make([]Item, 40) // comfortably more than any h below can show
+	for i := range items {
+		items[i] = Item{Label: fmt.Sprintf("Item %d", i)}
+	}
+	m.Open(items)
+
+	for _, h := range []int{4, 5, 6, 10, 24} {
+		m.SetSize(40, h)
+		view := m.View()
+		lines := strings.Split(view, "\n")
+		if len(lines) != h {
+			t.Errorf("h=%d: View() produced %d lines, want exactly %d (HeaderRows+items+FooterRows must fit the caller's budget exactly, or fitBlock crops the overflow)", h, len(lines), h)
+			continue
+		}
+		if !strings.Contains(view, footerHint) {
+			t.Errorf("h=%d: footer hint missing when a full item list fills the window:\n%s", h, view)
+		}
 	}
 }
 
