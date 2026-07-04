@@ -211,6 +211,11 @@ whole-label priority-drop rule while touching tab rendering for zones here
 
 ### Task 7: Command palette
 
+**Step 0 (from the T6 review):** (a) reset `lastClickAt` on any non-ListRow
+left click so a fast row→tab→row click sequence can't register a spurious
+double-click; (b) the palette's right-click entry point must READ AND CLEAR
+`pendingRowPalette` (it is set on right-click and never cleared today).
+
 **Files:**
 - Create: `internal/ui/components/palette/palette.go` + test
 - Modify: `internal/ui/app.go` (`:`/`ctrl+p` open; right-click opens row-scoped; enter dispatches through `handleBuiltinKeybinding`/`startCustomCommand`)
