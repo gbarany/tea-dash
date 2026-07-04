@@ -8,13 +8,16 @@ tea-dash is a keyboard-driven TUI for triaging pull requests, issues,
 notifications, and local branches across one or more Gitea instances, without
 leaving the terminal.
 
-> **Status: early — v1.** A working multi-view dashboard: live tables of your
-> pull requests, issues, notifications, Actions runs, and read-only local
-> branch status (fetched via the Gitea API (Go SDK + REST) and local `git`),
-> with view switching (`s`), configurable sections you page through with `h`/`l`,
-> live keyword search (`/`), progressive PR/issue loading, a default-open
-> preview, and PR / issue actions. See [`docs/architecture.md`](docs/architecture.md)
-> for the design.
+> **Status: early — v1.** A full-screen, framed dashboard over five views —
+> pull requests, issues, notifications, Actions runs, and local branches
+> (fetched via the Gitea API (Go SDK + REST) and local `git`) — with
+> lazygit-style keys (`1`–`5` view jumps, `enter` to focus the preview, `?`
+> full help, `:` command palette), first-class mouse support (click, wheel,
+> double- and right-click), configurable sections, live keyword search,
+> progressive loading, state icons and colors, and actions for PRs, issues,
+> notifications, CI runs, and branches. Try it with zero setup:
+> `tea-dash --mock`. See [`docs/architecture.md`](docs/architecture.md) for
+> the design.
 
 ## Why
 
@@ -282,6 +285,13 @@ notificationsSections:
   - title: Inbox
     limit: 50
 
+actionsSections:
+  - title: Widget CI
+    repo: acme/widgets     # Actions sections are repo-scoped (repo: or global repos:)
+    limit: 25
+    filter:
+      branch: main         # optional: only runs for this branch
+
 branchSections:
   - title: Local Branches
 
@@ -449,8 +459,9 @@ tabs; sections and filters let you tailor what each tab shows. Notification
 sections currently support title/limit configuration and include read
 notifications by default; set `defaults.includeReadNotifications: false` for
 unread/pinned-only threads. The branches view shells out to local `git` for
-configured `localRepos` only and is read-only; with no `localRepos`, it falls
-back to the current working directory.
+configured `localRepos` (falling back to the current working directory when
+none are configured) and supports checkout, push, force-push, fast-forward,
+and delete.
 
 ## Development
 
@@ -465,23 +476,30 @@ make help    # list all targets
 Project layout:
 
 ```
-main.go                 entrypoint + flag handling; loads config, starts the TUI
-internal/ui/            Bubble Tea model, table, preview, keybindings, styles
-internal/gitea/         Gitea Go SDK client wrapper + PR/issue/notification APIs
-internal/git/           read-only local git branch status
+main.go                 entrypoint + flag handling (incl. --mock); loads config, starts the TUI
+internal/ui/            Bubble Tea root model, sections, preview, overlays, keymap, styles
+internal/ui/layout/     framed-shell rectangles + mouse-click zones
+internal/ui/icons/      unicode/nerd/ascii state glyph sets
+internal/gitea/         Gitea Go SDK client wrapper + PR/issue/notification/Actions APIs
+internal/git/           local git branch status + branch actions
+internal/actionrunner/  dispatches UI action intents (API mutations, local git, custom commands)
+internal/markdown/      glamour-based markdown rendering for preview bodies
+internal/mockgitea/     in-memory fake Gitea behind --mock and the e2e tests
 internal/auth/          resolves instance URL + token from the tea config
 internal/data/          TUI-agnostic domain models
 internal/config/        config discovery + YAML loading
+internal/shell/         runs custom keybinding commands
 internal/build/         version metadata (set via -ldflags)
 ```
 
 ## Tech stack
 
 Go with the **Bubble Tea v2** Charm stack — `charm.land/bubbletea/v2` +
-`charm.land/lipgloss/v2` + `charm.land/bubbles/v2` — the exact TUI stack
+`charm.land/lipgloss/v2` + `charm.land/bubbles/v2` + `charm.land/glamour/v2`
+(Markdown preview bodies) — the TUI stack
 [`gh-dash`](https://github.com/dlvhdr/gh-dash) and Gitea's own `tea` CLI are
-built on. Planned, to stay aligned with gh-dash: `glamour/v2` (Markdown bodies),
-`cobra`+`fang` (CLI), and `koanf`+`validator` (config).
+built on. Planned, to stay aligned with gh-dash: `cobra`+`fang` (CLI) and
+`koanf`+`validator` (config).
 
 ## License
 
