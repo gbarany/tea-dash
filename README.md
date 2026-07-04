@@ -41,7 +41,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the details.
 
 ## Requirements
 
-- [Go](https://go.dev) 1.25+ (to build)
+- [Go](https://go.dev) 1.26+ (to build; matches go.mod and the Gitea SDK's own `go 1.26`)
 - A `tea` login for the instance URL and token. You only need
   [`tea`](https://gitea.com/gitea/tea) **once** to create a login
   (`tea login add`) — it is not a runtime dependency, and does not need to be on
@@ -96,7 +96,14 @@ branches).
 Notes: `--mock` composes with an explicit `--config`, but the fake's search
 ignores the `mentioned`, `since`, and `sort` filters. In the Branches view,
 push/force-push/fast-forward fail with a clear error (the demo repo has no
-real remote) — checkout works.
+real remote) — checkout works. A supplied `--config` REPLACES the demo's
+section definitions per view, not merges with them: a config that only sets
+`theme` (no `prSections`/`issuesSections`/`actionsSections`/etc.) falls back
+to tea-dash's normal single-section defaults, which empties views the demo
+otherwise populates richly (e.g. the CI view shows "No configured Actions
+sections." instead of the demo's kettle/steep workflow runs) — add explicit
+sections to your config if you want the full demo data alongside custom
+theme/keybinding settings.
 
 ### Keys
 
@@ -117,7 +124,7 @@ drill into (focus) the preview panel rather than opening a browser.
 | Preview (focused) | `j/k` scroll · `d/u` half-page · `g/G` top/bottom · `[`/`]` preview tabs · `esc`/`tab`/`enter` back |
 | Preview | `p` | toggle pane · `e` expand body |
 | Search | `/` | focus search · `enter` apply · `esc` revert |
-| Global | `esc` | universal dismiss: prompt → search → preview focus |
+| Global | `esc` | universal dismiss: overlay (help/palette) → prompt → search → preview focus |
 | Global | `?` | show / hide full help |
 | Global | `:` / `ctrl+p` | command palette — fuzzy-filter actions, view/section jumps, and custom commands |
 | Global | `o` | open in browser |

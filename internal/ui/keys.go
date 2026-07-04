@@ -14,8 +14,9 @@ import (
 // (as do "g"/"G" first/last row and "ctrl+d"/"ctrl+u" list half-page — bubbles'
 // table.DefaultKeyMap already binds GotoTop/GotoBottom/HalfPageUp/HalfPageDown
 // to exactly those keys, so once no tea-dash-level binding claims them first
-// they fall through to the table for free; FirstLine/LastLine below exist for
-// Groups()'s help metadata, not because tea-dash's own switch dispatches them).
+// they fall through to the table for free; FirstLine/LastLine/HalfPageDown/
+// HalfPageUp below exist for Groups()'s help metadata, not because
+// tea-dash's own switch dispatches them).
 //
 // Every field here is meant to show up in exactly one Groups(view) entry — see
 // the doc comment there.
@@ -34,11 +35,15 @@ type keyMap struct {
 
 	// List: row navigation. Up/Down are real bindings tea-dash dispatches
 	// itself (and reuses while the preview is focused, for line-scroll);
-	// FirstLine/LastLine are display-only — see the type doc comment.
-	Up        key.Binding
-	Down      key.Binding
-	FirstLine key.Binding
-	LastLine  key.Binding
+	// FirstLine/LastLine/HalfPageDown/HalfPageUp are display-only — see the
+	// type doc comment (bubbles' table.DefaultKeyMap already binds
+	// ctrl+d/ctrl+u for free, same as g/G).
+	Up           key.Binding
+	Down         key.Binding
+	FirstLine    key.Binding
+	LastLine     key.Binding
+	HalfPageDown key.Binding
+	HalfPageUp   key.Binding
 
 	// Preview: focus toggle, focused-scroll (dispatched by
 	// components/sidebar.Update, not tea-dash's own switch — display-only
@@ -136,7 +141,7 @@ func (k keyMap) Groups(view context.ViewType) []BindingGroup {
 			k.ViewPulls, k.ViewIssues, k.ViewNotifications, k.ViewActions, k.ViewBranches, k.SwitchView,
 		}},
 		{Title: "Sections", Bindings: []key.Binding{k.PrevSection, k.NextSection}},
-		{Title: "List", Bindings: []key.Binding{k.Up, k.Down, k.FirstLine, k.LastLine}},
+		{Title: "List", Bindings: []key.Binding{k.Up, k.Down, k.FirstLine, k.LastLine, k.HalfPageDown, k.HalfPageUp}},
 		{Title: "Preview", Bindings: []key.Binding{
 			k.FocusPreview, k.PreviewHalfUp, k.PreviewHalfDown, k.PrevSidebarTab, k.NextSidebarTab, k.TogglePreview, k.Expand,
 		}},
@@ -261,6 +266,14 @@ func defaultKeyMap() keyMap {
 		LastLine: key.NewBinding(
 			key.WithKeys("G"),
 			key.WithHelp("G", "last row"),
+		),
+		HalfPageDown: key.NewBinding(
+			key.WithKeys("ctrl+d"),
+			key.WithHelp("ctrl+d", "list ½ page down"),
+		),
+		HalfPageUp: key.NewBinding(
+			key.WithKeys("ctrl+u"),
+			key.WithHelp("ctrl+u", "list ½ page up"),
 		),
 		FocusPreview: key.NewBinding(
 			key.WithKeys("enter", "tab"),

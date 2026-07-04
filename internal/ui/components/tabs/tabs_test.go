@@ -11,12 +11,29 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/context"
 )
 
-func TestTabBarHiddenForSingleSection(t *testing.T) {
+// TestTabBarShowsSingleSectionTitle is the review fix: a single-section
+// view (e.g. Inbox, Branches) still renders its "Title (N)" segment in the
+// border, rather than leaving it an unlabeled dash rule — the old "hidden
+// below two sections" rule predates the framed shell.
+func TestTabBarShowsSingleSectionTitle(t *testing.T) {
 	ctx := &context.ProgramContext{Styles: context.DefaultStyles()}
 	tb := New(ctx)
 	tb.SetSections([]Sectioner{pullsection.NewModel(0, ctx, config.SectionConfig{Title: "PRs"})})
+	got := tb.View()
+	if got == "" {
+		t.Fatal("single-section tab bar should render its title, got empty")
+	}
+	if !strings.Contains(got, "PRs") {
+		t.Fatalf("single-section tab bar = %q, want it to contain the title", got)
+	}
+}
+
+func TestTabBarHiddenForZeroSections(t *testing.T) {
+	ctx := &context.ProgramContext{Styles: context.DefaultStyles()}
+	tb := New(ctx)
+	tb.SetSections(nil)
 	if got := tb.View(); got != "" {
-		t.Fatalf("single-section tab bar = %q, want empty", got)
+		t.Fatalf("zero-section tab bar = %q, want empty", got)
 	}
 }
 
@@ -138,11 +155,29 @@ func TestRangesAndTabAtAgreeWithTruncatedView(t *testing.T) {
 	}
 }
 
-func TestTabAtIgnoresHiddenSingleSectionBar(t *testing.T) {
+// TestTabAtHitsSingleSectionTab: since a single section now renders its
+// title (see TestTabBarShowsSingleSectionTitle), clicking within that
+// rendered range resolves to index 0 — there's nothing to switch to, but
+// the hit-test itself must still work like any other tab, not be
+// specially suppressed.
+func TestTabAtHitsSingleSectionTab(t *testing.T) {
 	ctx := &context.ProgramContext{Styles: context.DefaultStyles()}
 	tb := New(ctx)
 	tb.SetSections([]Sectioner{pullsection.NewModel(0, ctx, config.SectionConfig{Title: "Only"})})
+	ranges := tb.Ranges()
+	if len(ranges) != 1 {
+		t.Fatalf("Ranges() = %+v, want exactly 1 range for a single section", ranges)
+	}
+	if idx, ok := tb.TabAt(ranges[0].Start); !ok || idx != 0 {
+		t.Fatalf("TabAt(single-section bar's own range) = %d, %v; want 0, true", idx, ok)
+	}
+}
+
+func TestTabAtNoHitOnZeroSectionBar(t *testing.T) {
+	ctx := &context.ProgramContext{Styles: context.DefaultStyles()}
+	tb := New(ctx)
+	tb.SetSections(nil)
 	if idx, ok := tb.TabAt(1); ok {
-		t.Fatalf("TabAt(single-section bar) = %d, %v; want no tab", idx, ok)
+		t.Fatalf("TabAt(zero-section bar) = %d, %v; want no tab", idx, ok)
 	}
 }

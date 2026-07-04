@@ -60,10 +60,14 @@ func TestGroups_ViewsGroupHasAllFiveJumpsAndCycle(t *testing.T) {
 }
 
 // TestGroups_ListGroupHasMoveAndFirstLast spot-checks spec §2's List row.
+// ctrl+d/ctrl+u (review fix: these fall through to bubbles/table for free —
+// see keyMap's type doc comment — but were missing display-only bindings,
+// so the help overlay never showed them despite README/spec advertising
+// them) are checked the same way g/G already were.
 func TestGroups_ListGroupHasMoveAndFirstLast(t *testing.T) {
 	k := defaultKeyMap()
 	list := groupByTitle(t, k.Groups(context.PullsView), "List")
-	for _, want := range []string{"up", "k", "down", "j", "g", "G"} {
+	for _, want := range []string{"up", "k", "down", "j", "g", "G", "ctrl+d", "ctrl+u"} {
 		if !anyBindingHasKey(list, want) {
 			t.Fatalf("List group missing key %q: %+v", want, helpKeys(list))
 		}

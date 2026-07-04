@@ -175,15 +175,18 @@ func TestE2ESwitchViewsRendersAllFive(t *testing.T) {
 		t.Fatalf("issues view missing %q:\n%s", "Assigned To Me", view)
 	}
 	m = switchView(t, m) // notifications
-	// DemoConfig's Inbox is the view's only section, and tabs.Model.View
-	// renders "" for fewer than 2 sections — the "Inbox" title never appears
-	// on screen at all (verified empirically, not assumed). "9 notifications"
-	// is the footer count and only matches if the real seeded rows loaded.
-	// Assert on a seeded notification title (data-driven) rather than the
-	// footer count string, which is chrome that a UI restyle may reformat.
-	// Only a prefix: the title column truncates long titles ("feat: expose
-	// /healt…" at the current width), so keep the needle short enough to
-	// survive that while staying distinctive.
+	// DemoConfig's Inbox is the view's only section; tabs.Model.View now
+	// renders a single section's own "Title (N)" segment too (review fix —
+	// the old "hidden below two sections" rule predates the framed shell),
+	// so the "Inbox" title does appear on screen. Still also assert on a
+	// seeded notification title (data-driven, not just chrome) rather than
+	// relying on the footer count string alone. Only a prefix: the title
+	// column truncates long titles ("feat: expose /healt…" at the current
+	// width), so keep the needle short enough to survive that while
+	// staying distinctive.
+	if view := m.View().Content; !strings.Contains(view, "Inbox") {
+		t.Fatalf("notifications view missing the single-section tab title %q:\n%s", "Inbox", view)
+	}
 	const seededNotifTitle = "feat: expose /heal"
 	if view := m.View().Content; !strings.Contains(view, seededNotifTitle) {
 		t.Fatalf("notifications view missing %q:\n%s", seededNotifTitle, view)
@@ -193,8 +196,11 @@ func TestE2ESwitchViewsRendersAllFive(t *testing.T) {
 		t.Fatalf("actions view missing %q:\n%s", "kettle CI", view)
 	}
 	m = switchView(t, m) // branches
-	// Same single-section tab-hiding issue as notifications above, so this
-	// doesn't check for the section's "Local Branches" title either.
+	// The section's "Local Branches" title now renders in the single-section
+	// tab bar (see the notifications block above), so assert on it directly.
+	if view := m.View().Content; !strings.Contains(view, "Local Branches") {
+		t.Fatalf("branches view missing the single-section tab title %q:\n%s", "Local Branches", view)
+	}
 	// Additionally (verified empirically, not assumed): with no LocalRepos
 	// configured, branchsection falls back to os.Getwd() (see
 	// repositoriesFromConfig in internal/ui/components/branchsection), so

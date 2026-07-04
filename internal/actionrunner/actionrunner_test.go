@@ -771,6 +771,83 @@ func TestDispatchBranchSyncActionsDoNotRequireClient(t *testing.T) {
 	})
 }
 
+// TestBranchActionMessagesUseRepoBasenameNotFullPath is the review fix:
+// branch-action success toasts used to embed the full local filesystem
+// path (RepositoryPath) verbatim, which for --mock runs (and any
+// repoPaths-driven checkout into a generated directory) is an opaque OS
+// temp path like "/tmp/tea-dash-mock-123456/kettle" — reads
+// like an accidental leak of internal plumbing. Now they show just the
+// repo directory's basename ("kettle").
+func TestBranchActionMessagesUseRepoBasenameNotFullPath(t *testing.T) {
+	const deepPath = "/tmp/tea-dash-mock-123456/kettle"
+	intent := func(kind uiactions.Kind) uiactions.Intent {
+		return uiactions.Intent{
+			Kind: kind,
+			Target: uiactions.Target{
+				RowKind:        uiactions.RowKindBranch,
+				Repo:           "kettle",
+				RepositoryPath: deepPath,
+				Title:          "feature/local-ops",
+			},
+		}
+	}
+	assertBasenameOnly := func(t *testing.T, message string) {
+		t.Helper()
+		if !strings.Contains(message, "kettle") {
+			t.Fatalf("message = %q, want it to contain the repo basename %q", message, "kettle")
+		}
+		if strings.Contains(message, deepPath) || strings.Contains(message, "var/folders") {
+			t.Fatalf("message = %q, leaks the full temp path %q", message, deepPath)
+		}
+	}
+
+	t.Run("switch", func(t *testing.T) {
+		r := New(Options{
+			BranchSwitch: func(_ context.Context, opts localgit.SwitchBranchOptions) (localgit.SwitchBranchResult, error) {
+				return localgit.SwitchBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch}, nil
+			},
+		})
+		got := runDispatch(t, r, intent(uiactions.KindSwitchBranch))
+		assertBasenameOnly(t, got.Message)
+	})
+	t.Run("push", func(t *testing.T) {
+		r := New(Options{
+			BranchPush: func(_ context.Context, opts localgit.PushBranchOptions) (localgit.PushBranchResult, error) {
+				return localgit.PushBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch, Remote: "origin"}, nil
+			},
+		})
+		got := runDispatch(t, r, intent(uiactions.KindPushBranch))
+		assertBasenameOnly(t, got.Message)
+	})
+	t.Run("force push", func(t *testing.T) {
+		r := New(Options{
+			BranchForcePush: func(_ context.Context, opts localgit.ForcePushBranchOptions) (localgit.ForcePushBranchResult, error) {
+				return localgit.ForcePushBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch, Remote: "origin"}, nil
+			},
+		})
+		got := runDispatch(t, r, intent(uiactions.KindForcePushBranch))
+		assertBasenameOnly(t, got.Message)
+	})
+	t.Run("fast forward", func(t *testing.T) {
+		r := New(Options{
+			BranchFastForward: func(_ context.Context, opts localgit.FastForwardBranchOptions) (localgit.FastForwardBranchResult, error) {
+				return localgit.FastForwardBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch, Remote: "origin", Upstream: "origin/feature/local-ops"}, nil
+			},
+		})
+		got := runDispatch(t, r, intent(uiactions.KindFastForwardBranch))
+		assertBasenameOnly(t, got.Message)
+	})
+	t.Run("delete", func(t *testing.T) {
+		r := New(Options{
+			BranchDelete: func(_ context.Context, opts localgit.DeleteBranchOptions) (localgit.DeleteBranchResult, error) {
+				return localgit.DeleteBranchResult{RepoPath: opts.RepoPath, Branch: opts.Branch}, nil
+			},
+		})
+		got := runDispatch(t, r, intent(uiactions.KindDeleteBranch))
+		assertBasenameOnly(t, got.Message)
+	})
+}
+
 func TestDispatchActionRunControlsUseRunID(t *testing.T) {
 	client := &fakeClient{}
 	r := New(Options{Client: client})

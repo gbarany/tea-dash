@@ -461,11 +461,6 @@ func DefaultColumns(mainWidth int) []table.Column {
 	return columnsFromDefinitions(DefaultColumnDefinitions(mainWidth))
 }
 
-// DefaultColumnNames returns the shared PR/issue column order.
-func DefaultColumnNames() []string {
-	return columnNamesFromDefinitions(DefaultColumnDefinitions(0))
-}
-
 // HumanizeTime renders a coarse "just now / Xm / Xh / Xd ago" relative time,
 // returning "" for the zero time.
 func HumanizeTime(t time.Time) string {

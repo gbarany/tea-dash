@@ -14,14 +14,12 @@ import (
 type Styles struct {
 	Table        table.Styles
 	Title        lipgloss.Style
-	HelpText     lipgloss.Style
 	ActionButton lipgloss.Style
 	Spinner      lipgloss.Style
 	DimText      lipgloss.Style
 	ErrorText    lipgloss.Style
 	Tab          lipgloss.Style
 	ActiveTab    lipgloss.Style
-	TabSeparator lipgloss.Style
 
 	// BorderFocused and BorderBlurred are border-color-only styles (just a
 	// foreground color, no shape/side decoration): the framed shell draws its
@@ -49,7 +47,6 @@ type Styles struct {
 const (
 	defaultPrimary      = "#00ADD8"
 	defaultDim          = "240"
-	defaultHelp         = "241"
 	defaultError        = "196"
 	defaultSelectedText = "229"
 	defaultSelectedBg   = "57"
@@ -69,7 +66,6 @@ func DefaultStyles() Styles {
 	return stylesFromColors(
 		lipgloss.Color(defaultPrimary),
 		lipgloss.Color(defaultDim),
-		lipgloss.Color(defaultHelp),
 		lipgloss.Color(defaultError),
 		lipgloss.Color(defaultSelectedText),
 		lipgloss.Color(defaultSelectedBg),
@@ -87,17 +83,13 @@ func StylesForConfig(cfg *config.Config) Styles {
 	colors := cfg.Theme.Colors
 	primary := colorOrDefault(colors.Text.Primary, lipgloss.Color(defaultPrimary))
 	dim := colorOrDefault(colors.Text.Faint, lipgloss.Color(defaultDim))
-	help := dim
-	if colors.Text.Faint == "" {
-		help = lipgloss.Color(defaultHelp)
-	}
 	warning := colorOrDefault(colors.Text.Warning, lipgloss.Color(defaultError))
 	selectedText := colorOrDefault(colors.Text.Secondary, lipgloss.Color(defaultSelectedText))
 	selectedBg := colorOrDefault(colors.Background.Selected, lipgloss.Color(defaultSelectedBg))
-	return stylesFromColors(primary, dim, help, warning, selectedText, selectedBg, colors.State)
+	return stylesFromColors(primary, dim, warning, selectedText, selectedBg, colors.State)
 }
 
-func stylesFromColors(primary, dim, help, warning, selectedText, selectedBg color.Color, state config.ThemeStateColors) Styles {
+func stylesFromColors(primary, dim, warning, selectedText, selectedBg color.Color, state config.ThemeStateColors) Styles {
 	tbl := table.DefaultStyles()
 	tbl.Header = tbl.Header.Bold(true).Foreground(primary).BorderBottom(true)
 	tbl.Selected = tbl.Selected.Bold(true).Foreground(selectedText).Background(selectedBg)
@@ -127,14 +119,12 @@ func stylesFromColors(primary, dim, help, warning, selectedText, selectedBg colo
 	return Styles{
 		Table:        tbl,
 		Title:        lipgloss.NewStyle().Bold(true).Foreground(primary),
-		HelpText:     lipgloss.NewStyle().MarginTop(1).Foreground(help),
 		ActionButton: lipgloss.NewStyle().Foreground(primary),
 		Spinner:      lipgloss.NewStyle().Foreground(primary),
 		DimText:      lipgloss.NewStyle().Foreground(dim),
 		ErrorText:    lipgloss.NewStyle().Foreground(warning),
 		Tab:          lipgloss.NewStyle().Foreground(dim).Padding(0, 1),
 		ActiveTab:    lipgloss.NewStyle().Bold(true).Foreground(primary).Padding(0, 1),
-		TabSeparator: lipgloss.NewStyle().Foreground(dim),
 
 		BorderFocused:      lipgloss.NewStyle().Foreground(primary),
 		BorderBlurred:      lipgloss.NewStyle().Foreground(dim),

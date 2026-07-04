@@ -71,11 +71,6 @@ func effectiveRepo(ctx *appctx.ProgramContext, cfg config.SectionConfig) string 
 	return ctx.CurrentRepo
 }
 
-// issueBuildRow maps an issue into the default table row.
-func issueBuildRow(issue data.Issue, ctx *appctx.ProgramContext) table.Row {
-	return issueBuildRowWithColumns(issue, section.DefaultColumnNames(), ctx)
-}
-
 func issueBuildRowWithColumns(issue data.Issue, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {

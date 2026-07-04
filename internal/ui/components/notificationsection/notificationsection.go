@@ -49,11 +49,12 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 		},
 		BuildRow: func(n data.Notification) table.Row {
 			// Column-name-driven (not a fixed 6-cell literal): Columns
-			// falls back to the shared section.DefaultColumns, which
-			// responsively drops columns per SixColumnSpec.Fit, so the
-			// row's cell count/order must track whatever that yields for
-			// the CURRENT width, recomputed on every call (not frozen at
-			// construction — see pullsection.NewModel's identical comment).
+			// falls back to the shared section.DefaultColumnDefinitions,
+			// which responsively drops columns per SixColumnSpec.Fit, so
+			// the row's cell count/order must track whatever that yields
+			// for the CURRENT width, recomputed on every call (not frozen
+			// at construction — see pullsection.NewModel's identical
+			// comment).
 			columnNames := section.ColumnNamesFromConfig(nil, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 			return notificationBuildRowWithColumns(n, columnNames, ctx)
 		},

@@ -445,6 +445,36 @@ func TestSwitchBranchDirtyTreeFailureIsActionable(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "commit, stash, or discard") {
 		t.Fatalf("SwitchBranch dirty-tree error = %v", err)
 	}
+	// Review fix: the error message shows the repo's basename, not the
+	// full local path (an opaque OS temp dir in tests, and in real --mock
+	// runs — see TestDisplayRepoName).
+	if !strings.Contains(err.Error(), filepath.Base(repo)) {
+		t.Fatalf("SwitchBranch dirty-tree error = %v, want it to contain the repo basename %q", err, filepath.Base(repo))
+	}
+	if strings.Contains(err.Error(), repo) {
+		t.Fatalf("SwitchBranch dirty-tree error = %v, leaks the full repo path %q", err, repo)
+	}
+}
+
+// TestDisplayRepoName covers the review fix's basename helper directly:
+// user-facing branch-action messages must never leak a full filesystem
+// path (an opaque OS temp dir in --mock runs, e.g.
+// "/tmp/tea-dash-mock-123456/kettle").
+func TestDisplayRepoName(t *testing.T) {
+	cases := map[string]string{
+		"/tmp/tea-dash-mock-123456/kettle": "kettle",
+		"/src/tea-dash":                    "tea-dash",
+		"relative/path/repo":               "repo",
+		"repo":                             "repo",
+		"/src/tea-dash/":                   "tea-dash",
+		"":                                 "",
+		"/":                                "/",
+	}
+	for in, want := range cases {
+		if got := DisplayRepoName(in); got != want {
+			t.Fatalf("DisplayRepoName(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
 
 func TestSwitchBranchWorktreeConflictFailureIsActionable(t *testing.T) {

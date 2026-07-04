@@ -304,7 +304,7 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Switched to %s in %s.", branch.Branch, branch.RepoPath), nil
+		return fmt.Sprintf("Switched to %s in %s.", branch.Branch, localgit.DisplayRepoName(branch.RepoPath)), nil
 	}
 	if intent.Kind == uiactions.KindPushBranch {
 		branch, err := r.branchPush(ctx, localgit.PushBranchOptions{
@@ -316,7 +316,7 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Pushed %s to %s in %s.", branch.Branch, branch.Remote, branch.RepoPath), nil
+		return fmt.Sprintf("Pushed %s to %s in %s.", branch.Branch, branch.Remote, localgit.DisplayRepoName(branch.RepoPath)), nil
 	}
 	if intent.Kind == uiactions.KindForcePushBranch {
 		branch, err := r.branchForcePush(ctx, localgit.ForcePushBranchOptions{
@@ -327,7 +327,7 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Force-pushed %s to %s in %s.", branch.Branch, branch.Remote, branch.RepoPath), nil
+		return fmt.Sprintf("Force-pushed %s to %s in %s.", branch.Branch, branch.Remote, localgit.DisplayRepoName(branch.RepoPath)), nil
 	}
 	if intent.Kind == uiactions.KindFastForwardBranch {
 		branch, err := r.branchFastForward(ctx, localgit.FastForwardBranchOptions{
@@ -338,7 +338,7 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Fast-forwarded %s from %s in %s.", branch.Branch, branch.Upstream, branch.RepoPath), nil
+		return fmt.Sprintf("Fast-forwarded %s from %s in %s.", branch.Branch, branch.Upstream, localgit.DisplayRepoName(branch.RepoPath)), nil
 	}
 	if intent.Kind == uiactions.KindDeleteBranch {
 		branch, err := r.branchDelete(ctx, localgit.DeleteBranchOptions{
@@ -349,7 +349,7 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Deleted %s in %s.", branch.Branch, branch.RepoPath), nil
+		return fmt.Sprintf("Deleted %s in %s.", branch.Branch, localgit.DisplayRepoName(branch.RepoPath)), nil
 	}
 	if r.client == nil {
 		return "", fmt.Errorf("%s is unavailable: no Gitea client", actionLabel(intent.Kind))
@@ -532,7 +532,7 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("Checked out %s in %s.", plan.Branch, plan.RepoPath), nil
+			return fmt.Sprintf("Checked out %s in %s.", plan.Branch, localgit.DisplayRepoName(plan.RepoPath)), nil
 		case uiactions.RowKindIssue:
 			plan, err := r.issueCheckout(ctx, localgit.IssueCheckoutOptions{
 				RepoName:       intent.Target.Repo,
@@ -546,7 +546,7 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("Checked out issue branch %s in %s.", plan.Branch, plan.RepoPath), nil
+			return fmt.Sprintf("Checked out issue branch %s in %s.", plan.Branch, localgit.DisplayRepoName(plan.RepoPath)), nil
 		default:
 			return "", fmt.Errorf("checkout is only available for pull requests and issues")
 		}

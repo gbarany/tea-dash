@@ -654,27 +654,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindRemoveLabel)
 		case !m.scopedBuiltinOverridden("setMilestone") && m.ctx.View == context.IssuesView && key.Matches(msg, m.keys.Milestone):
 			return m, m.startAction(actions.KindSetMilestone)
-		case !m.scopedBuiltinOverridden("merge") && key.Matches(msg, m.keys.Merge):
+		// Merge/UpdateBranch/MarkReady/WatchChecks/Review/RequestReviewers/
+		// RemoveReviewers/ExternalDiff (below) are PR-only (spec §2's PRs
+		// row; the Issues/Inbox/CI/Branches scoped groups never list them)
+		// — view-guarded here (review fix) so they're unreachable, not just
+		// error-toasted by validateActionTarget after the fact, outside
+		// Pulls. Unlike Comment/Assign/Unassign/AddLabel/RemoveLabel/Close/
+		// Reopen/Checkout above, which are genuinely shared with Issues and
+		// stay unguarded.
+		case !m.scopedBuiltinOverridden("merge") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.Merge):
 			return m, m.startAction(actions.KindMerge)
-		case !m.scopedBuiltinOverridden("update") && key.Matches(msg, m.keys.UpdateBranch):
+		case !m.scopedBuiltinOverridden("update") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.UpdateBranch):
 			return m, m.startAction(actions.KindUpdateBranch)
-		case !m.scopedBuiltinOverridden("ready") && key.Matches(msg, m.keys.MarkReady):
+		case !m.scopedBuiltinOverridden("ready") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.MarkReady):
 			return m, m.startAction(actions.KindMarkReady)
 		case !m.scopedBuiltinOverridden("watch") && !m.scopedBuiltinOverridden("watchChecks") &&
-			!m.scopedBuiltinOverridden("checks") && key.Matches(msg, m.keys.WatchChecks):
+			!m.scopedBuiltinOverridden("checks") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.WatchChecks):
 			return m.watchSelectedPullChecks()
 		case !m.scopedBuiltinOverridden("close") && key.Matches(msg, m.keys.Close):
 			return m, m.startAction(actions.KindClose)
 		case !m.scopedBuiltinOverridden("reopen") && key.Matches(msg, m.keys.Reopen):
 			return m, m.startAction(actions.KindReopen)
-		case !m.scopedBuiltinOverridden("review") && key.Matches(msg, m.keys.Review):
+		case !m.scopedBuiltinOverridden("review") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.Review):
 			return m, m.startAction(actions.KindReview)
 		case !m.scopedBuiltinOverridden("requestReview") && !m.scopedBuiltinOverridden("requestReviewer") &&
-			!m.scopedBuiltinOverridden("requestReviewers") && key.Matches(msg, m.keys.RequestReviewers):
+			!m.scopedBuiltinOverridden("requestReviewers") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.RequestReviewers):
 			return m, m.startAction(actions.KindRequestReviewers)
 		case !m.scopedBuiltinOverridden("removeReview") && !m.scopedBuiltinOverridden("removeReviewer") &&
 			!m.scopedBuiltinOverridden("removeReviewers") && !m.scopedBuiltinOverridden("removeRequestedReviewers") &&
-			key.Matches(msg, m.keys.RemoveReviewers):
+			m.ctx.View == context.PullsView && key.Matches(msg, m.keys.RemoveReviewers):
 			return m, m.startAction(actions.KindRemoveReviewers)
 		case !m.scopedBuiltinOverridden("push") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.PushBranch):
 			return m, m.startAction(actions.KindPushBranch)
@@ -684,7 +692,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindFastForwardBranch)
 		case !m.scopedBuiltinOverridden("delete") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.DeleteBranch):
 			return m, m.startAction(actions.KindDeleteBranch)
-		case !m.scopedBuiltinOverridden("diff") && key.Matches(msg, m.keys.ExternalDiff):
+		case !m.scopedBuiltinOverridden("diff") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.ExternalDiff):
 			return m, m.startAction(actions.KindExternalDiff)
 		case !m.scopedBuiltinOverridden("checkout") && key.Matches(msg, m.keys.Checkout):
 			if m.ctx.View == context.BranchesView {
@@ -1003,11 +1011,9 @@ func (m Model) listInteriorContent() string {
 
 // statusBarRow renders the bottom border/status row: left is transient
 // action feedback, middle is section status counts, right is a short
-// key-hint line ending in "? help · q quit" (spec §1). helpLine()'s compact
-// form is still too long for a single status-bar segment shared with the
-// other two — the full keymap renders in the help overlay instead (see
-// overlayContent); statusHints is a separate, deliberately short line just
-// for this row.
+// key-hint line ending in "? help · q quit" (spec §1). The full keymap
+// renders in the help overlay instead (see overlayContent); statusHints is
+// a separate, deliberately short line just for this row.
 func (m Model) statusBarRow(l layout.Layout) string {
 	return statusbar.View(l.StatusBar.W, m.statusLeftSegment(), m.statusLine(), m.statusHints(), m.ctx.Styles)
 }
@@ -1051,8 +1057,27 @@ func tooSmallNotice(full layout.Rect, styles context.Styles) string {
 	if w == 0 {
 		return strings.Repeat("\n", full.H-1)
 	}
-	msg := styles.ErrorText.Render(fmt.Sprintf("terminal too small (%dx%d, need 40x10)", full.W, full.H))
+	msg := styles.ErrorText.Render(tooSmallText(full.W, full.H, w))
 	return lipgloss.Place(w, full.H, lipgloss.Center, lipgloss.Center, msg)
+}
+
+// tooSmallText picks the longest of three too-small messages that still
+// fits within w columns (review fix): below ~40 columns, the full
+// "terminal too small (WxH, need 40x10)" message itself doesn't fit, and
+// lipgloss.Place's width constraint silently truncated it mid-word (e.g.
+// "terminal too small (30x7, need" at w=30) — exactly the kind of broken
+// text this notice exists to avoid. Degrades to "too small (WxH)" and
+// finally bare "WxH" as w shrinks further.
+func tooSmallText(fullW, fullH, w int) string {
+	full := fmt.Sprintf("terminal too small (%dx%d, need 40x10)", fullW, fullH)
+	if lipgloss.Width(full) <= w {
+		return full
+	}
+	short := fmt.Sprintf("too small (%dx%d)", fullW, fullH)
+	if lipgloss.Width(short) <= w {
+		return short
+	}
+	return fmt.Sprintf("%dx%d", fullW, fullH)
 }
 
 // panelBorders is the four corner runes a bordered panel draws, which
@@ -1178,41 +1203,6 @@ func padOrTruncateLine(s string, w int) string {
 		s += strings.Repeat(" ", w-lw)
 	}
 	return s
-}
-
-// helpLine is the current view's compact key-hint text (helpLineShort).
-// It used to have an expanded form too, toggled by showHelp and rendered
-// as a one-line list-panel overlay — Task 5's help overlay (see
-// overlayContent, helpoverlay.Model) replaces that entirely with a proper
-// scrollable modal generated from keyMap.Groups(view), so only the compact
-// form is left. Kept as its own function (rather than inlining
-// helpLineShort's body here) because tests call it directly to sanity
-// check per-view shortcut text.
-func (m Model) helpLine() string {
-	return m.helpLineShort()
-}
-
-func (m Model) helpLineShort() string {
-	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · [/] tabs · r/R refresh"
-	if m.ctx.CurrentRepo != "" {
-		text += " · t current repo"
-	}
-	switch m.ctx.View {
-	case context.ActionsView:
-		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · [/] tabs · r refresh · R rerun · ! cancel"
-		if m.ctx.CurrentRepo != "" {
-			text += " · t current repo"
-		}
-	case context.NotificationsView:
-		text += " · m read · u unread · M all read · b pin · B unpin"
-	case context.BranchesView:
-		text += " · C/space switch · P push · f/F sync · d delete"
-	case context.IssuesView:
-		text += " · c comment · a/A assign · L/U labels · M milestone · b/B subscribe · x/X close/reopen"
-	default:
-		text += " · c comment · a/A assign · L/U labels · m merge · u update · W ready · w checks · d/ctrl+t diff · C/space checkout"
-	}
-	return text + fmt.Sprintf(" · %s help · %s quit", keyHelp(m.keys.Help, "?"), keyHelp(m.keys.Quit, "q"))
 }
 
 func keyHelp(binding key.Binding, fallback string) string {

@@ -219,6 +219,41 @@ func TestTooSmallRendersCenteredNotice(t *testing.T) {
 	}
 }
 
+// TestTooSmallText_DegradesAtNarrowWidths is the review fix: the full
+// "terminal too small (WxH, need 40x10)" message doesn't fit below ~40
+// columns, and lipgloss.Place's width constraint used to silently truncate
+// it mid-word instead of degrading gracefully.
+func TestTooSmallText_DegradesAtNarrowWidths(t *testing.T) {
+	if got := tooSmallText(30, 7, 80); got != "terminal too small (30x7, need 40x10)" {
+		t.Fatalf("tooSmallText at ample width = %q", got)
+	}
+	if got := tooSmallText(30, 7, 20); got != "too small (30x7)" {
+		t.Fatalf("tooSmallText at 20 cols = %q, want the short form", got)
+	}
+	if got := tooSmallText(30, 7, 5); got != "30x7" {
+		t.Fatalf("tooSmallText at 5 cols = %q, want the bare WxH form", got)
+	}
+}
+
+// TestTooSmallNoticeNeverExceedsWidthAtNarrowSizes is the integration-level
+// regression: at real too-small window sizes down to very narrow, no
+// rendered line's visible width exceeds the terminal's actual width (the
+// bug this fixes: a fixed too-long message got hard-clipped mid-word by
+// lipgloss.Place instead of degrading, which is a display bug in its own
+// right even though it happened to stay within width).
+func TestTooSmallNoticeNeverExceedsWidthAtNarrowSizes(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	for _, sz := range []tea.WindowSizeMsg{{Width: 39, Height: 9}, {Width: 20, Height: 6}, {Width: 10, Height: 3}} {
+		m = update(t, m, sz)
+		content := m.View().Content
+		for _, line := range strings.Split(content, "\n") {
+			if w := lipgloss.Width(line); w > sz.Width {
+				t.Fatalf("size %dx%d: line %q width %d exceeds terminal width %d", sz.Width, sz.Height, line, w, sz.Width)
+			}
+		}
+	}
+}
+
 // TestPreviewAutoCollapseOnShrinkPreservesToggleState covers the plan's
 // Task 3 step 3 requirement: shrinking below the 60x15 collapse floor hides
 // the preview (no second bordered panel rendered) but preserves
@@ -597,10 +632,14 @@ func TestToggleSmartFilteringWithoutDetectedRepoShowsNotice(t *testing.T) {
 	}
 }
 
-func TestHelpMentionsSmartFilteringWhenCurrentRepoDetected(t *testing.T) {
+// TestStatusHintsMentionsSmartFilteringWhenCurrentRepoDetected migrated off
+// the review-fix-deleted helpLine() (see TestNotificationsHelpShowsUnreadShortcut's
+// doc comment) onto statusHints, the status bar's actual right-segment hint
+// line — which already carries this same "t current repo" mention.
+func TestStatusHintsMentionsSmartFilteringWhenCurrentRepoDetected(t *testing.T) {
 	m := NewWithOptions(&config.Config{}, nil, Options{CurrentRepo: "acme/widgets", SmartFiltering: true})
-	if !strings.Contains(m.helpLine(), "t current repo") {
-		t.Fatalf("help line should mention the current-repo toggle:\n%s", m.helpLine())
+	if !strings.Contains(m.statusHints(), "t current repo") {
+		t.Fatalf("status hints should mention the current-repo toggle:\n%s", m.statusHints())
 	}
 }
 
@@ -3340,19 +3379,27 @@ func TestIssueActionButtonsIncludeSubscriptionActions(t *testing.T) {
 	}
 }
 
+// TestIssueHelpShowsIssueActionsOnly migrated off the review-fix-deleted
+// helpLine()/helpLineShort() (a compact key-hint string never rendered
+// anywhere by default — see TestNotificationsHelpShowsUnreadShortcut's
+// identical note) onto the real production surface: the help overlay,
+// generated straight from keyMap.Groups(view).
 func TestIssueHelpShowsIssueActionsOnly(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Tall window so the trailing view-scoped "Issues" group fits without
+	// scrolling — see TestHelpKeyTogglesFullHelp's doc comment.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
-	help := m.helpLine()
-	for _, want := range []string{"M milestone", "b/B subscribe", "x/X close/reopen"} {
-		if !strings.Contains(help, want) {
-			t.Fatalf("issue help = %q, want %q", help, want)
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	view := m.View().Content
+	for _, want := range []string{"milestone", "subscribe", "close", "reopen"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("issue full help missing %q:\n%s", want, view)
 		}
 	}
-	for _, bad := range []string{"merge", "diff", "update"} {
-		if strings.Contains(help, bad) {
-			t.Fatalf("issue help = %q, should not advertise PR-only action %q", help, bad)
+	for _, bad := range []string{"merge", "external diff", "update branch"} {
+		if strings.Contains(view, bad) {
+			t.Fatalf("issue full help should not advertise PR-only action %q:\n%s", bad, view)
 		}
 	}
 }
@@ -4237,25 +4284,20 @@ func TestScopedBuiltinKeybindingDoesNotLeakToOtherViews(t *testing.T) {
 	}
 }
 
+// TestNotificationsHelpShowsUnreadShortcut: the status bar's right segment
+// is a deliberately short, view-agnostic hint line (statusHints) — the
+// per-view shortcuts render only in the help overlay (see overlayContent),
+// generated from keyMap.Groups(view)'s view-scoped "Inbox" group for the
+// notifications view. (The compact helpLine()/helpLineShort() text blob
+// this test used to also check at the function level — never rendered
+// anywhere by default — was deleted as dead code; this overlay assertion
+// is the coverage that matters.)
 func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
 	// Tall window so the trailing view-scoped "Inbox" group fits without
 	// scrolling — see TestHelpKeyTogglesFullHelp's doc comment.
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
-	// The compact form's per-view shortcuts (helpLine()/helpLineShort())
-	// aren't rendered anywhere by default now — the status bar's right
-	// segment is a deliberately short, view-agnostic hint line (statusHints)
-	// — so the compact form is exercised at the function level here, and
-	// the full keymap is what actually renders in the view, as the help
-	// overlay (see overlayContent), generated from keyMap.Groups(view)'s
-	// view-scoped "Inbox" group for the notifications view.
-	if help := m.helpLine(); !strings.Contains(help, "u unread") {
-		t.Fatalf("compact notifications help missing unread shortcut: %q", help)
-	}
-	if help := m.helpLine(); !strings.Contains(help, "b pin") {
-		t.Fatalf("compact notifications help missing pin shortcut: %q", help)
-	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	view := m.View().Content
 	if !strings.Contains(view, "Inbox") {
@@ -4485,7 +4527,17 @@ func TestConfiguredUpDownBuiltinsMoveSelection(t *testing.T) {
 	}
 }
 
-func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
+// TestMergeKeyInIssuesViewIsANoOp is the review fix: PR-only dispatch cases
+// (merge/update/ready/checks/review/requestReviewers/removeReviewers/diff)
+// are now guarded to context.PullsView (mirroring how Notifications/CI/
+// Branches-scoped cases already guard), so the default "m" key is
+// unreachable outside Pulls — not just caught after the fact by
+// validateActionTarget's error toast. Before this fix, "m" in Issues view
+// would dispatch KindMerge and validateActionTarget would reject it with a
+// "Merge is only available for pull requests." toast: help (the Issues
+// scoped group never lists Merge) and behavior (the key still did
+// something) disagreed. Now it's a plain no-op, matching the help overlay.
+func TestMergeKeyInIssuesViewIsANoOp(t *testing.T) {
 	var dispatched bool
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
 	m.actionDispatcher = func(actions.Intent) tea.Cmd {
@@ -4505,11 +4557,44 @@ func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
 	if m.actionPrompt.Active() {
 		t.Fatal("merge on an issue must not open a prompt")
 	}
+	if got := m.statusLeftSegment(); got != "" {
+		t.Fatalf("merge key in Issues view should be a silent no-op, got notice = %q", got)
+	}
+}
+
+// TestValidateActionTargetStillRejectsMergeViaCustomKeybinding keeps
+// coverage on validateActionTarget's PR-only safety net (app.go's
+// handleBuiltinKeybinding "merge" case has no view guard, unlike the
+// default-key dispatch switch, since a custom `keybindings.universal`
+// entry can invoke any builtin from any view — see matchBuiltinKeybinding):
+// a user-configured "Z" -> merge keybinding on an Issues-view row still
+// gets rejected with the "only available for pull requests" toast, rather
+// than silently doing nothing or crashing.
+func TestValidateActionTargetStillRejectsMergeViaCustomKeybinding(t *testing.T) {
+	var dispatched bool
+	cfg := &config.Config{
+		Defaults: config.Defaults{View: "issues"},
+		Keybindings: config.Keybindings{
+			Universal: []config.Keybinding{{Key: "Z", Builtin: "merge"}},
+		},
+	}
+	m := New(cfg, nil)
+	m.actionDispatcher = func(actions.Intent) tea.Cmd {
+		dispatched = true
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 7, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'Z', Text: "Z"})
+	if dispatched {
+		t.Fatal("merge on an issue must not dispatch")
+	}
 	if !strings.Contains(m.statusLeftSegment(), "pull requests") {
 		t.Fatalf("invalid action notice = %q, want pull requests message", m.statusLeftSegment())
-	}
-	if view := m.View().Content; !strings.Contains(view, "pull requests") {
-		t.Fatalf("invalid action notice should render in the view:\n%s", view)
 	}
 }
 

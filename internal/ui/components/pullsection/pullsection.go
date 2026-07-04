@@ -86,11 +86,6 @@ func prState(pr data.PullRequest) string {
 	return pr.State
 }
 
-// prBuildRow maps a PR into the default table row.
-func prBuildRow(pr data.PullRequest, ctx *appctx.ProgramContext) table.Row {
-	return prBuildRowWithColumns(pr, section.DefaultColumnNames(), ctx)
-}
-
 func prBuildRowWithColumns(pr data.PullRequest, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {

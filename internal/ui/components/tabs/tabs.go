@@ -1,7 +1,9 @@
 // Package tabs renders the section tab bar, embedded in the list panel's
-// top border line (spec §1: "├─ Open (12) ── Closed (3) ─..."). It is
-// hidden (empty) while there are fewer than two sections, so a
-// single-section view's border row is a plain dash rule.
+// top border line (spec §1: "├─ Open (12) ── Closed (3) ─..."). A single
+// section still renders its own "Title (N)" segment (review fix — the old
+// "hidden below two sections" rule predates the framed shell and left a
+// single-section view's border an unlabeled dash rule, e.g. Inbox/
+// Branches); it's only fully hidden when there are zero sections to show.
 package tabs
 
 import (
@@ -83,7 +85,7 @@ type Range struct {
 // comment for the same gotcha), so the rendered cell width can exceed the
 // label's own rune count.
 func (m Model) render() (string, []Range) {
-	if len(m.sections) < 2 {
+	if len(m.sections) < 1 {
 		return "", nil
 	}
 	maxW := 0
@@ -150,10 +152,10 @@ func ellipsize(rendered string, w int) string {
 }
 
 // View renders the tab bar as a segment embeddable in the list panel's top
-// border line — "─ Open (12) ── Closed (3) ─" — or "" when there are fewer
-// than two sections (the border row is then a plain dash rule) or once
-// truncation (see render) has dropped every tab (pathologically narrow
-// width).
+// border line — "─ Open (12) ── Closed (3) ─", or just "─ Notifications
+// (9)" for a single section — or "" when there are zero sections (the
+// border row is then a plain dash rule) or once truncation (see render)
+// has dropped every tab (pathologically narrow width).
 func (m Model) View() string {
 	s, _ := m.render()
 	return s

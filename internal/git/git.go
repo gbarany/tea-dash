@@ -379,7 +379,7 @@ func RunCheckout(ctx context.Context, opts CheckoutOptions) (CheckoutPlan, error
 		return CheckoutPlan{}, err
 	}
 	if strings.TrimSpace(status.Stdout) != "" {
-		return CheckoutPlan{}, fmt.Errorf("refusing checkout in dirty worktree %s", plan.RepoPath)
+		return CheckoutPlan{}, fmt.Errorf("refusing checkout in dirty worktree %s", DisplayRepoName(plan.RepoPath))
 	}
 	if _, err := runGit(ctx, runner, plan.RepoPath, "fetch", plan.Remote, plan.FetchRefspec); err != nil {
 		return CheckoutPlan{}, err
@@ -439,7 +439,7 @@ func RunIssueCheckout(ctx context.Context, opts IssueCheckoutOptions) (IssueChec
 		return IssueCheckoutPlan{}, err
 	}
 	if strings.TrimSpace(status.Stdout) != "" {
-		return IssueCheckoutPlan{}, fmt.Errorf("refusing checkout in dirty worktree %s", plan.RepoPath)
+		return IssueCheckoutPlan{}, fmt.Errorf("refusing checkout in dirty worktree %s", DisplayRepoName(plan.RepoPath))
 	}
 	exists, err := branchExists(ctx, runner, plan.RepoPath, plan.Branch)
 	if err != nil {
@@ -492,7 +492,7 @@ func SwitchBranch(ctx context.Context, opts SwitchBranchOptions) (SwitchBranchRe
 		return SwitchBranchResult{}, err
 	}
 	if strings.TrimSpace(current.Stdout) == branch {
-		return SwitchBranchResult{}, fmt.Errorf("branch %s is already current in %s", branch, repoPath)
+		return SwitchBranchResult{}, fmt.Errorf("branch %s is already current in %s", branch, DisplayRepoName(repoPath))
 	}
 	if _, err := runGit(ctx, runner, repoPath, "switch", branch); err != nil {
 		return SwitchBranchResult{}, switchBranchError(repoPath, branch, err)
@@ -501,14 +501,15 @@ func SwitchBranch(ctx context.Context, opts SwitchBranchOptions) (SwitchBranchRe
 }
 
 func switchBranchError(repoPath, branch string, err error) error {
+	name := DisplayRepoName(repoPath)
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "local changes") && strings.Contains(msg, "would be overwritten"):
-		return fmt.Errorf("could not switch to %s in %s: commit, stash, or discard local changes first: %w", branch, repoPath, err)
+		return fmt.Errorf("could not switch to %s in %s: commit, stash, or discard local changes first: %w", branch, name, err)
 	case strings.Contains(msg, "already checked out"):
-		return fmt.Errorf("could not switch to %s in %s: branch is already checked out in another worktree; use that worktree or switch it away first: %w", branch, repoPath, err)
+		return fmt.Errorf("could not switch to %s in %s: branch is already checked out in another worktree; use that worktree or switch it away first: %w", branch, name, err)
 	default:
-		return fmt.Errorf("could not switch to %s in %s: %w", branch, repoPath, err)
+		return fmt.Errorf("could not switch to %s in %s: %w", branch, name, err)
 	}
 }
 
@@ -547,7 +548,7 @@ func PushBranch(ctx context.Context, opts PushBranchOptions) (PushBranchResult, 
 		runner = ExecRunner{}
 	}
 	if _, err := runGit(ctx, runner, repoPath, "push", "-u", remote, branch); err != nil {
-		return PushBranchResult{}, fmt.Errorf("push %s to %s in %s: %w", branch, remote, repoPath, err)
+		return PushBranchResult{}, fmt.Errorf("push %s to %s in %s: %w", branch, remote, DisplayRepoName(repoPath), err)
 	}
 	return PushBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote}, nil
 }
@@ -585,16 +586,16 @@ func FastForwardBranch(ctx context.Context, opts FastForwardBranchOptions) (Fast
 	}
 	upstream, remote, err := branchUpstream(ctx, runner, repoPath, branch)
 	if err != nil {
-		return FastForwardBranchResult{}, fmt.Errorf("branch %s has no upstream in %s; push it first or set an upstream: %w", branch, repoPath, err)
+		return FastForwardBranchResult{}, fmt.Errorf("branch %s has no upstream in %s; push it first or set an upstream: %w", branch, DisplayRepoName(repoPath), err)
 	}
 	if _, err := runGit(ctx, runner, repoPath, "fetch", remote); err != nil {
-		return FastForwardBranchResult{}, fmt.Errorf("fetch %s in %s: %w", remote, repoPath, err)
+		return FastForwardBranchResult{}, fmt.Errorf("fetch %s in %s: %w", remote, DisplayRepoName(repoPath), err)
 	}
 	if _, err := runGit(ctx, runner, repoPath, "switch", branch); err != nil {
 		return FastForwardBranchResult{}, switchBranchError(repoPath, branch, err)
 	}
 	if _, err := runGit(ctx, runner, repoPath, "merge", "--ff-only", upstream); err != nil {
-		return FastForwardBranchResult{}, fmt.Errorf("fast-forward %s from %s in %s: %w", branch, upstream, repoPath, err)
+		return FastForwardBranchResult{}, fmt.Errorf("fast-forward %s from %s in %s: %w", branch, upstream, DisplayRepoName(repoPath), err)
 	}
 	return FastForwardBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote, Upstream: upstream}, nil
 }
@@ -639,7 +640,7 @@ func ForcePushBranch(ctx context.Context, opts ForcePushBranchOptions) (ForcePus
 		remote = "origin"
 	}
 	if _, err := runGit(ctx, runner, repoPath, "push", "--force-with-lease", remote, branch); err != nil {
-		return ForcePushBranchResult{}, fmt.Errorf("force-push %s to %s in %s: %w", branch, remote, repoPath, err)
+		return ForcePushBranchResult{}, fmt.Errorf("force-push %s to %s in %s: %w", branch, remote, DisplayRepoName(repoPath), err)
 	}
 	return ForcePushBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote}, nil
 }
@@ -677,10 +678,10 @@ func DeleteBranch(ctx context.Context, opts DeleteBranchOptions) (DeleteBranchRe
 		return DeleteBranchResult{}, err
 	}
 	if strings.TrimSpace(current.Stdout) == branch {
-		return DeleteBranchResult{}, fmt.Errorf("branch %s is current in %s; switch away before deleting it", branch, repoPath)
+		return DeleteBranchResult{}, fmt.Errorf("branch %s is current in %s; switch away before deleting it", branch, DisplayRepoName(repoPath))
 	}
 	if _, err := runGit(ctx, runner, repoPath, "branch", "-d", branch); err != nil {
-		return DeleteBranchResult{}, fmt.Errorf("delete branch %s in %s: %w", branch, repoPath, err)
+		return DeleteBranchResult{}, fmt.Errorf("delete branch %s in %s: %w", branch, DisplayRepoName(repoPath), err)
 	}
 	return DeleteBranchResult{RepoPath: repoPath, Branch: branch}, nil
 }
@@ -734,4 +735,23 @@ func commandError(cmd Command, res Result) error {
 		msg = fmt.Sprintf("exit %d", res.ExitCode)
 	}
 	return fmt.Errorf("%s %s failed: %s", cmd.Name, strings.Join(cmd.Args, " "), msg)
+}
+
+// DisplayRepoName is repoPath's base name, for every USER-FACING message
+// (success/error text that ends up in a toast) this package — and
+// internal/actionrunner, which formats the branch-action success
+// messages — builds. Never the full filesystem path, which in --mock runs
+// (and any repoPaths-driven checkout into a generated directory) is an
+// opaque OS temp path like "/tmp/tea-dash-mock-xxxxxx/kettle"
+// that means nothing to the user and reads as an accidental leak of
+// internal plumbing (review fix). The real repoPath is never lost — it's
+// still what every runGit call actually executes in (and what Result
+// structs like SwitchBranchResult.RepoPath report), just not what gets
+// echoed back to the user in message text.
+func DisplayRepoName(repoPath string) string {
+	name := filepath.Base(strings.TrimSpace(repoPath))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return repoPath
+	}
+	return name
 }
