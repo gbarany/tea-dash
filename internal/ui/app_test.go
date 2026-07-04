@@ -247,6 +247,258 @@ func TestPreviewAutoCollapseOnShrinkPreservesToggleState(t *testing.T) {
 	}
 }
 
+// TestPreviewFocusTogglesViaEnterAndTab covers spec §2's "enter or tab:
+// focus preview" row, both directions (enter/tab also unfocus, since the
+// binding is a symmetric toggle).
+func TestPreviewFocusTogglesViaEnterAndTab(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open",
+	}}))
+	if m.previewFocused {
+		t.Fatal("preview should not start focused")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.previewFocused {
+		t.Fatal("a second enter should unfocus the preview (symmetric toggle)")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !m.previewFocused {
+		t.Fatal("tab should also focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.previewFocused {
+		t.Fatal("a second tab should unfocus the preview")
+	}
+}
+
+// TestPreviewFocusRequiresAVisiblePreview confirms enter/tab don't set
+// previewFocused when there's no visible panel to focus — closed outright,
+// or auto-collapsed by a narrow terminal (previewVisible()).
+func TestPreviewFocusRequiresAVisiblePreview(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{Preview: config.PreviewConfig{Open: boolPtr(false)}}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.ctx.PreviewOpen {
+		t.Fatal("preview should start closed")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.previewFocused {
+		t.Fatal("enter should not focus a closed preview")
+	}
+
+	m2 := New(&config.Config{}, nil)
+	m2 = update(t, m2, tea.WindowSizeMsg{Width: 50, Height: 20}) // below the 60x15 collapse floor
+	if !m2.layout.PreviewCollapsed {
+		t.Fatal("preview should be auto-collapsed at 50x20")
+	}
+	m2 = update(t, m2, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m2.previewFocused {
+		t.Fatal("enter should not focus an auto-collapsed preview")
+	}
+}
+
+// TestPreviewFocusClosingPreviewUnfocuses confirms 'p' while focused both
+// closes the preview and drops previewFocused (nothing left to focus).
+func TestPreviewFocusClosingPreviewUnfocuses(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("preview should be focused")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if m.ctx.PreviewOpen {
+		t.Fatal("'p' should close the preview")
+	}
+	if m.previewFocused {
+		t.Fatal("closing the preview should clear previewFocused")
+	}
+}
+
+// TestPreviewFocusedScrollDoesNotMoveListSelection covers the plan's
+// explicit requirement: j/k while the preview is focused scroll the
+// preview, not the list — checked via selectedActionTarget (the row the
+// list has selected) staying the same PR across the scroll.
+func TestPreviewFocusedScrollDoesNotMoveListSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	before, ok := m.selectedActionTarget()
+	if !ok || before.Number != 1 {
+		t.Fatalf("selectedActionTarget() = %+v, %v; want row #1 selected", before, ok)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+
+	after, ok := m.selectedActionTarget()
+	if !ok || after.Number != before.Number {
+		t.Fatalf("selectedActionTarget() changed while preview focused: before=%+v after=%+v", before, after)
+	}
+}
+
+// TestViewJumpsWorkWhilePreviewFocused covers the plan's explicit
+// requirement: 1-5 still switch views even while the preview is focused
+// (view-jump keys aren't part of the focused-preview key set sidebar.Update
+// recognizes, so they fall through normally).
+func TestViewJumpsWorkWhilePreviewFocused(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: '2', Text: "2"})
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("'2' while focused: View = %v, want IssuesView", m.ctx.View)
+	}
+}
+
+// TestEscUnfocusesPreview covers the esc cascade's last (today, only live)
+// step: esc while the preview is focused unfocuses it.
+func TestEscUnfocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.previewFocused {
+		t.Fatal("esc should unfocus the preview")
+	}
+}
+
+// TestEscAtTopLevelDoesNothing covers spec §2's Global "esc" row: with
+// nothing open (no prompt, no search, preview unfocused), esc is a no-op —
+// in particular, it must NOT quit (unlike gh-dash's convention).
+func TestEscAtTopLevelDoesNothing(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if isQuitCmd(cmd) {
+		t.Fatal("esc at the top level must not quit")
+	}
+	if cmd != nil {
+		t.Fatalf("esc at the top level should return a nil cmd, got %v", cmd)
+	}
+	m2 := next.(Model)
+	if m2.previewFocused {
+		t.Fatal("esc at the top level should not focus/unfocus anything")
+	}
+}
+
+// TestDismissTop_UnfocusesPreview and TestDismissTop_NoopWhenNothingOpen
+// exercise dismissTop directly, per the plan's "unit-tested" requirement.
+func TestDismissTop_UnfocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.previewFocused = true
+
+	next, cmd := m.dismissTop()
+	if cmd != nil {
+		t.Fatalf("dismissTop() cmd = %v, want nil", cmd)
+	}
+	if next.previewFocused {
+		t.Fatal("dismissTop() should unfocus the preview")
+	}
+}
+
+func TestDismissTop_NoopWhenNothingOpen(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	next, cmd := m.dismissTop()
+	if cmd != nil {
+		t.Fatalf("dismissTop() cmd = %v, want nil", cmd)
+	}
+	if next.previewFocused {
+		t.Fatal("dismissTop() should not focus the preview out of nowhere")
+	}
+}
+
+// TestBranchesViewEnterAlwaysChecksOutNeverFocuses covers spec §2's
+// Branches footnote: enter keeps meaning checkout there (mirroring C/space
+// exactly — open a confirm, then enter submits it), never toggling preview
+// focus; tab is the only way to focus the preview in that view.
+func TestBranchesViewEnterAlwaysChecksOutNeverFocuses(t *testing.T) {
+	var got []actions.Intent
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+		got = append(got, intent)
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+		Name: "feature/local-ops", Current: false,
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.actionPrompt.Active() {
+		t.Fatal("enter in Branches should open a checkout confirm prompt, not focus the preview")
+	}
+	if m.previewFocused {
+		t.Fatal("enter in Branches should never focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(got) != 1 || got[0].Kind != actions.KindSwitchBranch {
+		t.Fatalf("second enter should submit the checkout: dispatched = %+v", got)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !m.previewFocused {
+		t.Fatal("tab should still focus the preview in Branches (the enter exception is enter-only)")
+	}
+}
+
+// TestConfiguredScrollDownBuiltinStillScrollsPreview covers the plan's
+// explicit "rebinding ... scrollDown ... still lands" requirement: with
+// ctrl+d/ctrl+u's default preview-scroll meaning removed (spec §2), the
+// "scrollDown"/"scrollUp"/"pageDown"/"pageUp" builtin NAMES remain fully
+// functional end to end via a custom keybinding — they no longer have a
+// dedicated keyMap default-key field (there's no default key to reflect
+// anymore), but matchBuiltinKeybinding/handleBuiltinKeybinding dispatch
+// them directly off the raw config entry, independent of keyMap fields.
+func TestConfiguredScrollDownBuiltinStillScrollsPreview(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			Universal: []config.Keybinding{{Key: "X", Builtin: "scrollDown"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open",
+	}}))
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = "line of preview content"
+	}
+	m.sidebar.SetContent(strings.Join(lines, "\n"))
+	before := m.sidebar.View()
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'X', Text: "X"})
+	if got := m.sidebar.View(); got == before {
+		t.Fatalf("configured scrollDown key should have scrolled the preview (view unchanged)")
+	}
+}
+
 // TestFitBlock_ExpandsTabsSoBorderStaysExact covers the fitBlock tab bug:
 // lipgloss.Width counts a literal tab as exactly 1 cell, but a real
 // terminal expands it to the next tab stop (several columns) — so a
@@ -1574,6 +1826,8 @@ func TestActionsPreviewFetchesAndCachesRunDetail(t *testing.T) {
 			t.Fatalf("action overview tab should not include job detail %q:\n%s", absent, view)
 		}
 	}
+	// [/] only act while the preview is focused (spec §2) — focus it first.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = update(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
 	view = m.View().Content
 	for _, want := range []string{"Jobs:", "build", "ubuntu-latest", "checkout"} {
@@ -1753,6 +2007,8 @@ func TestPreviewSidebarTabsSwitchWithDefaultKeys(t *testing.T) {
 		t.Fatalf("overview tab should not include check details before switching tabs:\n%s", view)
 	}
 
+	// [/] only act while the preview is focused (spec §2) — focus it first.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = update(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
 	view = m.View().Content
 	if !strings.Contains(view, "unit-check-token") || strings.Contains(view, "overview-token") {
@@ -1800,6 +2056,9 @@ func TestConfiguredNextSidebarTabBuiltinSwitchesPreviewTab(t *testing.T) {
 	}
 	m.syncSidebar()
 
+	// [/] (default or custom-bound) only act while the preview is focused
+	// (spec §2) — focus it first.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = update(t, m, tea.KeyPressMsg{Code: 'T', Text: "T"})
 	view := m.View().Content
 	if !strings.Contains(view, "configured-check-token") || strings.Contains(view, "configured-overview-token") {
@@ -3221,42 +3480,30 @@ func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {
 	}
 }
 
-func TestActionsViewRefreshAllUsesCtrlRBecauseRerunIsScopedToR(t *testing.T) {
+// TestCtrlRNoLongerRefreshesAll covers spec §2's migration table: "ctrl+r
+// refresh all: dropped; use R" — RefreshAll's default is "R" only now.
+// (In the Actions view specifically this means refresh-all has no default
+// key at all, since "R" there is scoped to rerun — an accepted trade-off
+// per the migration table, not a bug; a custom keybinding can still reach
+// "refreshAll" there if wanted.)
+func TestCtrlRNoLongerRefreshesAll(t *testing.T) {
 	cfg := &config.Config{
-		Defaults: config.Defaults{View: "actions"},
-		ActionsSections: []config.SectionConfig{
-			{Title: "CI", Repo: "gbarany/tea-dash"},
-			{Title: "Nightly", Repo: "gbarany/tea-dash"},
+		PRSections: []config.SectionConfig{
+			{Title: "A", Filter: config.PrIssueFilter{State: "open"}},
+			{Title: "B", Filter: config.PrIssueFilter{State: "closed"}},
 		},
 	}
 	m := New(cfg, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, context.TaskFinishedMsg{
-		SectionId: 0, SectionType: actionsection.SectionType, TaskId: "a0",
-		Msg: actionsection.SectionActionsFetchedMsg{
-			Rows: []data.ActionRun{{
-				ID: 101, RunNumber: 77, DisplayTitle: "First row", RepoNameWithOwner: "gbarany/tea-dash",
-			}},
-			TotalCount: 1, TaskId: "a0",
-		},
-	})
-	m = update(t, m, context.TaskFinishedMsg{
-		SectionId: 1, SectionType: actionsection.SectionType, TaskId: "a1",
-		Msg: actionsection.SectionActionsFetchedMsg{
-			Rows: []data.ActionRun{{
-				ID: 102, RunNumber: 78, DisplayTitle: "Second row", RepoNameWithOwner: "gbarany/tea-dash",
-			}},
-			TotalCount: 1, TaskId: "a1",
-		},
-	})
+	m = update(t, m, fetchedMsg(nil))
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("ctrl+r should batch refresh commands for all Actions sections")
+	if cmd != nil {
+		t.Fatalf("ctrl+r should no longer do anything (dropped per spec §2), got cmd %v", cmd)
 	}
-	if len(m.tasks) != 2 {
-		t.Fatalf("len(tasks) = %d, want both Actions sections to register refresh tasks", len(m.tasks))
+	if s := m.getCurrSection(); s == nil || s.GetIsLoading() {
+		t.Fatal("ctrl+r should not have triggered a refresh")
 	}
 }
 

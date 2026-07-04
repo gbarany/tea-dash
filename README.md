@@ -100,49 +100,51 @@ real remote) — checkout works.
 
 ### Keys
 
-| Key             | Action                  |
-| --------------- | ----------------------- |
-| `↑`/`↓`, `j`/`k`| move selection          |
-| mouse click      | select row              |
-| action button click | run common row action |
-| mouse wheel      | move selection          |
-| `g` / `G`       | first / last row        |
-| `s`             | switch view (PRs/issues/notifications/actions/branches)|
-| `h` / `l`       | prev / next section     |
-| `/`             | search by keyword       |
-| `t`             | toggle current-repo smart filtering (when launched from a matching git checkout) |
-| `p`             | show / hide preview panel |
-| `e`             | expand / fold preview body |
-| `[` / `]`       | previous / next preview tab |
-| `ctrl+u` / `ctrl+d` | scroll preview       |
-| `o` / `enter`   | open in browser         |
-| `y` / `Y`       | copy row number / URL   |
-| `c`             | add comment             |
-| `a` / `A`       | assign / unassign yourself |
-| `L` / `U`       | add / remove labels     |
-| `M`             | set issue milestone     |
-| `b` / `B`       | subscribe / unsubscribe issue |
-| `m`             | merge PR                |
-| `u`             | update PR branch from its base branch |
-| `W`             | mark draft PR ready for review |
-| `w`             | show/watch PR checks in the Actions view |
-| `@`             | request PR review from one or more users (picker when the server exposes reviewers) |
-| `m` / `u` / `M` | mark notification read / unread / all read |
-| `b` / `B`       | pin / unpin notification |
-| `x` / `X`       | close / reopen          |
-| `v`             | submit PR review        |
-| `d` / `ctrl+t`  | open PR diff in external pager |
-| `C` / `space`   | checkout PR/issue locally; switch branch in Branches view |
-| `P`             | push branch in Branches view   |
-| `f` / `F`       | fast-forward / force-push branch in Branches view |
-| `d` / `backspace` | delete branch in Branches view |
-| `L` / `R` / `!` | view logs / rerun / cancel Actions run |
-| `r` / `R`       | refresh section / all sections (`ctrl+r` refreshes all in Actions view) |
-| `?`             | show / hide full help   |
-| `q` / `ctrl+c`  | quit                    |
+tea-dash's keymap is lazygit-style: numbered view jumps, and `enter`/`tab`
+drill into (focus) the preview panel rather than opening a browser.
+
+| Group | Key | Action |
+| --- | --- | --- |
+| Views | `1`–`5` | jump to Pulls / Issues / Inbox / CI / Branches |
+| Views | `s` | cycle views (kept for continuity) |
+| Sections | `h`/`l`, `←`/`→` | previous / next section tab |
+| List | `j`/`k`, `↑`/`↓` | move selection |
+| List | `g`/`G` | first / last row |
+| List | `ctrl+d`/`ctrl+u` | half-page down / up in the list |
+| List | mouse click, mouse wheel | select row, move selection |
+| Preview | `enter` or `tab` | focus preview (drill in) |
+| Preview (focused) | `j/k` scroll · `d/u` half-page · `g/G` top/bottom · `[`/`]` preview tabs · `esc`/`tab`/`enter` back |
+| Preview | `p` | toggle pane · `e` expand body |
+| Search | `/` | focus search · `enter` apply · `esc` revert |
+| Global | `esc` | universal dismiss: prompt → search → preview focus |
+| Global | `?` | show / hide full help |
+| Global | `o` | open in browser |
+| Global | `r` / `R` | refresh section / refresh all |
+| Global | `y` / `Y` | copy row number / URL |
+| Global | `t` | toggle current-repo smart filtering (when launched from a matching git checkout) |
+| Global | `q` / `ctrl+c` | quit |
+| PRs | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `m` merge · `u` update branch · `W` ready · `w` checks · `x`/`X` close/reopen · `v` review · `@`/`#` request/remove reviewers · `d`/`ctrl+t` diff · `C`/`space` checkout |
+| Issues | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `M` milestone · `b`/`B` subscribe/unsubscribe · `x`/`X` close/reopen · `C`/`space` checkout |
+| Inbox | `m` read · `u` unread · `M` all read · `b` pin/unpin · `B` unpin |
+| CI | `R` rerun · `!` cancel · `L` logs |
+| Branches | `C`/`space`/`enter`\* checkout · `P` push · `f` fast-forward · `F` force-push · `d`/`backspace` delete |
+
+\* In the Branches view `enter` keeps meaning checkout (its rows have no
+preview drill-in target of their own); the preview-focus binding falls back
+to `tab` there. This is the only view-specific `enter` exception.
 
 The merge picker includes each merge strategy plus explicit `+ delete branch`,
 `with message`, `+ force merge`, `when checks pass`, and combined variants.
+
+#### Changed in vNEXT
+
+| Old | New | Why |
+| --- | --- | --- |
+| `enter` opened browser | `enter` focuses preview; use `o` | lazygit drill-in convention |
+| `ctrl+u`/`ctrl+d` scrolled preview | scroll the **list**; preview scrolls when focused (`j/k`/`d`/`u`/`g`/`G`), or via mouse wheel | lazygit/vim list paging |
+| `ctrl+r` refresh all | dropped; use `R` | duplicate |
+| `[`/`]` preview tabs from list | only while preview is focused | `[`/`]` are panel-tab keys in lazygit |
+| — | `1`–`5` view jump, `tab` focus toggle, `esc` dismiss | new |
 
 ## Configuration
 

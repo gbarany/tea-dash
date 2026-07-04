@@ -493,7 +493,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return next, cmd
 			}
 		}
+		// esc: universal dismiss cascade (spec §2's Global "esc" row).
+		// Checked before preview-focused routing and the big switch below
+		// so it always works, regardless of what's open.
+		if key.Matches(msg, m.keys.Esc) {
+			next, cmd := m.dismissTop()
+			return next, cmd
+		}
+		// While the preview is focused, scroll/tab keys route to it first
+		// (spec §2's "Preview (focused)" row: j/k/d/u/g/G scroll, [/] tabs)
+		// — everything else (view jumps, tab/enter to unfocus, global
+		// actions, ...) is left unhandled by sidebar.Update and falls
+		// through to the normal routing below unchanged.
+		if m.previewFocused {
+			if next, cmd, handled := m.sidebar.Update(msg); handled {
+				m.sidebar = next
+				return m, cmd
+			}
+		}
 		switch {
+		case !m.scopedBuiltinOverridden("viewpulls") && key.Matches(msg, m.keys.ViewPulls):
+			return m, m.switchToView(context.PullsView)
+		case !m.scopedBuiltinOverridden("viewissues") && key.Matches(msg, m.keys.ViewIssues):
+			return m, m.switchToView(context.IssuesView)
+		case !m.scopedBuiltinOverridden("viewnotifications") && key.Matches(msg, m.keys.ViewNotifications):
+			return m, m.switchToView(context.NotificationsView)
+		case !m.scopedBuiltinOverridden("viewactions") && key.Matches(msg, m.keys.ViewActions):
+			return m, m.switchToView(context.ActionsView)
+		case !m.scopedBuiltinOverridden("viewbranches") && key.Matches(msg, m.keys.ViewBranches):
+			return m, m.switchToView(context.BranchesView)
+		// Branches view keeps enter meaning checkout (its rows have no
+		// preview drill-in target of their own); FocusPreview's binding
+		// falls back to tab there — this is the only view-specific enter
+		// exception (spec §2's Branches footnote). Checked before the
+		// generic FocusPreview case below so tab (which doesn't match
+		// tea.KeyEnter) still falls through to toggle focus normally.
+		case !m.scopedBuiltinOverridden("checkout") && m.ctx.View == context.BranchesView && msg.Code == tea.KeyEnter:
+			return m, m.startAction(actions.KindSwitchBranch)
+		case !m.scopedBuiltinOverridden("focuspreview") && key.Matches(msg, m.keys.FocusPreview) && m.previewVisible():
+			m.previewFocused = !m.previewFocused
+			return m, nil
 		case !m.scopedBuiltinOverridden("up") && key.Matches(msg, m.keys.Up):
 			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
 		case !m.scopedBuiltinOverridden("down") && key.Matches(msg, m.keys.Down):
@@ -626,6 +665,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncSidebar()
 				return m, m.enrichCurrRow()
 			}
+			m.previewFocused = false // nothing left to focus
 			return m, nil
 		case !m.scopedBuiltinOverridden("toggleSmartFiltering") && key.Matches(msg, m.keys.ToggleSmart):
 			return m.toggleSmartFiltering()
@@ -635,17 +675,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncSidebar()
 			}
 			return m, nil
-		case !m.scopedBuiltinOverridden("prevSidebarTab") && key.Matches(msg, m.keys.PrevSidebarTab) && m.ctx.PreviewOpen:
-			m.sidebar.PrevTab()
-			return m, nil
-		case !m.scopedBuiltinOverridden("nextSidebarTab") && key.Matches(msg, m.keys.NextSidebarTab) && m.ctx.PreviewOpen:
-			m.sidebar.NextTab()
-			return m, nil
-		case (!m.scopedBuiltinOverridden("scrollUp") && key.Matches(msg, m.keys.ScrollUp) ||
-			!m.scopedBuiltinOverridden("scrollDown") && key.Matches(msg, m.keys.ScrollDown)) && m.ctx.PreviewOpen:
-			var cmd tea.Cmd
-			m.sidebar, cmd = m.sidebar.Update(msg)
-			return m, cmd
 		}
 	}
 
@@ -684,19 +713,26 @@ func (m Model) renderShell(l layout.Layout) string {
 	}
 	headerRow := header.View(l.Header.W, m.ctx.View, host, m.ctx.User, styles)
 
+	showPreview := l.PreviewPanel.W > 0 && l.PreviewPanel.H > 0
+
+	// A previewFocused=true with no visible preview panel to actually focus
+	// (closed, or auto-collapsed by layout.Compute on a narrow terminal)
+	// would otherwise leave the list panel drawn as unfocused/dim even
+	// though it's the only panel on screen — previewVisible()/the
+	// togglePreview handlers keep previewFocused false in that state, but
+	// this is a second, cheap belt-and-braces check right where it's drawn.
+	focused := m.previewFocused && showPreview
 	listStyle := styles.BorderBlurred
-	if !m.previewFocused {
+	if !focused {
 		listStyle = styles.BorderFocused
 	}
 	previewStyle := styles.BorderBlurred
-	if m.previewFocused {
+	if focused {
 		previewStyle = styles.BorderFocused
 	}
 
 	rows := make([]string, 0, l.ListPanel.H+2)
 	rows = append(rows, headerRow)
-
-	showPreview := l.PreviewPanel.W > 0 && l.PreviewPanel.H > 0
 
 	// An action prompt or the expanded help text replaces the list+preview
 	// area with one full-width panel (Task 5 replaces this with a proper
@@ -1826,10 +1862,21 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, nil, true
 	case "viewissues":
 		return m, m.switchToView(context.IssuesView), true
-	case "viewprs":
+	case "viewprs", "viewpulls":
 		return m, m.switchToView(context.PullsView), true
+	case "viewnotifications", "viewinbox":
+		return m, m.switchToView(context.NotificationsView), true
+	case "viewactions", "viewci":
+		return m, m.switchToView(context.ActionsView), true
+	case "viewbranches":
+		return m, m.switchToView(context.BranchesView), true
 	case "switchview":
 		return m, m.switchView(), true
+	case "focuspreview", "togglefocus":
+		if m.previewVisible() {
+			m.previewFocused = !m.previewFocused
+		}
+		return m, nil, true
 	case "search":
 		if s := m.getCurrSection(); s != nil {
 			return m, s.SetIsSearching(true), true
@@ -1844,6 +1891,7 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 			m.syncSidebar()
 			return m, m.enrichCurrRow(), true
 		}
+		m.previewFocused = false // nothing left to focus
 		return m, nil, true
 	case "togglesmartfiltering", "togglesmartfilter", "currentrepo":
 		next, cmd := m.toggleSmartFiltering()
@@ -1855,26 +1903,28 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		}
 		return m, nil, true
 	case "prevsidebartab", "previoussidebartab":
-		if m.ctx.PreviewOpen {
+		// [/] only act while the preview is focused (spec §2) — matches
+		// the default-key routing in Update (see previewVisible/previewFocused).
+		if m.previewFocused {
 			m.sidebar.PrevTab()
 		}
 		return m, nil, true
 	case "nextsidebartab":
-		if m.ctx.PreviewOpen {
+		if m.previewFocused {
 			m.sidebar.NextTab()
 		}
 		return m, nil, true
 	case "pageup", "scrollup":
 		if m.ctx.PreviewOpen {
 			var cmd tea.Cmd
-			m.sidebar, cmd = m.sidebar.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+			m.sidebar, cmd, _ = m.sidebar.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
 			return m, cmd, true
 		}
 		return m, nil, true
 	case "pagedown", "scrolldown":
 		if m.ctx.PreviewOpen {
 			var cmd tea.Cmd
-			m.sidebar, cmd = m.sidebar.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+			m.sidebar, cmd, _ = m.sidebar.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 			return m, cmd, true
 		}
 		return m, nil, true
@@ -2181,6 +2231,44 @@ func mergeMessagePromptConfig(target actions.Target) actionprompt.Config {
 		Message:     fmt.Sprintf("%s - %s", target.Repo, target.Title),
 		Placeholder: "Merge message",
 	}
+}
+
+// previewVisible reports whether the preview panel is actually rendered
+// right now — open (not just toggled on) and not auto-collapsed by the
+// terminal being too narrow (layout.Compute's PreviewCollapsed). Focus only
+// makes sense when there's a visible panel to focus.
+func (m Model) previewVisible() bool {
+	return m.ctx.PreviewOpen && !m.layout.PreviewCollapsed
+}
+
+// dismissTop implements the universal esc cascade (spec §2's Global "esc"
+// row): the first dismissible layer, most-nested first, closes; esc at the
+// top level (nothing open) does nothing. The cascade order is action prompt
+// → search → preview focus — action prompt and search are listed for
+// documentation completeness even though they're unreachable from here
+// today (both already intercept esc themselves, before Update ever reaches
+// this function: see the tea.KeyPressMsg + m.actionPrompt.Active() check at
+// the top of Update, and the tea.KeyPressMsg + IsSearchFocused check right
+// after it, which forward straight to the action prompt's / section's own
+// esc handling). Tasks 5/7 prepend the help overlay's and command palette's
+// own dismissers in front of these two, since those are modal overlays
+// that sit above everything else.
+func (m Model) dismissTop() (Model, tea.Cmd) {
+	if m.actionPrompt.Active() {
+		// Unreachable today (see doc comment above) — kept so this
+		// function documents the full, real cascade order.
+		return m, nil
+	}
+	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
+		// Unreachable today (see doc comment above).
+		cmd := s.SetIsSearching(false)
+		return m, cmd
+	}
+	if m.previewFocused {
+		m.previewFocused = false
+		return m, nil
+	}
+	return m, nil
 }
 
 func (m Model) quitOrConfirm() (Model, tea.Cmd) {

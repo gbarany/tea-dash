@@ -43,9 +43,12 @@ func TestViewEmptyWhenClosed(t *testing.T) {
 	}
 }
 
-// TestCtrlDScrolls verifies ctrl+d advances the viewport (scroll percent grows)
-// on content taller than the pane, and that other keys are ignored.
-func TestCtrlDScrolls(t *testing.T) {
+// TestFocusedPreviewKeysScroll covers spec §2's "Preview (focused)" row:
+// j/k line scroll, d/u half-page, g/G top/bottom all move the viewport and
+// report handled=true; an unrelated key (not part of that row) leaves the
+// viewport untouched and reports handled=false so app.go knows to fall
+// through to its own routing (view jumps, esc, tab/enter to unfocus, ...).
+func TestFocusedPreviewKeysScroll(t *testing.T) {
 	ctx := &context.ProgramContext{
 		Styles:        context.DefaultStyles(),
 		PreviewOpen:   true,
@@ -57,15 +60,108 @@ func TestCtrlDScrolls(t *testing.T) {
 
 	before := m.vp.ScrollPercent()
 
-	// An unrelated key must not move the viewport.
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	if got := m.vp.ScrollPercent(); got != before {
+	// An unrelated key is left alone and reported unhandled.
+	next, cmd, handled := m.Update(tea.KeyPressMsg{Code: '1', Text: "1"})
+	if handled {
+		t.Fatalf("unrelated key '1' should not be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("unrelated key should return a nil cmd, got %v", cmd)
+	}
+	if got := next.vp.ScrollPercent(); got != before {
 		t.Fatalf("unrelated key changed scroll: before=%v after=%v", before, got)
 	}
+	m = next
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
-	if after := m.vp.ScrollPercent(); after <= before {
-		t.Fatalf("ctrl+d did not advance scroll: before=%v after=%v", before, after)
+	// j/k line-scroll.
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if !handled {
+		t.Fatal("'j' should be handled")
+	}
+	afterJ := m.vp.ScrollPercent()
+	if afterJ <= before {
+		t.Fatalf("'j' did not advance scroll: before=%v after=%v", before, afterJ)
+	}
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	if !handled {
+		t.Fatal("'k' should be handled")
+	}
+	if got := m.vp.ScrollPercent(); got >= afterJ {
+		t.Fatalf("'k' did not reverse scroll: before=%v after=%v", afterJ, got)
+	}
+
+	// d/u half-page (bare, per the remap — ctrl+d/ctrl+u also still work,
+	// for custom keybindings built around the pre-remap key).
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	if !handled {
+		t.Fatal("'d' should be handled")
+	}
+	afterD := m.vp.ScrollPercent()
+	if afterD <= before {
+		t.Fatalf("'d' (half-page down) did not advance scroll: before=%v after=%v", before, afterD)
+	}
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatal("ctrl+d should still be handled (legacy custom-keybinding compatibility)")
+	}
+	afterCtrlD := m.vp.ScrollPercent()
+	if afterCtrlD <= afterD {
+		t.Fatalf("ctrl+d did not advance scroll further: before=%v after=%v", afterD, afterCtrlD)
+	}
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	if !handled {
+		t.Fatal("'u' should be handled")
+	}
+	if got := m.vp.ScrollPercent(); got >= afterCtrlD {
+		t.Fatalf("'u' (half-page up) did not reverse scroll: before=%v after=%v", afterCtrlD, got)
+	}
+
+	// g/G top/bottom.
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: 'G', Text: "G"})
+	if !handled {
+		t.Fatal("'G' should be handled")
+	}
+	if got := m.vp.ScrollPercent(); got != 1 {
+		t.Fatalf("'G' should scroll to the bottom (100%%), got %v", got)
+	}
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	if !handled {
+		t.Fatal("'g' should be handled")
+	}
+	if got := m.vp.ScrollPercent(); got != 0 {
+		t.Fatalf("'g' should scroll to the top (0%%), got %v", got)
+	}
+}
+
+// TestFocusedPreviewKeysCycleTabs covers the "[/]" preview-tab-cycling part
+// of spec §2's "Preview (focused)" row, through the same Update path (not
+// the direct PrevTab/NextTab methods TestTabsSwitchContent already covers).
+func TestFocusedPreviewKeysCycleTabs(t *testing.T) {
+	ctx := &context.ProgramContext{
+		Styles:        context.DefaultStyles(),
+		PreviewOpen:   true,
+		PreviewWidth:  40,
+		PreviewHeight: 8,
+	}
+	m := New(ctx)
+	m.SetTabs([]Tab{
+		{Title: "Overview", Content: "overview-token"},
+		{Title: "Checks", Content: "checks-token"},
+	})
+
+	m, _, handled := m.Update(tea.KeyPressMsg{Code: ']', Text: "]"})
+	if !handled {
+		t.Fatal("']' should be handled")
+	}
+	if got := m.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("after ']' CurrentTabTitle = %q, want Checks", got)
+	}
+	m, _, handled = m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
+	if !handled {
+		t.Fatal("'[' should be handled")
+	}
+	if got := m.CurrentTabTitle(); got != "Overview" {
+		t.Fatalf("after '[' CurrentTabTitle = %q, want Overview", got)
 	}
 }
 

@@ -514,6 +514,11 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "K", Builtin: "up"},
 		{Key: "g", Builtin: "firstLine"},
 		{Key: "G", Builtin: "lastLine"},
+		{Key: "1", Builtin: "viewPulls"},
+		{Key: "3", Builtin: "viewNotifications"},
+		{Key: "4", Builtin: "viewActions"},
+		{Key: "5", Builtin: "viewBranches"},
+		{Key: "f", Builtin: "focusPreview"},
 		{Key: "z", Command: "lazygit"},
 	}, PRs: []Keybinding{
 		{Key: "a", Builtin: "assign"},

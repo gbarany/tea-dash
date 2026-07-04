@@ -548,6 +548,12 @@ var universalBuiltins = builtinSet(
 	"pageUp", "pageDown", "scrollUp", "scrollDown", "prevSection",
 	"previousSection", "nextSection", "switchView", "copyurl", "copyNumber",
 	"help", "quit", "redraw", "expand", "summaryViewMore",
+	// View jumps (spec §2's "Views" group: 1-5 work in every view) and the
+	// preview-focus toggle (enter/tab) — universal, not view-scoped, unlike
+	// viewIssues/viewPrs below (kept there too for backward compatibility).
+	"viewPulls", "viewIssues", "viewNotifications", "viewInbox",
+	"viewActions", "viewCI", "viewBranches", "focusPreview", "toggleFocus",
+	"prevSidebarTab", "nextSidebarTab",
 )
 
 var prBuiltins = builtinSet(

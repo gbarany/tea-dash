@@ -84,18 +84,40 @@ func (m *Model) PrevTab() {
 	m.vp.GotoTop()
 }
 
-// Update handles only half-page scrolling (ctrl+u / ctrl+d); every other
-// message is ignored so the pane never steals navigation or quit keys.
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		switch key.String() {
-		case "ctrl+u":
-			m.vp.HalfPageUp()
-		case "ctrl+d":
-			m.vp.HalfPageDown()
-		}
+// Update handles preview-focused navigation (spec §2's "Preview (focused)"
+// row): j/k line scroll, g/G top/bottom, d/u half-page, [/] tab cycling
+// (ctrl+d/ctrl+u are also accepted, for custom keybindings still built
+// around the pre-remap key — see app.go's "pageup"/"pagedown" builtin
+// cases). It reports whether it consumed the key so the caller (app.go,
+// only while the preview is focused) knows whether to fall through to its
+// own key routing for anything else — view jumps, esc, tab/enter to
+// unfocus, and so on all pass straight through unrecognized.
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, bool) {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil, false
 	}
-	return m, nil
+	switch key.String() {
+	case "j", "down":
+		m.vp.ScrollDown(1)
+	case "k", "up":
+		m.vp.ScrollUp(1)
+	case "g":
+		m.vp.GotoTop()
+	case "G":
+		m.vp.GotoBottom()
+	case "d", "ctrl+d":
+		m.vp.HalfPageDown()
+	case "u", "ctrl+u":
+		m.vp.HalfPageUp()
+	case "[":
+		m.PrevTab()
+	case "]":
+		m.NextTab()
+	default:
+		return m, nil, false
+	}
+	return m, nil, true
 }
 
 // UpdateProgramContext recaches the shared context and re-sizes the viewport to

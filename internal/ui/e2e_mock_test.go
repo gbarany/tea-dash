@@ -13,6 +13,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/auth"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/mockgitea"
+	"github.com/gbarany/tea-dash/internal/ui/context"
 )
 
 // drain runs cmd and recursively feeds resulting msgs back into m, so a real
@@ -164,6 +165,62 @@ func TestE2ESwitchViewsRendersAllFive(t *testing.T) {
 	// package renders for the active view (see components/header).
 	if want := m.ctx.Styles.PanelTitle.Render("5 Branches"); !strings.Contains(m.View().Content, want) {
 		t.Fatalf("branches view missing the active header label %q:\n%s", want, m.View().Content)
+	}
+}
+
+// TestE2EViewJumpAndPreviewFocus covers Task 4's keymap remap end to end
+// against the real demo dataset: '3' jumps straight to Inbox (a real
+// fetch, drained), '1' jumps back to Pulls, enter focuses the preview,
+// j/j scrolls the (real, fetched) preview content rather than moving the
+// list selection, and esc unfocuses.
+func TestE2EViewJumpAndPreviewFocus(t *testing.T) {
+	m, _ := newE2EModel(t)
+
+	// '3' jumps directly to Inbox (Notifications) — a real fetch, drained
+	// like switchView's 's' cycling does.
+	next, cmd := m.Update(tea.KeyPressMsg{Code: '3', Text: "3"})
+	m = next.(Model)
+	m = drain(t, m, cmd, drainDepth).(Model)
+	if m.ctx.View != context.NotificationsView {
+		t.Fatalf("'3' should jump to NotificationsView, got %v", m.ctx.View)
+	}
+	const seededNotifTitle = "feat: expose /heal" // see TestE2ESwitchViewsRendersAllFive
+	if view := m.View().Content; !strings.Contains(view, seededNotifTitle) {
+		t.Fatalf("inbox view missing seeded notification %q:\n%s", seededNotifTitle, view)
+	}
+
+	// '1' jumps back to Pulls.
+	next, cmd = m.Update(tea.KeyPressMsg{Code: '1', Text: "1"})
+	m = next.(Model)
+	m = drain(t, m, cmd, drainDepth).(Model)
+	if m.ctx.View != context.PullsView {
+		t.Fatalf("'1' should jump back to PullsView, got %v", m.ctx.View)
+	}
+
+	before, ok := m.selectedActionTarget()
+	if !ok {
+		t.Fatal("no row selected in My Pull Requests")
+	}
+
+	// enter focuses the preview.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+
+	// j twice scrolls the (real, already-fetched) preview content, not the
+	// list: the selected row must not change.
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	after, ok := m.selectedActionTarget()
+	if !ok || after != before {
+		t.Fatalf("list selection changed while preview focused: before=%+v after=%+v", before, after)
+	}
+
+	// esc unfocuses.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.previewFocused {
+		t.Fatal("esc should unfocus the preview")
 	}
 }
 
