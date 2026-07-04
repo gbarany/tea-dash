@@ -3,6 +3,7 @@ package branchsection
 
 import (
 	stdctx "context"
+	"fmt"
 	"os"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
 	appctx "github.com/gbarany/tea-dash/internal/ui/context"
+	"github.com/gbarany/tea-dash/internal/ui/icons"
 )
 
 // SectionType is the routing type tag for local branch sections.
@@ -63,7 +65,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			// re-fitting columns, so a stale column list here would leave row cell
 			// counts out of sync with SetColumns (columns responsively drop per
 			// SixColumnSpec.Fit).
-			return branchBuildRowWithColumns(branch, branchColumnNames(ctx.MainContentWidth))
+			return branchBuildRowWithColumns(branch, branchColumnNames(ctx.MainContentWidth), ctx)
 		},
 	})}
 	m.applyColumns(ctx.MainContentWidth)
@@ -115,15 +117,15 @@ func repositoriesFromConfig(cfg *config.Config, getwd func() (string, error)) ([
 	return []localgit.Repository{{Path: wd}}, nil
 }
 
-func branchBuildRowWithColumns(branch localgit.Branch, columns []string) table.Row {
+func branchBuildRowWithColumns(branch localgit.Branch, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {
-		row = append(row, branchColumnValue(branch, column))
+		row = append(row, branchColumnValue(branch, column, ctx))
 	}
 	return row
 }
 
-func branchColumnValue(branch localgit.Branch, column string) string {
+func branchColumnValue(branch localgit.Branch, column string, ctx *appctx.ProgramContext) string {
 	switch column {
 	case "mark":
 		if branch.Current {
@@ -140,12 +142,51 @@ func branchColumnValue(branch localgit.Branch, column string) string {
 		}
 		return branch.Upstream
 	case "state":
-		return branch.Status()
+		return branchStateCell(branch, ctx)
 	case "commit":
 		return branch.Commit
 	default:
 		return ""
 	}
+}
+
+// branchStateCell renders branch.Status(), coloring only the ahead/behind
+// arrow parts: AheadArrow/BehindArrow have glyphs but no styles.StateColors
+// entry (T2 review note, same as notification Unread), so they're drawn
+// from ctx.Styles.DimText (an explicit style, "dim for arrows" per the
+// plan) via section.GlyphText rather than indexed on a guaranteed
+// StateColors miss. "current"/"gone"/"synced"/"local"/"checked out" have no
+// dedicated icons.State (the "mark" column's "*" already conveys current)
+// and stay plain text, exactly like Status() rendered them before.
+func branchStateCell(branch localgit.Branch, ctx *appctx.ProgramContext) string {
+	parts := make([]string, 0, 3)
+	if branch.Current {
+		parts = append(parts, "current")
+	}
+	switch {
+	case branch.UpstreamGone:
+		parts = append(parts, "gone")
+	case branch.Ahead > 0 && branch.Behind > 0:
+		parts = append(parts,
+			arrowText(ctx, icons.AheadArrow, fmt.Sprintf("ahead %d", branch.Ahead))+
+				", "+arrowText(ctx, icons.BehindArrow, fmt.Sprintf("behind %d", branch.Behind)))
+	case branch.Ahead > 0:
+		parts = append(parts, arrowText(ctx, icons.AheadArrow, fmt.Sprintf("ahead %d", branch.Ahead)))
+	case branch.Behind > 0:
+		parts = append(parts, arrowText(ctx, icons.BehindArrow, fmt.Sprintf("behind %d", branch.Behind)))
+	case branch.Upstream != "":
+		parts = append(parts, "synced")
+	default:
+		parts = append(parts, "local")
+	}
+	if !branch.Current && branch.WorktreePath != "" {
+		parts = append(parts, "checked out")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func arrowText(ctx *appctx.ProgramContext, state icons.State, text string) string {
+	return section.GlyphText(ctx.Icons, state, text, ctx.Styles.DimText)
 }
 
 // branchColumnSpec is the branches section's 6-column layout, sharing the

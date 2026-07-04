@@ -76,7 +76,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			// re-fitting columns, so a stale column list here would leave row cell
 			// counts out of sync with SetColumns (columns responsively drop per
 			// SixColumnSpec.Fit).
-			return actionBuildRowWithColumns(run, actionColumnNames(ctx.MainContentWidth))
+			return actionBuildRowWithColumns(run, actionColumnNames(ctx.MainContentWidth), ctx)
 		},
 	})
 	m := &Model{Model: base}
@@ -129,14 +129,20 @@ func actionEmptyHint(cfg config.SectionConfig) string {
 // and actor columns than the PR/issue default (status/conclusion strings
 // and "@actor event" pairs run longer), sharing the same
 // section.SixColumnSpec responsive-drop behavior (Actor/Event dropped
-// first, then Updated, then Repo — #/Title/Status always survive).
+// first, then Updated, then Repo — #/Title/Status always survive). State's
+// Width is 22, not 18 (Task 9): section.StateCell prefixes the widest
+// composite value ("completed/cancelled"/"completed/timed_out", 19 chars)
+// with a glyph + space, and 18 was sized for the bare text with no room
+// for that prefix — it silently ellipsis-truncated "completed/success" by
+// one character once the glyph was added. 22 leaves a 1-char margin over
+// the 21-char worst case.
 func actionColumnSpec() section.SixColumnSpec {
 	return section.SixColumnSpec{
 		Index:   section.ColumnDefinition{Name: "number", Title: "#", Width: 8},
 		Grow:    section.ColumnDefinition{Name: "title", Title: "Title", Width: 20},
 		Repo:    section.ColumnDefinition{Name: "repo", Title: "Repo", Width: 22},
 		Fourth:  section.ColumnDefinition{Name: "actor", Title: "Actor/Event", Width: 18},
-		State:   section.ColumnDefinition{Name: "state", Title: "Status", Width: 18},
+		State:   section.ColumnDefinition{Name: "state", Title: "Status", Width: 22},
 		Updated: section.ColumnDefinition{Name: "updated", Title: "Updated", Width: 10},
 	}
 }
@@ -153,15 +159,15 @@ func actionColumnNames(mainWidth int) []string {
 	return section.ColumnNamesFromDefinitions(actionColumnDefinitions(mainWidth))
 }
 
-func actionBuildRowWithColumns(run data.ActionRun, columns []string) table.Row {
+func actionBuildRowWithColumns(run data.ActionRun, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {
-		row = append(row, actionColumnValue(run, column))
+		row = append(row, actionColumnValue(run, column, ctx))
 	}
 	return row
 }
 
-func actionColumnValue(run data.ActionRun, column string) string {
+func actionColumnValue(run data.ActionRun, column string, ctx *appctx.ProgramContext) string {
 	switch column {
 	case "number":
 		return fmt.Sprintf("#%d", run.GetNumber())
@@ -172,7 +178,7 @@ func actionColumnValue(run data.ActionRun, column string) string {
 	case "actor":
 		return actionActorEvent(run)
 	case "state":
-		return actionStatus(run)
+		return section.StateCell(actionStatus(run), ctx.Icons, ctx.Styles)
 	case "updated":
 		return section.HumanizeTime(run.GetUpdatedAt())
 	default:

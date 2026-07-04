@@ -11,6 +11,7 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/gitea"
+	"github.com/gbarany/tea-dash/internal/ui/icons"
 )
 
 // Dimensions is a width/height pair.
@@ -66,6 +67,13 @@ type ProgramContext struct {
 	View   ViewType      // PullsView | IssuesView | NotificationsView | ActionsView | BranchesView
 	Error  error
 	Styles Styles
+
+	// Icons is the glyph set resolved once from Config.Theme.Icons (via
+	// icons.Parse) in NewWithOptions. Every icon call site across the UI
+	// reads this instead of hardcoding icons.Unicode. The zero value is
+	// icons.Unicode, so plain-struct test contexts that never set this
+	// field still render the default set rather than an empty one.
+	Icons icons.Set
 
 	// MockHost and InstanceHost feed the header's right-side host label
 	// (spec §5). MockHost wins when set ("demo.gitea.local" in --mock runs);

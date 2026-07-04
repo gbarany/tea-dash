@@ -171,9 +171,22 @@ func TestConfiguredColumnsBuildPullRowsInConfiguredOrder(t *testing.T) {
 	})
 	m = next.(*Model)
 	row := m.BuildRows()[0]
-	want := []string{"#128", "open", "Add wiki CLI"}
-	if strings.Join([]string(row), "|") != strings.Join(want, "|") {
-		t.Fatalf("row = %v, want %v", row, want)
+	// Cell order must track the configured column order (number, state,
+	// title); the state cell is no longer a bare "open" (Task 9 wraps it
+	// in a glyph + color via section.StateCell), so this checks per-cell
+	// substrings/prefixes at the right positions rather than exact row
+	// equality.
+	if len(row) != 3 {
+		t.Fatalf("row = %v, want 3 cells", row)
+	}
+	if row[0] != "#128" {
+		t.Fatalf("row[0] = %q, want %q", row[0], "#128")
+	}
+	if !strings.Contains(row[1], "open") {
+		t.Fatalf("row[1] = %q, want it to contain %q", row[1], "open")
+	}
+	if row[2] != "Add wiki CLI" {
+		t.Fatalf("row[2] = %q, want %q", row[2], "Add wiki CLI")
 	}
 }
 

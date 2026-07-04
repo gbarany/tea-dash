@@ -53,7 +53,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			// Recomputed per call, not frozen at construction — see
 			// pullsection.NewModel's identical comment.
 			columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
-			return issueBuildRowWithColumns(issue, columnNames)
+			return issueBuildRowWithColumns(issue, columnNames, ctx)
 		},
 		Columns: func(width int) []table.Column {
 			return section.ColumnsFromConfig(cfg.Columns, section.DefaultColumnDefinitions(width))
@@ -72,19 +72,19 @@ func effectiveRepo(ctx *appctx.ProgramContext, cfg config.SectionConfig) string 
 }
 
 // issueBuildRow maps an issue into the default table row.
-func issueBuildRow(issue data.Issue) table.Row {
-	return issueBuildRowWithColumns(issue, section.DefaultColumnNames())
+func issueBuildRow(issue data.Issue, ctx *appctx.ProgramContext) table.Row {
+	return issueBuildRowWithColumns(issue, section.DefaultColumnNames(), ctx)
 }
 
-func issueBuildRowWithColumns(issue data.Issue, columns []string) table.Row {
+func issueBuildRowWithColumns(issue data.Issue, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {
-		row = append(row, issueColumnValue(issue, column))
+		row = append(row, issueColumnValue(issue, column, ctx))
 	}
 	return row
 }
 
-func issueColumnValue(issue data.Issue, column string) string {
+func issueColumnValue(issue data.Issue, column string, ctx *appctx.ProgramContext) string {
 	author := ""
 	if issue.Author != "" {
 		author = "@" + issue.Author
@@ -99,7 +99,7 @@ func issueColumnValue(issue data.Issue, column string) string {
 	case "author":
 		return author
 	case "state":
-		return issue.State
+		return section.StateCell(issue.State, ctx.Icons, ctx.Styles)
 	case "updated":
 		return section.HumanizeTime(issue.UpdatedAt)
 	default:

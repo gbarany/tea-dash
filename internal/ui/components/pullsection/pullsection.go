@@ -57,7 +57,7 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			// would leave row cell counts out of sync with SetColumns
 			// (dropped columns responsively per SixColumnSpec.Fit).
 			columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
-			return prBuildRowWithColumns(pr, columnNames)
+			return prBuildRowWithColumns(pr, columnNames, ctx)
 		},
 		Columns: func(width int) []table.Column {
 			return section.ColumnsFromConfig(cfg.Columns, section.DefaultColumnDefinitions(width))
@@ -87,19 +87,19 @@ func prState(pr data.PullRequest) string {
 }
 
 // prBuildRow maps a PR into the default table row.
-func prBuildRow(pr data.PullRequest) table.Row {
-	return prBuildRowWithColumns(pr, section.DefaultColumnNames())
+func prBuildRow(pr data.PullRequest, ctx *appctx.ProgramContext) table.Row {
+	return prBuildRowWithColumns(pr, section.DefaultColumnNames(), ctx)
 }
 
-func prBuildRowWithColumns(pr data.PullRequest, columns []string) table.Row {
+func prBuildRowWithColumns(pr data.PullRequest, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {
-		row = append(row, prColumnValue(pr, column))
+		row = append(row, prColumnValue(pr, column, ctx))
 	}
 	return row
 }
 
-func prColumnValue(pr data.PullRequest, column string) string {
+func prColumnValue(pr data.PullRequest, column string, ctx *appctx.ProgramContext) string {
 	author := ""
 	if pr.Author != "" {
 		author = "@" + pr.Author
@@ -114,7 +114,7 @@ func prColumnValue(pr data.PullRequest, column string) string {
 	case "author":
 		return author
 	case "state":
-		return prState(pr)
+		return section.StateCell(prState(pr), ctx.Icons, ctx.Styles)
 	case "updated":
 		return section.HumanizeTime(pr.UpdatedAt)
 	default:

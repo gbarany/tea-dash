@@ -245,6 +245,10 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		}
 		previewOpen = cfg.Defaults.Preview.PreviewOpen()
 	}
+	iconSet := icons.Unicode
+	if cfg != nil {
+		iconSet = icons.Parse(cfg.Theme.Icons)
+	}
 	ctx := &context.ProgramContext{
 		Config:         cfg,
 		Client:         client,
@@ -252,6 +256,7 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		View:           view,
 		PreviewOpen:    previewOpen,
 		Styles:         context.StylesForConfig(cfg),
+		Icons:          iconSet,
 		CurrentRepo:    opts.CurrentRepo,
 		SmartFiltering: opts.SmartFiltering,
 		MockHost:       opts.MockHost,
@@ -1024,15 +1029,13 @@ func (m Model) statusHints() string {
 // statusLeftSegment renders the toast (Task 8's actionfeedback, which
 // merged in the old separate `notice` field) pre-styled — statusbar.View
 // renders it as-is rather than re-wrapping it in the status bar's base
-// style, so its StatusToast*+icon coloring survives. icons.Unicode is
-// hardcoded pending Task 9, which threads the configured theme.icons set
-// through ProgramContext; every other icon call site in the codebase is
-// equally unwired until then.
+// style, so its StatusToast*+icon coloring survives. Reads the configured
+// theme.icons set from ctx (Task 9; previously hardcoded to icons.Unicode).
 func (m Model) statusLeftSegment() string {
 	if m.actionFeedback.Empty() {
 		return ""
 	}
-	return m.actionFeedback.View(60, m.ctx.Styles, icons.Unicode)
+	return m.actionFeedback.View(60, m.ctx.Styles, m.ctx.Icons)
 }
 
 // tooSmallNotice centers a "terminal too small" message in the full
@@ -1488,23 +1491,23 @@ func (m *Model) syncSidebar() {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		m.sidebar.SetTabs(sidebarTabs(prview.RenderPullTabs(r, m.pullDetails[key], w, m.expanded)))
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderPullTabs(r, m.pullDetails[key], w, m.expanded, m.ctx.Styles, m.ctx.Icons)))
 		return
 	case data.Issue:
 		if err := m.issueEnrichErr[key]; err != nil {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		m.sidebar.SetTabs(sidebarTabs(prview.RenderIssueTabs(r, m.issueDetails[key], w, m.expanded)))
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderIssueTabs(r, m.issueDetails[key], w, m.expanded, m.ctx.Styles, m.ctx.Icons)))
 		return
 	case data.Notification:
-		rendered = prview.RenderNotification(r, w)
+		rendered = prview.RenderNotification(r, w, m.ctx.Styles, m.ctx.Icons)
 	case data.ActionRun:
 		if err := m.actionEnrichErr[key]; err != nil {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		m.sidebar.SetTabs(sidebarTabs(prview.RenderActionTabs(r, m.actionDetails[key], w)))
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderActionTabs(r, m.actionDetails[key], w, m.ctx.Styles, m.ctx.Icons)))
 		return
 	default:
 		m.sidebar.SetContent("")

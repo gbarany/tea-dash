@@ -55,20 +55,20 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			// the CURRENT width, recomputed on every call (not frozen at
 			// construction — see pullsection.NewModel's identical comment).
 			columnNames := section.ColumnNamesFromConfig(nil, section.DefaultColumnDefinitions(ctx.MainContentWidth))
-			return notificationBuildRowWithColumns(n, columnNames)
+			return notificationBuildRowWithColumns(n, columnNames, ctx)
 		},
 	})
 }
 
-func notificationBuildRowWithColumns(n data.Notification, columns []string) table.Row {
+func notificationBuildRowWithColumns(n data.Notification, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {
-		row = append(row, notificationColumnValue(n, column))
+		row = append(row, notificationColumnValue(n, column, ctx))
 	}
 	return row
 }
 
-func notificationColumnValue(n data.Notification, column string) string {
+func notificationColumnValue(n data.Notification, column string, ctx *appctx.ProgramContext) string {
 	switch column {
 	case "number":
 		if n.Number == 0 {
@@ -85,7 +85,7 @@ func notificationColumnValue(n data.Notification, column string) string {
 		// "Author"-named column slot rather than an actual author.
 		return strings.ToLower(n.SubjectType)
 	case "state":
-		return notificationState(n)
+		return section.StateCell(notificationState(n), ctx.Icons, ctx.Styles)
 	case "updated":
 		return section.HumanizeTime(n.UpdatedAt)
 	default:
