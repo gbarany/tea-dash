@@ -228,6 +228,15 @@ double-click; (b) the palette's right-click entry point must READ AND CLEAR
 
 ### Task 8: Toasts + unified transient feedback
 
+**Step 0 (from the T7 review):** (a) reset double-click state in
+handleMouseClick for ANY left click that doesn't resolve to a ZoneListRow —
+including zone misses, which currently return early before the reset; (b)
+palette renderRow: measure with lipgloss.Width, not len() (multibyte labels
+misalign the key hint); (c) add a one-line palette footer hint ("↑/↓ move ·
+enter run · esc close"). Also note for T10: consider consolidating the three
+parallel builtin alias tables (dispatch/rebind/hint) into one — cosmetic-only
+drift risk today, not urgent.
+
 **Files:**
 - Modify: `internal/ui/components/actionfeedback/actionfeedback.go` (+test), `internal/ui/app.go` (merge `notice` into it; statusbar left segment renders it), `internal/ui/components/statusbar/statusbar.go`
 
