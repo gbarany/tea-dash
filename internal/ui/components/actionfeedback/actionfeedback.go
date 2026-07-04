@@ -8,6 +8,7 @@
 package actionfeedback
 
 import (
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -207,11 +208,34 @@ func (m Model) View(width int, styles context.Styles, set icons.Set) string {
 	if m.msg.Text == "" {
 		return ""
 	}
-	text := m.msg.Text
+	text := singleLine(m.msg.Text)
 	if g := icons.Glyph(set, glyphState(m.msg.Kind)); g != "" {
 		text = g + " " + text
 	}
 	return style(m.msg.Kind, styles).Render(fit(text, width))
+}
+
+// singleLine collapses embedded newlines into " · " so a multi-line message
+// (the real case: a failed `git push`/`git fetch` surfaces multi-line
+// stderr through internal/git's commandError, which becomes an Error
+// toast's Text verbatim) can never smuggle extra terminal rows into the
+// one-line status bar. statusbar.View treats its segments as exactly one
+// line, and app.go's renderShell joins the whole framed shell with "\n"
+// assuming each row contributes exactly one physical line — an embedded
+// newline here would silently inflate the frame past its exact H rows
+// (reproduced: a 3-line error message rendered 26 lines at 80x24 instead
+// of 24, tearing the border). Blank lines (a leading/trailing blank line
+// from stderr, or a "\n\n" gap mid-message) are dropped rather than
+// rendered as an empty " ·  · " gap.
+func singleLine(s string) string {
+	lines := strings.Split(s, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, " · ")
 }
 
 // fit truncates s to width terminal columns (lipgloss.Width, not byte

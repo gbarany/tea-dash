@@ -165,6 +165,39 @@ func TestDismissError_ClearsOnlyError(t *testing.T) {
 	}
 }
 
+// TestView_CollapsesEmbeddedNewlines is the review fix: a multi-line
+// message (the real case: internal/git's commandError surfaces multi-line
+// `git push`/`git fetch` stderr verbatim) must render as ONE physical line
+// — an embedded "\n" would otherwise smuggle extra rows into the one-line
+// status bar and tear the framed shell's exact-height guarantee.
+func TestView_CollapsesEmbeddedNewlines(t *testing.T) {
+	styles := context.DefaultStyles()
+	msg := "remote: Permission denied\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights"
+	m, _ := New().Set(Error(msg))
+	view := m.View(200, styles, icons.Unicode)
+	if strings.Contains(view, "\n") {
+		t.Fatalf("View() must render exactly one line, got embedded newline(s):\n%q", view)
+	}
+	for _, want := range []string{"Permission denied", "Could not read from remote repository", "correct access rights"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, want it to still contain %q", view, want)
+		}
+	}
+}
+
+func TestSingleLine_DropsBlankLines(t *testing.T) {
+	got := singleLine("first\n\nsecond\n")
+	if want := "first · second"; got != want {
+		t.Fatalf("singleLine(...) = %q, want %q", got, want)
+	}
+}
+
+func TestSingleLine_SingleLineUnchanged(t *testing.T) {
+	if got := singleLine("no newlines here"); got != "no newlines here" {
+		t.Fatalf("singleLine(...) = %q, want unchanged", got)
+	}
+}
+
 func TestWithExpiry_ShortensRealTimer(t *testing.T) {
 	m := New().WithExpiry(time.Millisecond)
 	m, cmd := m.Set(Success("quick"))

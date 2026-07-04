@@ -1363,6 +1363,34 @@ func TestModelRendersError(t *testing.T) {
 	}
 }
 
+// TestModelRendersExactHeightWithMultiLineErrorToast is the review fix
+// regression test: a real `git push`/`git fetch` failure surfaces
+// multi-line stderr (internal/git's commandError) straight into an Error
+// toast. Before the fix, actionfeedback.View() rendered that text verbatim
+// (with its embedded newlines intact) into the status bar's one-line left
+// segment, and renderShell's "\n"-joined rows blew straight past the
+// framed shell's exact-height contract (reproduced: 26 lines at 80x24
+// instead of 24).
+func TestModelRendersExactHeightWithMultiLineErrorToast(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Short per-line lengths matter here: a long enough multi-line message
+	// gets dropped entirely by statusbar.View's width budget (a pre-existing,
+	// harmless behavior) rather than exercising the bug — short lines
+	// reproduce the reviewer's "26 lines at 80x24 instead of 24".
+	multiLine := "err one\nerr two\nerr three"
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Error(multiLine))
+	_ = cmd
+
+	content := m.View().Content
+	lines := strings.Split(content, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("rendered %d lines, want exactly 24 (H) — a multi-line toast tore the frame:\n%s", len(lines), content)
+	}
+}
+
 func TestQuitKeyStopsProgram(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
