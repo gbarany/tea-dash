@@ -19,7 +19,7 @@ import (
 // ahead of main ("ahead 1"), fix/slow-pour genuinely level with it
 // ("synced"), and main itself renders "current · local" (Current, but with
 // no upstream of its own). Without the upstream trick, every branch would
-// read "local" (Branch.Status()'s ahead/behind branches never trigger).
+// read "local" (branchsection's ahead/behind rendering never triggers).
 // Setting up a real second remote (e.g. a bare clone) would show the same
 // variety but needs careful two-repo sequencing for no functional gain here,
 // so it's skipped.

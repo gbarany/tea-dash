@@ -41,31 +41,6 @@ type Branch struct {
 	WorktreePath   string
 }
 
-// Status summarizes the branch's local/upstream state for compact tables.
-func (b Branch) Status() string {
-	parts := make([]string, 0, 3)
-	if b.Current {
-		parts = append(parts, "current")
-	}
-	if b.UpstreamGone {
-		parts = append(parts, "gone")
-	} else if b.Ahead > 0 && b.Behind > 0 {
-		parts = append(parts, fmt.Sprintf("ahead %d, behind %d", b.Ahead, b.Behind))
-	} else if b.Ahead > 0 {
-		parts = append(parts, fmt.Sprintf("ahead %d", b.Ahead))
-	} else if b.Behind > 0 {
-		parts = append(parts, fmt.Sprintf("behind %d", b.Behind))
-	} else if b.Upstream != "" {
-		parts = append(parts, "synced")
-	} else {
-		parts = append(parts, "local")
-	}
-	if !b.Current && b.WorktreePath != "" {
-		parts = append(parts, "checked out")
-	}
-	return strings.Join(parts, " · ")
-}
-
 // RowData projection methods let Branch reuse the existing generic section.
 func (b Branch) GetRepoNameWithOwner() string { return b.Repository }
 func (b Branch) GetTitle() string             { return b.Name }

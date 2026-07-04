@@ -6,7 +6,6 @@ import (
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // TestSpike_ANSIStyledCellTruncation is the Task-9 Step-1 time-boxed spike:
@@ -41,21 +40,21 @@ func TestSpike_ANSIStyledCellTruncation(t *testing.T) {
 	if !strings.Contains(out, "\x1b[") {
 		t.Fatalf("expected ANSI color codes to survive truncation, got plain output: %q", out)
 	}
-	if !strings.Contains(ansi.Strip(out), "…") {
-		t.Fatalf("expected the overlong cell to be truncated with an ellipsis, got %q", ansi.Strip(out))
+	if !strings.Contains(out, "…") {
+		t.Fatalf("expected the overlong cell to be truncated with an ellipsis, got %q", out)
 	}
 
-	// The rendered row's VISIBLE width (ANSI stripped) must match the
-	// column width exactly (no SetWidth call here, so bubbles/table doesn't
-	// stretch/pad beyond the column) — a byte-counted (ANSI-unaware)
-	// truncation would instead blow this up by however many escape bytes
-	// got miscounted as visible cells.
+	// The rendered row's VISIBLE width (lipgloss.Width already ignores ANSI
+	// escapes when measuring) must match the column width exactly (no
+	// SetWidth call here, so bubbles/table doesn't stretch/pad beyond the
+	// column) — a byte-counted (ANSI-unaware) truncation would instead blow
+	// this up by however many escape bytes got miscounted as visible cells.
 	const wantWidth = colWidth + 2 // + bubbles/table's Cell Padding(0,1)
 	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(ansi.Strip(line)) == "" {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if w := lipgloss.Width(ansi.Strip(line)); w != wantWidth {
+		if w := lipgloss.Width(line); w != wantWidth {
 			t.Fatalf("line %q: visible width %d, want %d — ANSI truncation is broken", line, w, wantWidth)
 		}
 	}

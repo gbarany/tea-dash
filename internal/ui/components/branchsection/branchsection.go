@@ -150,14 +150,16 @@ func branchColumnValue(branch localgit.Branch, column string, ctx *appctx.Progra
 	}
 }
 
-// branchStateCell renders branch.Status(), coloring only the ahead/behind
-// arrow parts: AheadArrow/BehindArrow have glyphs but no styles.StateColors
-// entry (T2 review note, same as notification Unread), so they're drawn
-// from ctx.Styles.DimText (an explicit style, "dim for arrows" per the
-// plan) via section.GlyphText rather than indexed on a guaranteed
-// StateColors miss. "current"/"gone"/"synced"/"local"/"checked out" have no
-// dedicated icons.State (the "mark" column's "*" already conveys current)
-// and stay plain text, exactly like Status() rendered them before.
+// branchStateCell composes the branch's local/upstream state (formerly
+// git.Branch.Status(), removed once this became the only caller/composer),
+// coloring only the ahead/behind arrow parts: AheadArrow/BehindArrow have
+// glyphs but no styles.StateColors entry (T2 review note, same as
+// notification Unread), so they're drawn from ctx.Styles.DimText (an
+// explicit style, "dim for arrows" per the plan) via section.GlyphText
+// rather than indexed on a guaranteed StateColors miss.
+// "current"/"gone"/"synced"/"local"/"checked out" have no dedicated
+// icons.State (the "mark" column's "*" already conveys current) and stay
+// plain text, exactly like the old Status() rendered them.
 func branchStateCell(branch localgit.Branch, ctx *appctx.ProgramContext) string {
 	parts := make([]string, 0, 3)
 	if branch.Current {
