@@ -19,6 +19,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	appctx "github.com/gbarany/tea-dash/internal/ui/context"
 )
@@ -74,6 +75,17 @@ type Event struct {
 // same Y offset View() renders them at, so the two must stay in sync.
 const HeaderRows = 2
 
+// FooterRows is how many lines View() appends after the item list: a dim
+// key-hint line ("↑/↓ move · enter run · esc close"). SetSize reserves this
+// many rows out of the height it's given so the footer always has a row of
+// its own instead of competing with the last visible item for space that
+// fitBlock would then crop unpredictably.
+const FooterRows = 1
+
+// footerHint is the palette's one-line key cheatsheet, styled dim like
+// helpoverlay's and the status bar's non-toast text.
+const footerHint = "↑/↓ move · enter run · esc close"
+
 // Model is the palette's filter box plus its scrollable, filtered item list.
 type Model struct {
 	ctx   *appctx.ProgramContext
@@ -110,8 +122,9 @@ func (m *Model) Open(items []Item) tea.Cmd {
 	return cmd
 }
 
-// SetSize sizes the item list's visible window. Safe to call every render
-// (idempotent), mirroring helpoverlay.Model.SetSize.
+// SetSize sizes the item list's visible window, reserving FooterRows out of
+// h for the footer hint line View() always appends. Safe to call every
+// render (idempotent), mirroring helpoverlay.Model.SetSize.
 func (m *Model) SetSize(w, h int) {
 	if w < 0 {
 		w = 0
@@ -120,7 +133,11 @@ func (m *Model) SetSize(w, h int) {
 		h = 1
 	}
 	m.width = w
-	m.height = h
+	itemRows := h - FooterRows
+	if itemRows < 1 {
+		itemRows = 1
+	}
+	m.height = itemRows
 	m.input.SetWidth(w)
 	m.ensureVisible()
 }
@@ -254,22 +271,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 // doesn't need to produce exact dimensions itself, matching
 // components/helpoverlay and components/sidebar.
 func (m Model) View() string {
-	lines := make([]string, 0, HeaderRows+len(m.filtered))
+	lines := make([]string, 0, HeaderRows+len(m.filtered)+FooterRows)
 	lines = append(lines, m.input.View(), "")
-	if len(m.all) == 0 {
-		return strings.Join(lines, "\n")
-	}
-	if len(m.filtered) == 0 {
+	switch {
+	case len(m.all) == 0:
+		// no items to show
+	case len(m.filtered) == 0:
 		lines = append(lines, m.dim("No matches."))
-		return strings.Join(lines, "\n")
+	default:
+		items, selIdx := m.Visible()
+		for i, it := range items {
+			lines = append(lines, m.renderRow(it, i == selIdx))
+		}
 	}
-	items, selIdx := m.Visible()
-	for i, it := range items {
-		lines = append(lines, m.renderRow(it, i == selIdx))
-	}
+	lines = append(lines, m.dim(footerHint))
 	return strings.Join(lines, "\n")
 }
 
+// renderRow measures with lipgloss.Width, not len (a byte count) — a
+// multibyte label (e.g. an accented custom-command name) would otherwise
+// under-measure its own width and throw off the key-hint's alignment.
 func (m Model) renderRow(it Item, selected bool) string {
 	prefix := "  "
 	if selected {
@@ -279,7 +300,7 @@ func (m Model) renderRow(it Item, selected bool) string {
 	if it.KeyHint != "" {
 		pad := 2
 		if m.width > 0 {
-			if gap := m.width - len(line) - len(it.KeyHint); gap > pad {
+			if gap := m.width - lipgloss.Width(line) - lipgloss.Width(it.KeyHint); gap > pad {
 				pad = gap
 			}
 		}
@@ -288,8 +309,8 @@ func (m Model) renderRow(it Item, selected bool) string {
 	if !selected {
 		return line
 	}
-	if m.width > len(line) {
-		line += strings.Repeat(" ", m.width-len(line))
+	if m.width > lipgloss.Width(line) {
+		line += strings.Repeat(" ", m.width-lipgloss.Width(line))
 	}
 	if m.ctx == nil {
 		return line

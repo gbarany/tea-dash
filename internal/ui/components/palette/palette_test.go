@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/gbarany/tea-dash/internal/ui/context"
 )
@@ -215,7 +216,9 @@ func TestSelected_EmptyFilteredListIsFalse(t *testing.T) {
 func TestVisible_WindowsAndTracksSelection(t *testing.T) {
 	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
 	m.Open(sampleItems())
-	m.SetSize(40, 2)
+	// height 3: SetSize reserves FooterRows(1) for the footer hint, leaving
+	// a 2-item window.
+	m.SetSize(40, 3)
 
 	items, sel := m.Visible()
 	if len(items) != 2 || sel != 0 || items[0].Label != "Open" {
@@ -233,7 +236,9 @@ func TestVisible_WindowsAndTracksSelection(t *testing.T) {
 func TestItemAtVisibleIndex(t *testing.T) {
 	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
 	m.Open(sampleItems())
-	m.SetSize(40, 2)
+	// height 3: SetSize reserves FooterRows(1) for the footer hint, leaving
+	// a 2-item window.
+	m.SetSize(40, 3)
 
 	item, ok := m.ItemAtVisibleIndex(1)
 	if !ok || item.Label != "Refresh" {
@@ -262,5 +267,50 @@ func TestView_NoMatches(t *testing.T) {
 
 	if !strings.Contains(m.View(), "No matches") {
 		t.Fatalf("view should say no matches:\n%s", m.View())
+	}
+}
+
+// TestView_FooterHint covers Step 0(c) from the T7 review: a one-line
+// key-hint footer always renders, in every list-content state.
+func TestView_FooterHint(t *testing.T) {
+	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
+	m.Open(sampleItems())
+	m.SetSize(40, 5)
+
+	if !strings.Contains(m.View(), footerHint) {
+		t.Fatalf("view missing footer hint %q:\n%s", footerHint, m.View())
+	}
+
+	empty := typeString(t, m, "zzzznomatch")
+	if !strings.Contains(empty.View(), footerHint) {
+		t.Fatalf("no-matches view missing footer hint:\n%s", empty.View())
+	}
+}
+
+// TestRenderRow_MultibyteLabelAlignsKeyHint covers Step 0(b) from the T7
+// review: renderRow must measure with lipgloss.Width, not len (a byte
+// count) — a multibyte label would otherwise be over-measured (more bytes
+// than display columns), under-padding the gap before the key hint.
+func TestRenderRow_MultibyteLabelAlignsKeyHint(t *testing.T) {
+	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
+	// "Wüst review" is 11 runes / 11 display columns, but 12 bytes (ü is
+	// 2 bytes in UTF-8) — len() would compute a width one too wide.
+	label := "Wüst review"
+	m.Open([]Item{{Label: label, KeyHint: "v"}})
+	m.SetSize(40, 5)
+
+	lines := strings.Split(m.View(), "\n")
+	row := lines[HeaderRows]
+	// The meaningful assertion: with a byte-vs-rune-count bug (len()
+	// instead of lipgloss.Width), the pad math would be off by however
+	// many extra bytes the multibyte rune(s) contribute, throwing off the
+	// selected row's full-width padding — this exact-width check catches
+	// that even though the row is ANSI-styled (lipgloss.Width ignores
+	// escape codes).
+	if got := lipgloss.Width(row); got != 40 {
+		t.Fatalf("row with multibyte label should still be exactly 40 columns wide, got %d:\n%q", got, row)
+	}
+	if !strings.Contains(row, label) {
+		t.Fatalf("row should contain the label:\n%q", row)
 	}
 }

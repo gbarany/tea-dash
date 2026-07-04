@@ -1753,6 +1753,17 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	}
 	zone, ok := m.zones.Hit(msg.X, msg.Y)
 	if !ok {
+		// A left click that misses every registered zone entirely (e.g. a
+		// border gap) must still reset the double-click state, for the same
+		// reason handleZoneLeftClick resets it for a non-row zone HIT (T7
+		// Step 0, T8 Step 0(a) from the T7 review): otherwise a row click,
+		// then a miss, then the SAME row index again within
+		// doubleClickWindow reads as a double-click purely by coincidence
+		// of timing, since clickListRow only ever compares against the
+		// most recent click's time/row.
+		if msg.Button == tea.MouseLeft {
+			m.lastClickAt = time.Time{}
+		}
 		return m, nil
 	}
 	switch msg.Button {

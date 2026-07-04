@@ -1061,6 +1061,41 @@ func TestClickRowThenTabThenSameRowIndexIsNotADoubleClick(t *testing.T) {
 	}
 }
 
+// TestClickRowThenZoneMissThenSameRowIndexIsNotADoubleClick covers Task 8
+// Step 0(a) from the T7 review: handleMouseClick previously reset
+// lastClickAt for a left click that hit a zone other than ZoneListRow (see
+// handleZoneLeftClick), but returned early — before any reset — when the
+// click missed every registered zone entirely (e.g. a border gap). A row
+// click, then a miss, then the SAME row index again within the
+// double-click window must still be a single click, not a double-click.
+func TestClickRowThenZoneMissThenSameRowIndexIsNotADoubleClick(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	rowClick := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, rowClick)
+
+	// Well outside the whole frame — guaranteed to miss every zone
+	// registered by rebuildZones, regardless of exact border geometry.
+	miss := tea.MouseClickMsg{X: m.layout.ListPanel.W + 1000, Y: m.layout.ListPanel.H + 1000, Button: tea.MouseLeft}
+	m.nowFn = func() time.Time { return base.Add(50 * time.Millisecond) }
+	m = update(t, m, miss)
+
+	m = viewed(m)
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) } // still within the 400ms window
+	m = update(t, m, rowClick)
+
+	if m.previewFocused {
+		t.Fatal("row -> zone-miss -> same row index within the window must be a single click, not a double-click")
+	}
+}
+
 // TestDoubleClickListRowInBranchesViewChecksOutInsteadOfFocusing covers the
 // T4 Branches exception carried into mouse routing: double-click there
 // checks out (opens the same confirm prompt enter does), never focuses the
