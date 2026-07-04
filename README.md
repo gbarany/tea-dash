@@ -73,11 +73,30 @@ make build      # -> ./bin/tea-dash
 
 ```sh
 tea-dash            # start the dashboard
+tea-dash --mock     # try it on built-in demo data (no Gitea needed)
 tea-dash --config ./team.tea-dash.yml
 tea-dash --debug    # append debug output to ./debug.log
 tea-dash --version  # print version info
 tea-dash --help
 ```
+
+### Try it without a Gitea instance
+
+```sh
+tea-dash --mock
+```
+
+Runs the full dashboard against an in-process fake Gitea preloaded with a
+fictional `teahouse` org — every view is populated, and actions (merge,
+comment, close, mark read, …) really mutate the demo data. No network, no
+login. A throwaway local git repo is seeded for the Branches view (needs
+`git` on PATH; without it, that view shows an error instead of demo
+branches).
+
+Notes: `--mock` composes with an explicit `--config`, but the fake's search
+ignores the `mentioned`, `since`, and `sort` filters. In the Branches view,
+push/force-push/fast-forward fail with a clear error (the demo repo has no
+real remote) — checkout works.
 
 ### Keys
 

@@ -59,6 +59,14 @@ with `reviewRequested` stay on the cross-repo search endpoint because Gitea does
 not expose that filter on the repo issues endpoint. Results are mapped into the
 domain model, never leaking SDK/REST types past the transport boundary.
 
+`internal/mockgitea` fakes the subset of this API the client consumes: an
+in-memory, mutation-capable store served over a local HTTP listener, used by
+`--mock` (with a deterministic `teahouse` demo dataset) and by the end-to-end
+tests. Its contract tests drive the real `internal/gitea` client against the
+fake, so response-shape drift fails tests instead of surfacing at runtime;
+unknown paths 404 with the offending method+path in the body for the same
+reason.
+
 ## Domain model
 
 `internal/data` holds TUI-agnostic domain types (notably `PullRequest`),
@@ -68,15 +76,16 @@ is denormalized — each row from the cross-repo search carries its own
 
 ## Package layout
 
-| Package           | Responsibility                                                            |
-| ----------------- | ------------------------------------------------------------------------- |
-| `main`            | entrypoint, `--version`/`--help`; loads config, resolves auth, builds the client, starts the Bubble Tea program |
-| `internal/ui`     | root model, table, keybindings, Lipgloss styles, loading/error states     |
-| `internal/gitea`  | Gitea SDK wrapper + raw HTTP escape hatch (me-scoped cross-repo search)    |
-| `internal/auth`   | resolves the instance URL + token from overrides, env, and `tea`'s config |
-| `internal/data`   | TUI-agnostic domain model (`PullRequest`, `Label`, …)                     |
-| `internal/config` | loads `~/.config/tea-dash/config.yml` (instance block, repos)             |
-| `internal/build`  | version metadata injected at link time via `-ldflags`                     |
+| Package              | Responsibility                                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `main`               | entrypoint, `--version`/`--help`; loads config, resolves auth, builds the client, starts the Bubble Tea program |
+| `internal/ui`        | root model, table, keybindings, Lipgloss styles, loading/error states                                           |
+| `internal/gitea`     | Gitea SDK wrapper + raw HTTP escape hatch (me-scoped cross-repo search)                                         |
+| `internal/auth`      | resolves the instance URL + token from overrides, env, and `tea`'s config                                       |
+| `internal/data`      | TUI-agnostic domain model (`PullRequest`, `Label`, …)                                                           |
+| `internal/config`    | loads `~/.config/tea-dash/config.yml` (instance block, repos)                                                   |
+| `internal/mockgitea` | in-memory fake Gitea (HTTP) behind `--mock` and the end-to-end tests                                            |
+| `internal/build`     | version metadata injected at link time via `-ldflags`                                                           |
 
 ## Current feature surface
 
