@@ -90,3 +90,13 @@ func TestDemoDataNoPinnedAndUnreadNotification(t *testing.T) {
 		}
 	}
 }
+
+func TestDemoConfigValidates(t *testing.T) {
+	cfg := DemoConfig("/tmp/kettle")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("demo config must validate: %v", err)
+	}
+	if len(cfg.PRSections) < 3 || len(cfg.IssuesSections) < 2 {
+		t.Fatalf("demo config too thin: %+v", cfg)
+	}
+}

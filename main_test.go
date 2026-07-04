@@ -11,7 +11,7 @@ import (
 
 func TestLaunchOptionsDetectsMatchingCurrentRepo(t *testing.T) {
 	cwd := makeGitDir(t, "origin", "https://gitea.example.com/acme/widgets.git")
-	got := launchOptions(&config.Config{}, "https://gitea.example.com", cwd)
+	got := launchOptions(&config.Config{}, "https://gitea.example.com", cwd, false)
 	if got.CurrentRepo != "acme/widgets" {
 		t.Fatalf("CurrentRepo = %q, want acme/widgets", got.CurrentRepo)
 	}
@@ -23,12 +23,27 @@ func TestLaunchOptionsDetectsMatchingCurrentRepo(t *testing.T) {
 func TestLaunchOptionsHonorsSmartFilteringDisabled(t *testing.T) {
 	cwd := makeGitDir(t, "origin", "https://gitea.example.com/acme/widgets.git")
 	disabled := false
-	got := launchOptions(&config.Config{SmartFilteringAtLaunch: &disabled}, "https://gitea.example.com", cwd)
+	got := launchOptions(&config.Config{SmartFilteringAtLaunch: &disabled}, "https://gitea.example.com", cwd, false)
 	if got.CurrentRepo != "" {
 		t.Fatalf("CurrentRepo = %q, want empty when smart filtering is disabled", got.CurrentRepo)
 	}
 	if got.SmartFiltering {
 		t.Fatal("SmartFiltering should be disabled by config")
+	}
+}
+
+func TestLaunchOptionsForcesOffForMock(t *testing.T) {
+	cwd := makeGitDir(t, "origin", "https://gitea.example.com/acme/widgets.git")
+	got := launchOptions(&config.Config{}, "https://gitea.example.com", cwd, true)
+	if got.SmartFiltering || got.CurrentRepo != "" {
+		t.Fatalf("launchOptions(mock=true) = %+v, want zero value regardless of a matching cwd repo", got)
+	}
+}
+
+func TestParseArgsMock(t *testing.T) {
+	opts, err := parseArgs([]string{"--mock"})
+	if err != nil || !opts.mock {
+		t.Fatalf("parseArgs(--mock) = %+v, %v", opts, err)
 	}
 }
 

@@ -1,6 +1,10 @@
 package mockgitea
 
-import "time"
+import (
+	"time"
+
+	"github.com/gbarany/tea-dash/internal/config"
+)
 
 // DemoData builds the deterministic "teahouse" dataset used by --mock and by
 // the UI-overhaul demo video: a fictional company selling internet-connected
@@ -984,4 +988,56 @@ func (d *demoBuilder) notifications() {
 		"teahouse/steep", "https://git.teahouse.dev/teahouse/steep/pulls/3", d.hoursAgo(15))
 	add(false, false, "bug: timer resets when tab is backgrounded", "Issue", "open",
 		"teahouse/steep", "https://git.teahouse.dev/teahouse/steep/issues/4", d.hoursAgo(5))
+}
+
+// --- demo config -----------------------------------------------------------
+
+// DemoConfig is the built-in config --mock uses when the user didn't pass an
+// explicit --config. localRepoPath may be "" (the Branches view then stays
+// empty — SeedLocalRepo failed or wasn't run).
+//
+// Two settings are forced defensively rather than relied on as defaults,
+// so DemoConfig is correct standalone (e.g. if something builds a ui.Model
+// directly off it without going through main.go's mock-specific
+// launchOptions override):
+//   - SmartFilteringAtLaunch: false. Smart filtering scopes sections to the
+//     git repo tea-dash was launched from; --mock must never let that repo
+//     (very likely the real tea-dash checkout) leak into the demo's fake
+//     teahouse data.
+//   - Defaults.IncludeReadNotifications: true. Already the zero-value
+//     default (nil means true — see IncludeReadNotificationsEnabled), but
+//     the demo's Inbox depends on it to show 3 of its 9 seeded rows, so
+//     it's set explicitly rather than resting on an implicit default that
+//     could flip later.
+func DemoConfig(localRepoPath string) *config.Config {
+	smartFilteringOff := false
+	includeRead := true
+
+	cfg := &config.Config{
+		Repos:                  []string{"teahouse/kettle", "teahouse/steep", "teahouse/infra"},
+		SmartFilteringAtLaunch: &smartFilteringOff,
+		Defaults: config.Defaults{
+			IncludeReadNotifications: &includeRead,
+		},
+		PRSections: []config.SectionConfig{
+			{Title: "My Pull Requests", Filter: config.PrIssueFilter{State: "open", CreatedBy: "@me"}},
+			{Title: "Needs My Review", Filter: config.PrIssueFilter{State: "open", ReviewRequested: "@me"}},
+			{Title: "All Open", Filter: config.PrIssueFilter{State: "open"}},
+			{Title: "Merged & Closed", Filter: config.PrIssueFilter{State: "closed"}},
+		},
+		IssuesSections: []config.SectionConfig{
+			{Title: "Assigned To Me", Filter: config.PrIssueFilter{State: "open", AssignedBy: "@me"}},
+			{Title: "All Open Issues", Filter: config.PrIssueFilter{State: "open"}},
+		},
+		NotificationsSections: []config.SectionConfig{{Title: "Inbox", Limit: 50}},
+		ActionsSections: []config.SectionConfig{
+			{Title: "kettle CI", Repo: "teahouse/kettle"},
+			{Title: "steep CI", Repo: "teahouse/steep"},
+		},
+	}
+	if localRepoPath != "" {
+		cfg.LocalRepos = []config.LocalRepoConfig{{Name: "kettle", Path: localRepoPath}}
+		cfg.BranchSections = []config.SectionConfig{{Title: "Local Branches"}}
+	}
+	return cfg
 }
