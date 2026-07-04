@@ -93,6 +93,59 @@ actionsSections:
 	}
 }
 
+func TestConfigSchemaValidatesThemeIconsAndStateColors(t *testing.T) {
+	schema := loadConfigSchema(t)
+	doc := loadYAMLBytes(t, []byte(`
+theme:
+  icons: nerd
+  colors:
+    state:
+      open: "#2da44e"
+      draft: "#6e7781"
+      merged: "#8250df"
+      closed: "#cf222e"
+      success: "#2da44e"
+      failure: "#cf222e"
+      running: "#d4a72c"
+      neutral: "#6e7781"
+`))
+
+	if err := schema.Validate(doc); err != nil {
+		t.Fatalf("schema should validate theme.icons and theme.colors.state: %v", err)
+	}
+}
+
+func TestConfigSchemaRejectsUnknownIconSet(t *testing.T) {
+	schema := loadConfigSchema(t)
+	doc := loadYAMLBytes(t, []byte(`
+theme:
+  icons: emoji
+`))
+
+	err := schema.Validate(doc)
+	if err == nil {
+		t.Fatal("schema should reject an unsupported theme.icons value")
+	}
+	if !strings.Contains(err.Error(), "icons") {
+		t.Fatalf("schema error = %v, want it to mention icons", err)
+	}
+}
+
+func TestConfigSchemaRejectsUnknownThemeStateColorField(t *testing.T) {
+	schema := loadConfigSchema(t)
+	doc := loadYAMLBytes(t, []byte(`
+theme:
+  colors:
+    state:
+      opened: "#2da44e"
+`))
+
+	err := schema.Validate(doc)
+	if err == nil {
+		t.Fatal("schema should reject an unknown theme.colors.state field")
+	}
+}
+
 func TestConfigSchemaCoversDocumentedTopLevelKeys(t *testing.T) {
 	raw, err := os.ReadFile("schema.json")
 	if err != nil {

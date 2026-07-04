@@ -402,6 +402,72 @@ theme:
 	}
 }
 
+func TestUnmarshalThemeIconsAndStateColors(t *testing.T) {
+	const y = `
+theme:
+  icons: nerd
+  colors:
+    state:
+      open: "#2da44e"
+      draft: "#6e7781"
+      merged: "#8250df"
+      closed: "#cf222e"
+      success: "#2da44e"
+      failure: "#cf222e"
+      running: "#d4a72c"
+      neutral: "#6e7781"
+`
+	var c Config
+	if err := yaml.Unmarshal([]byte(y), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Theme.Icons != "nerd" {
+		t.Fatalf("theme.icons = %q, want nerd", c.Theme.Icons)
+	}
+	state := c.Theme.Colors.State
+	if state.Open != "#2da44e" || state.Draft != "#6e7781" || state.Merged != "#8250df" ||
+		state.Closed != "#cf222e" || state.Success != "#2da44e" || state.Failure != "#cf222e" ||
+		state.Running != "#d4a72c" || state.Neutral != "#6e7781" {
+		t.Fatalf("theme.colors.state = %+v", state)
+	}
+}
+
+func TestUnmarshalThemeIconsEmptyDefaultsToUnset(t *testing.T) {
+	var c Config
+	if err := yaml.Unmarshal([]byte(`theme: {}`), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if c.Theme.Icons != "" {
+		t.Fatalf("theme.icons = %q, want empty (unicode default) when omitted", c.Theme.Icons)
+	}
+}
+
+func TestConfigValidateAcceptsKnownIconSets(t *testing.T) {
+	for _, icons := range []string{"", "unicode", "nerd", "ascii"} {
+		if err := (&Config{Theme: Theme{Icons: icons}}).Validate(); err != nil {
+			t.Fatalf("Validate() rejected valid theme.icons %q: %v", icons, err)
+		}
+	}
+}
+
+func TestConfigValidateRejectsUnknownIconSet(t *testing.T) {
+	err := (&Config{Theme: Theme{Icons: "emoji"}}).Validate()
+	if err == nil {
+		t.Fatal("Validate() should reject an unsupported theme.icons value")
+	}
+	for _, want := range []string{"unicode", "nerd", "ascii", "emoji"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Validate() error = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
+func TestConfigValidateEmptyConfigStaysValid(t *testing.T) {
+	if err := (&Config{}).Validate(); err != nil {
+		t.Fatalf("Validate() should accept an empty config: %v", err)
+	}
+}
+
 func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 	cases := []struct {
 		name string

@@ -148,14 +148,32 @@ type Pager struct {
 
 // Theme customizes tea-dash's visual styling.
 type Theme struct {
+	// Icons selects the glyph set used for state indicators (rows, previews,
+	// tabs): "unicode" (default), "nerd", or "ascii". Empty means "unicode".
+	Icons  string      `yaml:"icons"`
 	Colors ThemeColors `yaml:"colors"`
 }
 
-// ThemeColors groups text, background, and border color overrides.
+// ThemeColors groups text, background, border, and state color overrides.
 type ThemeColors struct {
 	Text       ThemeTextColors       `yaml:"text"`
 	Background ThemeBackgroundColors `yaml:"background"`
 	Border     ThemeBorderColors     `yaml:"border"`
+	State      ThemeStateColors      `yaml:"state"`
+}
+
+// ThemeStateColors customizes the colors used for PR/issue/CI state
+// indicators. The shape mirrors gh-dash-style state coloring; unset fields
+// fall back to tea-dash's built-in gh-convention defaults.
+type ThemeStateColors struct {
+	Open    string `yaml:"open"`
+	Draft   string `yaml:"draft"`
+	Merged  string `yaml:"merged"`
+	Closed  string `yaml:"closed"`
+	Success string `yaml:"success"`
+	Failure string `yaml:"failure"`
+	Running string `yaml:"running"`
+	Neutral string `yaml:"neutral"`
 }
 
 // ThemeTextColors customizes foreground colors used by the TUI.
@@ -480,6 +498,11 @@ func (c *Config) Validate() error {
 	case "", "prs", "issues", "notifications", "actions", "branches":
 	default:
 		return fmt.Errorf("defaults.view = %q: want \"prs\", \"issues\", \"notifications\", \"actions\", or \"branches\"", c.Defaults.View)
+	}
+	switch c.Theme.Icons {
+	case "", "unicode", "nerd", "ascii":
+	default:
+		return fmt.Errorf("theme.icons = %q: want \"unicode\", \"nerd\", or \"ascii\"", c.Theme.Icons)
 	}
 	return nil
 }
