@@ -119,7 +119,7 @@ drill into (focus) the preview panel rather than opening a browser.
 | Global | `esc` | universal dismiss: prompt → search → preview focus |
 | Global | `?` | show / hide full help |
 | Global | `o` | open in browser |
-| Global | `r` / `R` | refresh section / refresh all |
+| Global | `r` / `R`† | refresh section / refresh all |
 | Global | `y` / `Y` | copy row number / URL |
 | Global | `t` | toggle current-repo smart filtering (when launched from a matching git checkout) |
 | Global | `q` / `ctrl+c` | quit |
@@ -133,6 +133,10 @@ drill into (focus) the preview panel rather than opening a browser.
 preview drill-in target of their own); the preview-focus binding falls back
 to `tab` there. This is the only view-specific `enter` exception.
 
+† In the CI view specifically, `R` is scoped to rerun instead (see the CI
+row) — refresh a CI section with `r`; there is no refresh-all default key
+in that view (a custom keybinding can still reach `refreshAll` there).
+
 The merge picker includes each merge strategy plus explicit `+ delete branch`,
 `with message`, `+ force merge`, `when checks pass`, and combined variants.
 
@@ -142,7 +146,7 @@ The merge picker includes each merge strategy plus explicit `+ delete branch`,
 | --- | --- | --- |
 | `enter` opened browser | `enter` focuses preview; use `o` | lazygit drill-in convention |
 | `ctrl+u`/`ctrl+d` scrolled preview | scroll the **list**; preview scrolls when focused (`j/k`/`d`/`u`/`g`/`G`), or via mouse wheel | lazygit/vim list paging |
-| `ctrl+r` refresh all | dropped; use `R` | duplicate |
+| `ctrl+r` refresh all | dropped; use `R` — except in the CI view, where `R` reruns instead and refresh-all has no default key at all | duplicate |
 | `[`/`]` preview tabs from list | only while preview is focused | `[`/`]` are panel-tab keys in lazygit |
 | — | `1`–`5` view jump, `tab` focus toggle, `esc` dismiss | new |
 

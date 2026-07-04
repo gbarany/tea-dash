@@ -22,6 +22,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/header"
+	"github.com/gbarany/tea-dash/internal/ui/components/helpoverlay"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
@@ -60,13 +61,20 @@ type Model struct {
 	// focused one.
 	previewFocused bool
 
+	// activeOverlay is which modal (if any) is currently showing —
+	// overlayNone | overlayHelp today; Task 7's command palette adds
+	// overlayPalette alongside. While non-zero, Update routes every
+	// KeyPressMsg to the overlay first (spec §4), ahead of even the action
+	// prompt and search-focus interceptions below.
+	activeOverlay overlayKind
+	helpOverlay   helpoverlay.Model
+
 	actionDispatcher func(actions.Intent) tea.Cmd
 	actionPrompt     actionprompt.Model
 	pendingAction    actions.Intent
 	pendingQuit      bool
 	actionFeedback   actionfeedback.Model
 	copyToClipboard  func(string) error
-	showHelp         bool
 
 	// Detail maps memoize fetched preview detail keyed by "owner/repo#num".
 	// syncSidebar reads the map matching the selected row kind.
@@ -89,6 +97,16 @@ type actionButton struct {
 	Label   string
 	Builtin string
 }
+
+// overlayKind is which modal (if any) currently owns all key input — see
+// Model.activeOverlay.
+type overlayKind int
+
+const (
+	overlayNone overlayKind = iota
+	overlayHelp
+	// overlayPalette (Task 7) slots in here.
+)
 
 // openFailedMsg reports that opening a URL in the browser failed, so the UI can
 // surface the error (and the URL, to copy) instead of failing silently.
@@ -208,6 +226,7 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		keys:            keys,
 		tabs:            tabs.New(ctx),
 		sidebar:         sidebar.New(ctx),
+		helpOverlay:     helpoverlay.New(ctx),
 		tasks:           tasks,
 		actionPrompt:    actionprompt.New(),
 		actionFeedback:  actionfeedback.New(),
@@ -367,6 +386,15 @@ func (m Model) autoRefreshCmd() tea.Cmd {
 
 // Update routes messages: layout, async results, keys, then generic fallthrough.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// An open overlay (help today; Task 7's palette later) gets first
+	// routing priority — ahead of even the action prompt / search-focus
+	// interceptions below (spec §4: "overlay intercepts all keys while
+	// open"). Non-key messages (resize, async fetches, spinner ticks, ...)
+	// still flow through the normal switch beneath this, so the overlay
+	// stays live/responsive to a resize while open.
+	if key, ok := msg.(tea.KeyPressMsg); ok && m.activeOverlay != overlayNone {
+		return m.updateOverlay(key)
+	}
 	if _, ok := msg.(tea.KeyPressMsg); ok && m.actionPrompt.Active() {
 		return m, m.updateActionPrompt(msg)
 	}
@@ -626,7 +654,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case !m.scopedBuiltinOverridden("copyurl") && key.Matches(msg, m.keys.CopyURL):
 			return m, m.copySelectedURL()
 		case !m.scopedBuiltinOverridden("help") && key.Matches(msg, m.keys.Help):
-			m.showHelp = !m.showHelp
+			m.openHelpOverlay()
 			return m, nil
 		case !m.scopedBuiltinOverridden("nextSection") && key.Matches(msg, m.keys.NextSection):
 			if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
@@ -734,11 +762,15 @@ func (m Model) renderShell(l layout.Layout) string {
 	rows := make([]string, 0, l.ListPanel.H+2)
 	rows = append(rows, headerRow)
 
-	// An action prompt or the expanded help text replaces the list+preview
-	// area with one full-width panel (Task 5 replaces this with a proper
-	// centered overlay). Using the combined width — instead of squeezing
-	// into the narrower list-only interior — avoids word-wrap breaking a
-	// short multi-word phrase (e.g. "R refresh all") across two lines.
+	// An action prompt or an open overlay (help today; Task 7's palette
+	// later) replaces the list+preview area with one full-width panel —
+	// the plan's Task 5 explicitly allows this simpler "full interior
+	// replacement" over a true lipgloss.Place-centered floating modal, and
+	// it renders cleanly here, so that's the choice made. Using the
+	// combined width — instead of squeezing into the narrower list-only
+	// interior — avoids word-wrap breaking a short multi-word phrase (e.g.
+	// "R refresh all") across two lines, and gives the help overlay's
+	// viewport a reasonably wide column for its two-column key/desc rows.
 	if overlay, ok := m.overlayContent(); ok {
 		fullPanel := layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
 		interior := layout.Rect{X: fullPanel.X + 1, Y: fullPanel.Y + 1, W: fullPanel.W - 2, H: fullPanel.H - 2}
@@ -765,7 +797,7 @@ func (m Model) renderShell(l layout.Layout) string {
 }
 
 // overlayContent returns the content that should replace the list/preview
-// area — the active action prompt, or the expanded help text — and whether
+// area — the active action prompt, or the open help overlay — and whether
 // either is currently showing.
 func (m Model) overlayContent() (string, bool) {
 	if m.actionPrompt.Active() {
@@ -775,8 +807,12 @@ func (m Model) overlayContent() (string, bool) {
 		}
 		return m.actionPrompt.View(fullWidth), true
 	}
-	if m.showHelp {
-		return m.helpLineFull(), true
+	if m.activeOverlay == overlayHelp {
+		// Sized to this same full-width/full-height interior by
+		// resizeHelpOverlay (see its doc comment for why that has to
+		// happen on the persisted model in syncMainContentDimensions,
+		// not lazily here).
+		return m.helpOverlay.View(), true
 	}
 	return "", false
 }
@@ -791,11 +827,11 @@ func (m Model) listInteriorContent() string {
 
 // statusBarRow renders the bottom border/status row: left is transient
 // action feedback, middle is section status counts, right is a short
-// key-hint line ending in "? help · q quit" (spec §1). helpLine()'s
-// existing compact/expanded forms are both too long for a single status-bar
-// segment shared with the other two — the expanded form renders as the
-// list-panel overlay instead (see overlayContent); statusHints is a
-// separate, deliberately short line just for this row.
+// key-hint line ending in "? help · q quit" (spec §1). helpLine()'s compact
+// form is still too long for a single status-bar segment shared with the
+// other two — the full keymap renders in the help overlay instead (see
+// overlayContent); statusHints is a separate, deliberately short line just
+// for this row.
 func (m Model) statusBarRow(l layout.Layout) string {
 	return statusbar.View(l.StatusBar.W, m.statusLeftSegment(), m.statusLine(), m.statusHints(), m.ctx.Styles)
 }
@@ -965,38 +1001,16 @@ func padOrTruncateLine(s string, w int) string {
 	return s
 }
 
-// helpLine is the current view's key-hint text: the expanded form while
-// showHelp is toggled on (rendered as the list-panel overlay, see
-// overlayContent), otherwise the compact form (fed into the status bar's
-// right segment).
+// helpLine is the current view's compact key-hint text (helpLineShort).
+// It used to have an expanded form too, toggled by showHelp and rendered
+// as a one-line list-panel overlay — Task 5's help overlay (see
+// overlayContent, helpoverlay.Model) replaces that entirely with a proper
+// scrollable modal generated from keyMap.Groups(view), so only the compact
+// form is left. Kept as its own function (rather than inlining
+// helpLineShort's body here) because tests call it directly to sanity
+// check per-view shortcut text.
 func (m Model) helpLine() string {
-	if m.showHelp {
-		return m.helpLineFull()
-	}
 	return m.helpLineShort()
-}
-
-func (m Model) helpLineFull() string {
-	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
-	if m.ctx.CurrentRepo != "" {
-		text += " · t current repo"
-	}
-	switch m.ctx.View {
-	case context.ActionsView:
-		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
-		if m.ctx.CurrentRepo != "" {
-			text += " · t current repo"
-		}
-	case context.NotificationsView:
-		text += " · m mark read · u mark unread · M mark all read · b pin/unpin · B unpin"
-	case context.BranchesView:
-		text += " · C/space switch · P push · f fast-forward · F force-push · d/backspace delete"
-	case context.IssuesView:
-		text += " · c comment · a/A assign/unassign · L/U labels · M milestone · b/B subscribe/unsubscribe · x/X close/reopen"
-	default:
-		text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · w checks · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
-	}
-	return text + " · q quit"
 }
 
 func (m Model) helpLineShort() string {
@@ -1933,7 +1947,7 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "copynumber":
 		return m, m.copySelectedNumber(), true
 	case "help":
-		m.showHelp = !m.showHelp
+		m.openHelpOverlay()
 		return m, nil, true
 	case "markasread", "markread", "markasdone", "markdone":
 		next, cmd := m.markSelectedNotificationRead()
@@ -2243,17 +2257,23 @@ func (m Model) previewVisible() bool {
 
 // dismissTop implements the universal esc cascade (spec §2's Global "esc"
 // row): the first dismissible layer, most-nested first, closes; esc at the
-// top level (nothing open) does nothing. The cascade order is action prompt
-// → search → preview focus — action prompt and search are listed for
-// documentation completeness even though they're unreachable from here
-// today (both already intercept esc themselves, before Update ever reaches
-// this function: see the tea.KeyPressMsg + m.actionPrompt.Active() check at
-// the top of Update, and the tea.KeyPressMsg + IsSearchFocused check right
-// after it, which forward straight to the action prompt's / section's own
-// esc handling). Tasks 5/7 prepend the help overlay's and command palette's
-// own dismissers in front of these two, since those are modal overlays
-// that sit above everything else.
+// top level (nothing open) does nothing. The cascade order is overlay →
+// action prompt → search → preview focus. Task 5's help overlay is the
+// first REACHABLE step (esc while it's open never even reaches Update's
+// KeyPressMsg switch that calls dismissTop — see updateOverlay — so this
+// entry is for when a future overlay wants to esc-cascade to an outer
+// state instead of just closing, and for documentation). Action prompt and
+// search are listed for the same reason: both already intercept esc
+// themselves, before Update ever reaches this function (see the
+// tea.KeyPressMsg + m.actionPrompt.Active() check at the top of Update,
+// and the tea.KeyPressMsg + IsSearchFocused check right after it, which
+// forward straight to the action prompt's / section's own esc handling).
+// Task 7 prepends the command palette's own dismisser here too.
 func (m Model) dismissTop() (Model, tea.Cmd) {
+	if m.activeOverlay != overlayNone {
+		m.activeOverlay = overlayNone
+		return m, nil
+	}
 	if m.actionPrompt.Active() {
 		// Unreachable today (see doc comment above) — kept so this
 		// function documents the full, real cascade order.
@@ -2269,6 +2289,55 @@ func (m Model) dismissTop() (Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// updateOverlay routes every key press to the active overlay while one is
+// open (spec §4: "overlay intercepts all keys while open"): esc/q/? close
+// it; everything else goes to the overlay's own scroll handling
+// (j/k/d/u/g/G) and is swallowed regardless of whether the overlay
+// recognized it — nothing falls through to the normal routing below.
+func (m Model) updateOverlay(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Esc) || key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.Help) {
+		m.activeOverlay = overlayNone
+		return m, nil
+	}
+	switch m.activeOverlay {
+	case overlayHelp:
+		var cmd tea.Cmd
+		m.helpOverlay, cmd, _ = m.helpOverlay.Update(msg)
+		return m, cmd
+	default:
+		return m, nil
+	}
+}
+
+// openHelpOverlay opens the help overlay (spec §4), loading it fresh with
+// the current view's keymap groups every time — so a config rebind or a
+// view switch since the last time it was open is always reflected, per
+// helpoverlay.Model.SetGroups's contract. Mirrors the old showHelp toggle's
+// UX: pressing the help key again while it's already open closes it,
+// same as updateOverlay's own esc/q/? handling (both are reachable —
+// this one from the normal key switch below, before the overlay is open).
+func (m *Model) openHelpOverlay() {
+	if m.activeOverlay == overlayHelp {
+		m.activeOverlay = overlayNone
+		return
+	}
+	m.helpOverlay.SetGroups(toHelpOverlayGroups(m.keys.Groups(m.ctx.View)))
+	m.activeOverlay = overlayHelp
+}
+
+// toHelpOverlayGroups adapts keys.go's []BindingGroup (package ui) to
+// helpoverlay.Group — identical shape, different package, because
+// helpoverlay can't import package ui (see its package doc comment for the
+// import-cycle reasoning) and keyMap can't move there (it's the dispatch
+// table for the rest of app.go).
+func toHelpOverlayGroups(groups []BindingGroup) []helpoverlay.Group {
+	out := make([]helpoverlay.Group, len(groups))
+	for i, g := range groups {
+		out[i] = helpoverlay.Group{Title: g.Title, Bindings: g.Bindings}
+	}
+	return out
 }
 
 func (m Model) quitOrConfirm() (Model, tea.Cmd) {
@@ -2929,6 +2998,34 @@ func (m *Model) syncMainContentDimensions() {
 	m.ctx.MainContentHeight = m.layout.ListInterior.H
 	m.ctx.PreviewWidth = m.layout.PreviewInterior.W
 	m.ctx.PreviewHeight = m.layout.PreviewInterior.H
+	m.resizeHelpOverlay()
+}
+
+// resizeHelpOverlay sizes the help overlay's viewport to the same
+// full-width list+preview interior overlayContent() composites it into.
+// This has to happen here — on the *pointer*-receiver model that
+// Update actually persists — rather than lazily inside overlayContent()/
+// View() (both value-receiver methods whose mutations are thrown away
+// after each render): Update's own scroll handling (j/k/g/G/d/u, routed
+// to helpoverlay.Model.Update) reads the viewport's OWN Height/Width to
+// compute the new offset (GotoBottom's max offset, HalfPageDown's step
+// size), not anything derived at render time. Sizing only at View() time
+// left the persisted viewport stuck at its New() zero size forever: 'd'
+// silently no-opped (half of a zero height is zero) and 'G' scrolled to
+// an offset equal to the full line count (max(0, total-0)), rendering
+// blank — both invisible in a quick glance at the rendered frame, since
+// fitBlock pads/crops every render to the right final size regardless of
+// what the viewport's internal window actually showed.
+func (m *Model) resizeHelpOverlay() {
+	w := m.layout.ListPanel.W + m.layout.PreviewPanel.W - 2
+	if w < 0 {
+		w = 0
+	}
+	h := m.layout.ListPanel.H - 2
+	if h < 1 {
+		h = 1
+	}
+	m.helpOverlay.SetSize(w, h)
 }
 
 // statusLine is the status bar's middle segment: plain (unstyled) text —

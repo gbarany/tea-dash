@@ -3160,22 +3160,39 @@ func TestBranchSwitchCurrentBranchShowsNotice(t *testing.T) {
 	}
 }
 
+// TestHelpKeyTogglesFullHelp covers the plan's Task 5 Step 3 requirement:
+// "?" opens the help overlay (universal group titles "Views"/"List" plus
+// the current view's scoped group — "PRs" on the default Pulls view — all
+// visible), and a second "?" closes it again. Individual binding
+// descriptions (rather than the old hand-written "R refresh all"-style
+// concatenated strings) are asserted since the overlay's content now comes
+// straight from keyMap.Groups(view)'s help text, which render() lays out
+// as padded "key   desc" columns, not "key desc" one-space pairs. The
+// window is tall (90 rows) so every group — including the trailing
+// view-scoped one — fits without scrolling; scrolling itself is covered
+// separately by TestHelpOverlayScrollKeysScrollOverlayNotList.
 func TestHelpKeyTogglesFullHelp(t *testing.T) {
 	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
-	if strings.Contains(m.View().Content, "R refresh all") {
+	if strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("full help should be hidden before '?' is pressed")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayHelp {
+		t.Fatal("'?' should open the help overlay")
+	}
 	view := m.View().Content
-	for _, want := range []string{"R refresh all", "y copy number", "Y copy URL", "C/space checkout"} {
+	for _, want := range []string{"Views", "List", "PRs", "refresh all", "copy number", "copy URL", "checkout"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("full help missing %q:\n%s", want, view)
 		}
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
-	if strings.Contains(m.View().Content, "R refresh all") {
+	if m.activeOverlay != overlayNone {
+		t.Fatal("second '?' should close the help overlay")
+	}
+	if strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("second '?' should hide full help")
 	}
 }
@@ -3186,20 +3203,115 @@ func TestConfigKeybindingRebindsBuiltin(t *testing.T) {
 			Universal: []config.Keybinding{{Key: "H", Builtin: "help"}},
 		},
 	}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
-	if strings.Contains(m.View().Content, "R refresh all") {
+	if strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("default '?' help key should be replaced by the configured binding")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'H', Text: "H"})
-	if !strings.Contains(m.View().Content, "R refresh all") {
+	if !strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("configured 'H' key should toggle full help")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'H', Text: "H"})
 	view := m.View().Content
 	if !strings.Contains(view, "H help") || strings.Contains(view, "? help") {
 		t.Fatalf("compact help should show configured help key and hide the old key:\n%s", view)
+	}
+}
+
+// TestHelpOverlayScrollKeysScrollOverlayNotList covers the plan's Task 5
+// Step 3 requirement that 'j' scrolls the overlay, not the underlying
+// list: at a short window height the ~9-group keymap content can't fit,
+// so the very first line ("Views", the first group's title) scrolls out
+// of view after a single 'j'. 'esc' then closes the overlay (also
+// required), and the list's own row selection — never touched by the
+// overlay's key routing (updateOverlay swallows every key) — is confirmed
+// unchanged from before the overlay opened.
+func TestHelpOverlayScrollKeysScrollOverlayNotList(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 14})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"},
+		{Number: 3, Title: "Third", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"},
+	}))
+	before := m.getCurrRowData().GetNumber()
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	opened := m.View().Content
+	if !strings.Contains(opened, "Views") {
+		t.Fatalf("help overlay should open scrolled to the top (Views group visible):\n%s", opened)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	scrolled := m.View().Content
+	if strings.Contains(scrolled, "Views") {
+		t.Fatalf("'j' should scroll the overlay past the Views group heading, not move the list:\n%s", scrolled)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("esc should close the help overlay")
+	}
+	if got := m.getCurrRowData().GetNumber(); got != before {
+		t.Fatalf("scrolling the overlay must not move the underlying list's selection: got row %d, want %d", got, before)
+	}
+}
+
+// TestHelpOverlayHalfPageAndBottomScrollActuallyMove is a regression guard:
+// SetSize used to only ever run inside the render path (overlayContent, a
+// value-receiver method whose mutations to its copy of m.helpOverlay are
+// thrown away after each View() call), so the PERSISTED model's viewport
+// Height stayed stuck at its New() zero value forever. That broke two of
+// helpoverlay's scroll keys in a way invisible from a single
+// top-of-content screenshot (fitBlock always pads/crops every render to
+// the right final size regardless of the viewport's internal window):
+// 'd' (half-page down) silently moved by half of zero — a no-op — and 'G'
+// (goto bottom) computed an offset equal to the full content length,
+// rendering a blank panel. Fixed by sizing the overlay in
+// syncMainContentDimensions (a pointer-receiver method Update actually
+// persists) instead of lazily at render time.
+func TestHelpOverlayHalfPageAndBottomScrollActuallyMove(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	opened := m.View().Content
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'd', Text: "d"})
+	afterHalfPage := m.View().Content
+	if afterHalfPage == opened {
+		t.Fatalf("'d' (half-page down) should have scrolled the overlay, content unchanged:\n%s", afterHalfPage)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
+	atBottom := m.View().Content
+	if !strings.Contains(atBottom, "wheel") {
+		t.Fatalf("'G' should scroll to the bottom (mouse cheatsheet's \"wheel\" row should be visible), got:\n%s", atBottom)
+	}
+}
+
+// TestSearchFocusedHelpKeyTypesIntoSearch covers the plan's Task 5
+// requirement that "?" while the search bar is focused types into search
+// instead of opening the help overlay — the search-focus interception in
+// Update runs before the keymap switch that calls openHelpOverlay, but
+// only when no overlay is already open, so this guards the ordering stays
+// right.
+func TestSearchFocusedHelpKeyTypesIntoSearch(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if !m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' should focus the search bar")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("'?' while searching must not open the help overlay")
+	}
+	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "?") {
+		t.Fatalf("search value = %q, want it to contain the typed \"?\"", got)
 	}
 }
 
@@ -3399,14 +3511,17 @@ func TestScopedBuiltinKeybindingDoesNotLeakToOtherViews(t *testing.T) {
 
 func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Tall window so the trailing view-scoped "Inbox" group fits without
+	// scrolling — see TestHelpKeyTogglesFullHelp's doc comment.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
 	// The compact form's per-view shortcuts (helpLine()/helpLineShort())
 	// aren't rendered anywhere by default now — the status bar's right
 	// segment is a deliberately short, view-agnostic hint line (statusHints)
 	// — so the compact form is exercised at the function level here, and
-	// the expanded (showHelp=true) form is what actually renders in the
-	// view, as a list-panel overlay (see overlayContent).
+	// the full keymap is what actually renders in the view, as the help
+	// overlay (see overlayContent), generated from keyMap.Groups(view)'s
+	// view-scoped "Inbox" group for the notifications view.
 	if help := m.helpLine(); !strings.Contains(help, "u unread") {
 		t.Fatalf("compact notifications help missing unread shortcut: %q", help)
 	}
@@ -3414,29 +3529,46 @@ func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
 		t.Fatalf("compact notifications help missing pin shortcut: %q", help)
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
-	if view := m.View().Content; !strings.Contains(view, "u mark unread") {
-		t.Fatalf("full notifications help missing mark-unread shortcut:\n%s", view)
+	view := m.View().Content
+	if !strings.Contains(view, "Inbox") {
+		t.Fatalf("full notifications help missing the view-scoped Inbox group:\n%s", view)
 	}
-	if view := m.View().Content; !strings.Contains(view, "b pin") {
-		t.Fatalf("full notifications help missing pin shortcut:\n%s", view)
+	for _, want := range []string{"mark unread", "pin"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("full notifications help missing %q:\n%s", want, view)
+		}
 	}
 }
 
-func TestActionsHelpShowsRunControlsAndRefreshAllFallback(t *testing.T) {
+// TestActionsHelpShowsRunControls replaces a stale pre-Task-5 assertion:
+// the old hand-written helpLineFull() text advertised "ctrl+r refresh all"
+// for the actions view as a fallback around the R/rerun clash, but Task 4
+// (commit a55a433) already dropped ctrl+r entirely (see README's "Changed
+// in vNEXT" table and keys_test.go) without updating that hardcoded
+// string — a live example of exactly the kind of drift the keymap-
+// generated help overlay exists to prevent. The overlay instead renders
+// the CI group's real bindings (rerun, cancel run) straight from
+// keyMap.Groups, and never mentions the long-gone ctrl+r shortcut.
+func TestActionsHelpShowsRunControls(t *testing.T) {
 	m := New(&config.Config{
 		Defaults: config.Defaults{View: "actions"},
 		ActionsSections: []config.SectionConfig{{
 			Title: "CI", Repo: "gbarany/tea-dash",
 		}},
 	}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Tall window so the trailing view-scoped "CI" group fits without
+	// scrolling — see TestHelpKeyTogglesFullHelp's doc comment.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	view := m.View().Content
-	for _, want := range []string{"R rerun", "! cancel run", "ctrl+r refresh all"} {
+	for _, want := range []string{"rerun", "cancel run", "view logs"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("actions full help missing %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "ctrl+r") {
+		t.Fatalf("actions help should not advertise the long-dropped ctrl+r refresh-all shortcut:\n%s", view)
 	}
 }
 
