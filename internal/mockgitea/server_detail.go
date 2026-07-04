@@ -127,7 +127,11 @@ func (s *Server) handleIssueDetail(w http.ResponseWriter, r *http.Request) {
 // handleIssueComments serves GET .../issues/{index}/comments, which
 // internal/gitea also calls for a PR's comments (Gitea treats PRs as issues
 // for the comment thread) — hence checking both pullLocked and issueLocked
-// for existence before 404ing.
+// for existence before 404ing. Uses writeList (X-Total-Count = len(comments))
+// so a future paginated-comments client doesn't silently get no total; the
+// real SDK's ListIssueComments currently discards its *Response and so never
+// reads this header (internal/gitea/detail.go), but the contract should hold
+// regardless of today's caller.
 func (s *Server) handleIssueComments(w http.ResponseWriter, r *http.Request) {
 	full := r.PathValue("owner") + "/" + r.PathValue("repo")
 	idx, ok := parsePathInt64(r.PathValue("index"))
@@ -144,7 +148,7 @@ func (s *Server) handleIssueComments(w http.ResponseWriter, r *http.Request) {
 		if comments == nil {
 			comments = []*Comment{}
 		}
-		writeJSON(w, comments)
+		writeList(w, len(comments), comments)
 	})
 }
 

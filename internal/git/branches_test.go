@@ -170,9 +170,21 @@ func runTestGit(t *testing.T, repo string, args ...string) {
 	_ = gitOutput(t, repo, args...)
 }
 
+// gitOutput runs git with the machine's global/system config isolated and a
+// pinned commit identity — matching mockgitea.SeedLocalRepo's run() — so
+// these tests don't inherit the invoking user's personal git config (notably
+// commit.gpgsign): a machine with signing configured but its signing agent
+// down (e.g. a 1Password SSH-agent outage) would otherwise hang or fail every
+// commit these tests create.
 func gitOutput(t *testing.T, repo string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=tea-dash tests", "GIT_AUTHOR_EMAIL=tea-dash@example.invalid",
+		"GIT_COMMITTER_NAME=tea-dash tests", "GIT_COMMITTER_EMAIL=tea-dash@example.invalid",
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))

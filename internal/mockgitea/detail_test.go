@@ -1,6 +1,7 @@
 package mockgitea
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,30 @@ func TestGetPullDetail(t *testing.T) {
 	}
 	if d.Additions != 42 || d.Deletions != 7 || d.ChangedFiles != 3 {
 		t.Fatalf("diff stats not mapped: %+v", d)
+	}
+}
+
+// TestHandleIssueCommentsSetsXTotalCount pins the comments list response to
+// the same X-Total-Count contract every other list endpoint uses (see
+// server.go's writeList doc) — handleIssueComments used to write the array
+// with a plain writeJSON, silently omitting the header a future paginated-
+// comments client would need. The real SDK's ListIssueComments discards its
+// *Response (internal/gitea/detail.go's GetPullDetail/GetIssueDetail both
+// `_`-ignore it), so there is no client-level API to assert this through; a
+// raw HTTP call against the mock server is the only way to observe the
+// header.
+func TestHandleIssueCommentsSetsXTotalCount(t *testing.T) {
+	srv := NewServer(detailStore(time.Now()))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL() + "/api/v1/repos/teahouse/kettle/issues/1/comments")
+	if err != nil {
+		t.Fatalf("GET comments: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("X-Total-Count"); got != "1" {
+		t.Fatalf("X-Total-Count = %q, want %q (detailStore seeds 1 comment on kettle#1)", got, "1")
 	}
 }
 

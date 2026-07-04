@@ -263,6 +263,8 @@ func (s *Store) meLocked() *User {
 }
 
 // SetMe replaces the authenticated user.
+//
+// Kept as harness API for UI tests; not used by the server itself.
 func (s *Store) SetMe(u *User) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,6 +280,8 @@ func (s *Store) AddUser(u *User) {
 }
 
 // Users returns every registered user.
+//
+// Kept as harness API for UI tests; not used by the server itself.
 func (s *Store) Users() []*User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -834,6 +838,8 @@ func (s *Store) AddRun(run *ActionRun) {
 }
 
 // Runs returns every Actions workflow run in one repo.
+//
+// Kept as harness API for UI tests; not used by the server itself.
 func (s *Store) Runs(repo string) []*ActionRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -847,6 +853,8 @@ func (s *Store) runsLocked(repo string) []*ActionRun {
 }
 
 // RunByID returns one Actions workflow run by repo and ID, or nil.
+//
+// Kept as harness API for UI tests; not used by the server itself.
 func (s *Store) RunByID(repo string, id int64) *ActionRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -905,6 +913,8 @@ func (s *Store) AddLabelDef(repo string, l *Label) {
 }
 
 // LabelDefs returns every label definition available in one repo.
+//
+// Kept as harness API for UI tests; not used by the server itself.
 func (s *Store) LabelDefs(repo string) []*Label {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1018,6 +1028,8 @@ func (s *Store) AddMilestoneDef(repo string, m *Milestone) {
 }
 
 // MilestoneDefs returns every milestone definition available in one repo.
+//
+// Kept as harness API for UI tests; not used by the server itself.
 func (s *Store) MilestoneDefs(repo string) []*Milestone {
 	s.mu.Lock()
 	defer s.mu.Unlock()
