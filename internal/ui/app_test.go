@@ -1012,6 +1012,54 @@ func TestDoubleClickOutsideWindowDoesNotFocusPreview(t *testing.T) {
 	}
 }
 
+// TestClickRowThenTabThenSameRowIndexIsNotADoubleClick covers a T6 review
+// carry-forward: a row click, then a section-tab click, then a click on
+// the SAME row INDEX (in the now-different section) within the
+// double-click window must NOT register as a double-click — without
+// resetting lastClickAt on the intervening non-row click, clickListRow
+// would have no way to tell this apart from a genuine double-click on one
+// row, since it only compares the raw index and the previous click's time.
+func TestClickRowThenTabThenSameRowIndexIsNotADoubleClick(t *testing.T) {
+	m := New(&config.Config{}, nil) // default config: "Open"/"Closed" PR sections
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "Open row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 1, SectionType: pullsection.SectionType, TaskId: "p2",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows:       []data.PullRequest{{Number: 2, Title: "Closed row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "closed"}},
+			TotalCount: 1,
+			TaskId:     "p2",
+		},
+	})
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	rowClick := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, rowClick) // row 0 in section 0 ("Open")
+
+	ranges := m.tabs.Ranges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 rendered tab ranges, got %+v", ranges)
+	}
+	tabX := m.layout.ListPanel.X + 1 + ranges[1].Start
+	m.nowFn = func() time.Time { return base.Add(50 * time.Millisecond) }
+	m = update(t, m, tea.MouseClickMsg{X: tabX, Y: m.layout.SectionTabsRow, Button: tea.MouseLeft}) // -> section 1 ("Closed")
+	if m.currSectionId != 1 {
+		t.Fatalf("tab click should have switched to section 1, got %d", m.currSectionId)
+	}
+
+	m = viewed(m)
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) }                                     // still within the 400ms window
+	m = update(t, m, tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}) // row 0 in section 1
+
+	if m.previewFocused {
+		t.Fatal("row -> tab -> same row index within the window must be a single click, not a double-click")
+	}
+}
+
 // TestDoubleClickListRowInBranchesViewChecksOutInsteadOfFocusing covers the
 // T4 Branches exception carried into mouse routing: double-click there
 // checks out (opens the same confirm prompt enter does), never focuses the

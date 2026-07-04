@@ -1703,7 +1703,18 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 // switches the sidebar's tab, and the preview body focuses it. Zones with
 // no defined click behavior (list/preview body background, status bar) are
 // simply not listed, falling through to the no-op default.
+//
+// Any click that ISN'T on a list row resets lastClickAt first (T6 review
+// carry-forward): without this, clicking a row, then a section tab, then
+// the SAME row index again within doubleClickWindow would read as a
+// double-click on that row purely by coincidence of timing and index,
+// even though a tab switch happened in between — clickListRow only ever
+// compares against the most recent click's time/row, so it can't tell the
+// difference unless something else clears that state first.
 func (m Model) handleZoneLeftClick(zone layout.Zone) (Model, tea.Cmd) {
+	if zone.Kind != layout.ZoneListRow {
+		m.lastClickAt = time.Time{}
+	}
 	switch zone.Kind {
 	case layout.ZoneViewLabel:
 		return m, m.switchToView(context.ViewType(zone.Payload))
