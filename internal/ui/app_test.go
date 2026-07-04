@@ -3570,6 +3570,18 @@ func TestActionsHelpShowsRunControls(t *testing.T) {
 	if strings.Contains(view, "ctrl+r") {
 		t.Fatalf("actions help should not advertise the long-dropped ctrl+r refresh-all shortcut:\n%s", view)
 	}
+	// Fix-round regression: "R" is CI's rerun key AND (universally)
+	// RefreshAll's key, but app.go's dispatch switch resolves "R" to
+	// rerun-only in this view (RefreshAll has no reachable key here — see
+	// README's migration table), so keys.go's Groups suppresses the
+	// shadowed RefreshAll entry from Global here. The overlay should show
+	// exactly one "R" line ("rerun"), never "refresh all" too.
+	if strings.Contains(view, "refresh all") {
+		t.Fatalf("actions help should not list refresh all — it's shadowed by rerun's \"R\" in this view:\n%s", view)
+	}
+	if n := strings.Count(view, "rerun"); n != 1 {
+		t.Fatalf("actions help should show \"rerun\" exactly once, got %d:\n%s", n, view)
+	}
 }
 
 func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {

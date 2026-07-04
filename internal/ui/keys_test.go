@@ -103,6 +103,31 @@ func TestGroups_GlobalGroupDropsCtrlRAndIncludesEsc(t *testing.T) {
 	}
 }
 
+// TestGroups_GlobalGroupSuppressesViewShadowedKeys is the fix-round
+// regression test: the CI view's RerunRun ("R") shadows the universal
+// RefreshAll ("R") — app.go's dispatch switch checks RerunRun's
+// ActionsView-guarded case first, so RefreshAll is genuinely unreachable
+// by "R" in that view (README's migration table: "in the CI view, R
+// reruns instead ... there is no refresh-all default key in that view").
+// Before suppressShadowed, Groups(ActionsView)'s Global group still
+// listed RefreshAll under "R" right alongside CI's "R" rerun, which would
+// tell a help-overlay reader the key does two different things in that
+// view. Confirms the suppression is view-scoped, not global: PullsView's
+// Global group (no rerun binding to shadow it) keeps "R" for RefreshAll.
+func TestGroups_GlobalGroupSuppressesViewShadowedKeys(t *testing.T) {
+	k := defaultKeyMap()
+
+	actionsGlobal := groupByTitle(t, k.Groups(context.ActionsView), "Global")
+	if anyBindingHasKey(actionsGlobal, "R") {
+		t.Fatalf("Actions view's Global group should not list \"R\" (shadowed by CI's rerun): %+v", helpKeys(actionsGlobal))
+	}
+
+	pullsGlobal := groupByTitle(t, k.Groups(context.PullsView), "Global")
+	if !anyBindingHasKey(pullsGlobal, "R") {
+		t.Fatalf("Pulls view's Global group should still list \"R\" for refresh all: %+v", helpKeys(pullsGlobal))
+	}
+}
+
 // TestGroups_OpenIsBrowserOnly covers spec §2's migration table: enter no
 // longer opens the browser — only "o" does (enter now focuses the preview).
 func TestGroups_OpenIsBrowserOnly(t *testing.T) {

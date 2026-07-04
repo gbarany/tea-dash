@@ -122,8 +122,14 @@ type BindingGroup struct {
 // single call's result (view-scoped fields like Checkout or Comment are
 // shared BY NAME across multiple views' scoped groups, but only one
 // view-scoped group — the current view's — is ever included per call, so
-// there's no duplication within one Groups(view) result).
+// there's no duplication within one Groups(view) result) — with one
+// exception: the Global group has any binding whose key(s) are shadowed by
+// the view-scoped group filtered out first (see suppressShadowed), since
+// app.go's dispatch switch resolves those in the scoped group's favor and
+// listing both would tell the user a shadowed key does something it
+// can't reach in this view.
 func (k keyMap) Groups(view context.ViewType) []BindingGroup {
+	scoped := k.viewScopedGroup(view)
 	groups := []BindingGroup{
 		{Title: "Views", Bindings: []key.Binding{
 			k.ViewPulls, k.ViewIssues, k.ViewNotifications, k.ViewActions, k.ViewBranches, k.SwitchView,
@@ -135,11 +141,46 @@ func (k keyMap) Groups(view context.ViewType) []BindingGroup {
 		}},
 		{Title: "Search", Bindings: []key.Binding{k.Search}},
 		{Title: "Overlays", Bindings: []key.Binding{k.Help}},
-		{Title: "Global", Bindings: []key.Binding{
+		{Title: "Global", Bindings: suppressShadowed([]key.Binding{
 			k.Esc, k.Open, k.Refresh, k.RefreshAll, k.CopyNumber, k.CopyURL, k.ToggleSmart, k.Quit,
-		}},
+		}, scoped.Bindings)},
 	}
-	return append(groups, k.viewScopedGroup(view))
+	return append(groups, scoped)
+}
+
+// suppressShadowed drops any binding from bindings whose key(s) are also
+// claimed by a binding in scopedBindings. Dispatch-time switch-statement
+// ordering in app.go (e.g. the Actions view's RerunRun case, guarded by
+// `m.ctx.View == context.ActionsView`, is checked — and so wins — before
+// the general RefreshAll case for their shared "R" key) means a universal
+// binding shadowed this way is genuinely unreachable in that view, so the
+// help overlay listing it alongside the scoped binding that actually owns
+// the key would be actively misleading (README's migration table: "in the
+// CI view, R reruns instead ... there is no refresh-all default key in
+// that view"). Written as general key-set suppression rather than a
+// RefreshAll/RerunRun special case so any future Task 6+ collision gets
+// the same treatment for free.
+func suppressShadowed(bindings, scopedBindings []key.Binding) []key.Binding {
+	shadowed := map[string]bool{}
+	for _, b := range scopedBindings {
+		for _, k := range b.Keys() {
+			shadowed[k] = true
+		}
+	}
+	out := make([]key.Binding, 0, len(bindings))
+	for _, b := range bindings {
+		claimedByScope := false
+		for _, k := range b.Keys() {
+			if shadowed[k] {
+				claimedByScope = true
+				break
+			}
+		}
+		if !claimedByScope {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // viewScopedGroup is the one group of bindings specific to the current view
