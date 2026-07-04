@@ -241,11 +241,14 @@ func (m *Model[T]) Update(msg tea.Msg) (Section, tea.Cmd) {
 	return m, tea.Batch(cmd, m.MaybeFetchNextPage())
 }
 
-// UpdateProgramContext resizes the table and refreshes columns for the new width.
+// UpdateProgramContext resizes the table and refreshes columns for the new
+// width, rebuilding rows too: a resize can responsively drop a column
+// (SixColumnSpec.Fit), and previously-built rows (sized for the old column
+// count) must be rebuilt to match, or bubbles/table's cell-by-column-
+// position indexing misaligns or panics. See BaseModel.SafelySetColumnsAndRows.
 func (m *Model[T]) UpdateProgramContext(ctx *appctx.ProgramContext) {
 	m.BaseModel.UpdateProgramContext(ctx)
-	m.Columns = m.columns(ctx.MainContentWidth)
-	m.Table.SetColumns(m.Columns)
+	m.SafelySetColumnsAndRows(m.columns(ctx.MainContentWidth), m.BuildRows)
 }
 
 // GetCurrRow returns the selected row, or nil when there are no rows.

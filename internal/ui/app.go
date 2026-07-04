@@ -21,14 +21,20 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/header"
+	"github.com/gbarany/tea-dash/internal/ui/components/helpoverlay"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/palette"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
 	"github.com/gbarany/tea-dash/internal/ui/components/sidebar"
+	"github.com/gbarany/tea-dash/internal/ui/components/statusbar"
 	"github.com/gbarany/tea-dash/internal/ui/components/tabs"
 	"github.com/gbarany/tea-dash/internal/ui/context"
+	"github.com/gbarany/tea-dash/internal/ui/icons"
+	"github.com/gbarany/tea-dash/internal/ui/layout"
 )
 
 // Model is the root tea-dash model: a set of sections rendered as tabs. Each
@@ -46,7 +52,25 @@ type Model struct {
 	notifications []section.Section
 	actions       []section.Section
 	branches      []section.Section
-	notice        string // transient status message (e.g. browser-open failure)
+
+	// layout is every rectangle of the framed shell, recomputed by
+	// syncMainContentDimensions on every resize/toggle that can change it.
+	layout layout.Layout
+	// previewFocused routes keys to the preview pane and swaps which panel
+	// gets the focused border color. Task 4 wires the toggle (enter/tab,
+	// esc); it is always false until then, so the list panel is always the
+	// focused one.
+	previewFocused bool
+
+	// activeOverlay is which modal (if any) is currently showing —
+	// overlayNone | overlayHelp | overlayPalette. While non-zero, Update
+	// routes every KeyPressMsg to the overlay first (spec §4), ahead of
+	// even the action prompt and search-focus interceptions below. Only
+	// one overlay is ever open at a time — openHelpOverlay/openPalette
+	// both close whichever is open before opening their own.
+	activeOverlay overlayKind
+	helpOverlay   helpoverlay.Model
+	palette       palette.Model
 
 	actionDispatcher func(actions.Intent) tea.Cmd
 	actionPrompt     actionprompt.Model
@@ -54,7 +78,6 @@ type Model struct {
 	pendingQuit      bool
 	actionFeedback   actionfeedback.Model
 	copyToClipboard  func(string) error
-	showHelp         bool
 
 	// Detail maps memoize fetched preview detail keyed by "owner/repo#num".
 	// syncSidebar reads the map matching the selected row kind.
@@ -71,12 +94,62 @@ type Model struct {
 	// expanded controls whether the preview shows the full body or the folded
 	// (read-more) form. Reset to false each time the preview is (re)opened.
 	expanded bool
+
+	// zones is the mouse hit-testing registry (layout.Zones), rebuilt from
+	// scratch exactly once per render — see rebuildZones's doc comment for
+	// why it's a *pointer* field (View is a value-receiver method; a plain
+	// Zones value field would suffer the exact same lost-mutation bug the
+	// help overlay's viewport sizing had before it was fixed to size via a
+	// pointer-receiver hook) and why registration lives in that one place.
+	// handleMouseClick/handleMouseWheel only ever READ it.
+	zones *layout.Zones
+
+	// lastClickAt/lastClickRow implement double-click detection (spec §3):
+	// two left clicks on the SAME list row within doubleClickWindow count
+	// as a double-click. time.Now() (via clockNow, overridable by tests
+	// through nowFn) is used because tea.MouseClickMsg carries no
+	// timestamp; time.Time's monotonic reading (present on every value
+	// time.Now() returns) makes the Sub() comparison safe even if the wall
+	// clock is adjusted mid-session.
+	lastClickAt  time.Time
+	lastClickRow int
+	nowFn        func() time.Time
+
+	// pendingRowPalette is the Task 6 seam for spec §3's "right-click list
+	// row -> command palette scoped to that row's actions": a right-click
+	// on a list row records the clicked row's index here, and
+	// openRowPaletteFromPending (called from the same handleZoneRightClick
+	// call that sets it) reads and clears it in the same tick — see that
+	// function's doc comment. -1 means none pending.
+	pendingRowPalette int
 }
 
 type actionButton struct {
 	Label   string
 	Builtin string
 }
+
+// overlayKind is which modal (if any) currently owns all key input — see
+// Model.activeOverlay.
+type overlayKind int
+
+const (
+	overlayNone overlayKind = iota
+	overlayHelp
+	overlayPalette
+)
+
+// paletteScope narrows which items app.go's paletteItems builds: paletteAll
+// is the full ":"/"ctrl+p" palette (actions + view jumps + sections +
+// custom commands); paletteRowActions is the right-click scope (spec §3:
+// "row -> command palette scoped to that row's actions"), action items
+// only.
+type paletteScope int
+
+const (
+	paletteAll paletteScope = iota
+	paletteRowActions
+)
 
 // openFailedMsg reports that opening a URL in the browser failed, so the UI can
 // surface the error (and the URL, to copy) instead of failing silently.
@@ -130,6 +203,12 @@ type notificationActionMsg struct {
 type Options struct {
 	CurrentRepo    string
 	SmartFiltering bool
+
+	// MockHost and InstanceHost feed the header's right-side host label
+	// (spec §5). main.go sets MockHost ("demo.gitea.local") on the --mock
+	// path and InstanceHost (the real instance URL's host) otherwise.
+	MockHost     string
+	InstanceHost string
 }
 
 type watchChecksMsg struct {
@@ -166,6 +245,10 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		}
 		previewOpen = cfg.Defaults.Preview.PreviewOpen()
 	}
+	iconSet := icons.Unicode
+	if cfg != nil {
+		iconSet = icons.Parse(cfg.Theme.Icons)
+	}
 	ctx := &context.ProgramContext{
 		Config:         cfg,
 		Client:         client,
@@ -173,8 +256,11 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		View:           view,
 		PreviewOpen:    previewOpen,
 		Styles:         context.StylesForConfig(cfg),
+		Icons:          iconSet,
 		CurrentRepo:    opts.CurrentRepo,
 		SmartFiltering: opts.SmartFiltering,
+		MockHost:       opts.MockHost,
+		InstanceHost:   opts.InstanceHost,
 	}
 	ctx.StartTask = func(t context.Task) tea.Cmd {
 		tasks[t.Id] = t
@@ -184,24 +270,33 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 	keys := defaultKeyMap()
 	keys.applyConfig(cfg)
 	m := Model{
-		ctx:             ctx,
-		keys:            keys,
-		tabs:            tabs.New(ctx),
-		sidebar:         sidebar.New(ctx),
-		tasks:           tasks,
-		actionPrompt:    actionprompt.New(),
-		actionFeedback:  actionfeedback.New(),
-		copyToClipboard: writeClipboard,
-		pullDetails:     map[string]*data.PullDetail{},
-		issueDetails:    map[string]*data.IssueDetail{},
-		pullEnrichErr:   map[string]error{},
-		issueEnrichErr:  map[string]error{},
-		actionDetails:   map[string]*data.ActionRunDetail{},
-		actionEnrichErr: map[string]error{},
+		ctx:               ctx,
+		keys:              keys,
+		tabs:              tabs.New(ctx),
+		sidebar:           sidebar.New(ctx),
+		helpOverlay:       helpoverlay.New(ctx),
+		palette:           palette.New(ctx),
+		tasks:             tasks,
+		actionPrompt:      actionprompt.New(),
+		actionFeedback:    actionfeedback.New(),
+		copyToClipboard:   writeClipboard,
+		pullDetails:       map[string]*data.PullDetail{},
+		issueDetails:      map[string]*data.IssueDetail{},
+		pullEnrichErr:     map[string]error{},
+		issueEnrichErr:    map[string]error{},
+		actionDetails:     map[string]*data.ActionRunDetail{},
+		actionEnrichErr:   map[string]error{},
+		zones:             &layout.Zones{},
+		pendingRowPalette: -1,
 	}
 	// Build only the starting view's sections; the other slice stays nil until
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
 	m.setCurrentViewSections(buildSections(view, ctx))
+	// Compute an initial layout (even at the zero ScreenWidth/Height a
+	// fresh Model starts with) so m.layout is never the Layout zero value —
+	// View() branches on m.layout.TooSmall before the first WindowSizeMsg
+	// ever arrives in some tests.
+	m.syncMainContentDimensions()
 	return m
 }
 
@@ -342,6 +437,15 @@ func (m Model) autoRefreshCmd() tea.Cmd {
 
 // Update routes messages: layout, async results, keys, then generic fallthrough.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// An open overlay (help or the command palette) gets first routing
+	// priority — ahead of even the action prompt / search-focus
+	// interceptions below (spec §4: "overlay intercepts all keys while
+	// open"). Non-key messages (resize, async fetches, spinner ticks, ...)
+	// still flow through the normal switch beneath this, so the overlay
+	// stays live/responsive to a resize while open.
+	if key, ok := msg.(tea.KeyPressMsg); ok && m.activeOverlay != overlayNone {
+		return m.updateOverlay(key)
+	}
 	if _, ok := msg.(tea.KeyPressMsg); ok && m.actionPrompt.Active() {
 		return m, m.updateActionPrompt(msg)
 	}
@@ -371,26 +475,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case openFailedMsg:
-		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
-		return m, nil
+		return m, m.setError(fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url))
 
 	case copyResultMsg:
 		if msg.err != nil {
-			m.notice = fmt.Sprintf("Couldn't copy: %v", msg.err)
-		} else {
-			m.notice = fmt.Sprintf("Copied %s.", msg.value)
+			return m, m.setError(fmt.Sprintf("Couldn't copy: %v", msg.err))
 		}
-		return m, nil
+		return m, m.setSuccess(fmt.Sprintf("Copied %s.", msg.value))
 
 	case reviewersLoadedMsg:
-		return m.handleReviewersLoaded(msg), nil
+		return m.handleReviewersLoaded(msg)
 
 	case mergeCapabilitiesLoadedMsg:
-		return m.handleMergeCapabilitiesLoaded(msg), nil
+		return m.handleMergeCapabilitiesLoaded(msg)
 
 	case actions.ResultMsg:
-		m.notice = ""
-		m.actionFeedback = m.actionFeedback.Set(feedbackFromActionResult(msg))
+		var feedbackCmd tea.Cmd
+		m.actionFeedback, feedbackCmd = m.actionFeedback.Set(feedbackFromActionResult(msg))
 		if msg.Status == actions.ResultSucceeded {
 			m.clearPreviewCacheForAction(msg.Intent.Target)
 			if s := m.getCurrSection(); s != nil &&
@@ -399,10 +500,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.ctx.PreviewOpen {
 					m.syncSidebar()
 				}
-				return m, tea.Batch(s.FetchRows(), m.enrichCurrRow())
+				return m, tea.Batch(feedbackCmd, s.FetchRows(), m.enrichCurrRow())
 			}
 		}
-		return m, nil
+		return m, feedbackCmd
 
 	case enrichedMsg:
 		// Cache the fetched detail (keyed by the row it was requested for) and
@@ -435,10 +536,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case watchChecksMsg:
 		if msg.err != nil {
-			m.notice = fmt.Sprintf("Couldn't load PR checks: %v", msg.err)
-			return m, nil
+			return m, m.setError(fmt.Sprintf("Couldn't load PR checks: %v", msg.err))
 		}
 		return m.switchToPullChecks(msg.row, msg.detail.HeadRef, msg.detail.HeadSHA)
+
+	case actionfeedback.ExpireMsg:
+		// Delivered by the tea.Cmd a Success/Info/Cancel Set() returned;
+		// Expire ignores it if a newer Set has since superseded that
+		// generation (see actionfeedback.Model.Expire's doc comment).
+		m.actionFeedback = m.actionFeedback.Expire(msg.Gen)
+		return m, nil
 
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
@@ -459,7 +566,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case tea.KeyPressMsg:
-		m.notice = "" // any key dismisses a transient notice
+		// Any key dismisses an Error toast (spec §6); Success/Info/Cancel
+		// dismiss themselves via their own expiry tick instead — see
+		// actionfeedback.Model.DismissError's doc comment.
+		m.actionFeedback = m.actionFeedback.DismissError()
 		if b, ok := m.matchCustomKeybinding(msg); ok {
 			return m, m.startCustomCommand(b)
 		}
@@ -468,7 +578,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return next, cmd
 			}
 		}
+		// esc: universal dismiss cascade (spec §2's Global "esc" row).
+		// Checked before preview-focused routing and the big switch below
+		// so it always works, regardless of what's open.
+		if key.Matches(msg, m.keys.Esc) {
+			next, cmd := m.dismissTop()
+			return next, cmd
+		}
+		// While the preview is focused, scroll/tab keys route to it first
+		// (spec §2's "Preview (focused)" row: j/k/d/u/g/G scroll, [/] tabs)
+		// — everything else (view jumps, tab/enter to unfocus, global
+		// actions, ...) is left unhandled by sidebar.Update and falls
+		// through to the normal routing below unchanged.
+		if m.previewFocused {
+			if next, cmd, handled := m.sidebar.Update(msg); handled {
+				m.sidebar = next
+				return m, cmd
+			}
+		}
 		switch {
+		case !m.scopedBuiltinOverridden("viewpulls") && key.Matches(msg, m.keys.ViewPulls):
+			return m, m.switchToView(context.PullsView)
+		case !m.scopedBuiltinOverridden("viewissues") && key.Matches(msg, m.keys.ViewIssues):
+			return m, m.switchToView(context.IssuesView)
+		case !m.scopedBuiltinOverridden("viewnotifications") && key.Matches(msg, m.keys.ViewNotifications):
+			return m, m.switchToView(context.NotificationsView)
+		case !m.scopedBuiltinOverridden("viewactions") && key.Matches(msg, m.keys.ViewActions):
+			return m, m.switchToView(context.ActionsView)
+		case !m.scopedBuiltinOverridden("viewbranches") && key.Matches(msg, m.keys.ViewBranches):
+			return m, m.switchToView(context.BranchesView)
+		// Branches view keeps enter meaning checkout (its rows have no
+		// preview drill-in target of their own); FocusPreview's binding
+		// falls back to tab there — this is the only view-specific enter
+		// exception (spec §2's Branches footnote). Checked before the
+		// generic FocusPreview case below so tab (which doesn't match
+		// tea.KeyEnter) still falls through to toggle focus normally.
+		case !m.scopedBuiltinOverridden("checkout") && m.ctx.View == context.BranchesView && msg.Code == tea.KeyEnter:
+			return m, m.startAction(actions.KindSwitchBranch)
+		case !m.scopedBuiltinOverridden("focuspreview") && key.Matches(msg, m.keys.FocusPreview) && m.previewVisible():
+			m.previewFocused = !m.previewFocused
+			return m, nil
 		case !m.scopedBuiltinOverridden("up") && key.Matches(msg, m.keys.Up):
 			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
 		case !m.scopedBuiltinOverridden("down") && key.Matches(msg, m.keys.Down):
@@ -505,24 +654,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindRemoveLabel)
 		case !m.scopedBuiltinOverridden("setMilestone") && m.ctx.View == context.IssuesView && key.Matches(msg, m.keys.Milestone):
 			return m, m.startAction(actions.KindSetMilestone)
-		case !m.scopedBuiltinOverridden("merge") && key.Matches(msg, m.keys.Merge):
+		// Merge/UpdateBranch/MarkReady/WatchChecks/Review/RequestReviewers/
+		// RemoveReviewers/ExternalDiff (below) are PR-only (spec §2's PRs
+		// row; the Issues/Inbox/CI/Branches scoped groups never list them)
+		// — view-guarded here (review fix) so they're unreachable, not just
+		// error-toasted by validateActionTarget after the fact, outside
+		// Pulls. Unlike Comment/Assign/Unassign/AddLabel/RemoveLabel/Close/
+		// Reopen/Checkout above, which are genuinely shared with Issues and
+		// stay unguarded.
+		case !m.scopedBuiltinOverridden("merge") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.Merge):
 			return m, m.startAction(actions.KindMerge)
-		case !m.scopedBuiltinOverridden("update") && key.Matches(msg, m.keys.UpdateBranch):
+		case !m.scopedBuiltinOverridden("update") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.UpdateBranch):
 			return m, m.startAction(actions.KindUpdateBranch)
-		case !m.scopedBuiltinOverridden("ready") && key.Matches(msg, m.keys.MarkReady):
+		case !m.scopedBuiltinOverridden("ready") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.MarkReady):
 			return m, m.startAction(actions.KindMarkReady)
 		case !m.scopedBuiltinOverridden("watch") && !m.scopedBuiltinOverridden("watchChecks") &&
-			!m.scopedBuiltinOverridden("checks") && key.Matches(msg, m.keys.WatchChecks):
+			!m.scopedBuiltinOverridden("checks") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.WatchChecks):
 			return m.watchSelectedPullChecks()
 		case !m.scopedBuiltinOverridden("close") && key.Matches(msg, m.keys.Close):
 			return m, m.startAction(actions.KindClose)
 		case !m.scopedBuiltinOverridden("reopen") && key.Matches(msg, m.keys.Reopen):
 			return m, m.startAction(actions.KindReopen)
-		case !m.scopedBuiltinOverridden("review") && key.Matches(msg, m.keys.Review):
+		case !m.scopedBuiltinOverridden("review") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.Review):
 			return m, m.startAction(actions.KindReview)
 		case !m.scopedBuiltinOverridden("requestReview") && !m.scopedBuiltinOverridden("requestReviewer") &&
-			!m.scopedBuiltinOverridden("requestReviewers") && key.Matches(msg, m.keys.RequestReviewers):
+			!m.scopedBuiltinOverridden("requestReviewers") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.RequestReviewers):
 			return m, m.startAction(actions.KindRequestReviewers)
+		case !m.scopedBuiltinOverridden("removeReview") && !m.scopedBuiltinOverridden("removeReviewer") &&
+			!m.scopedBuiltinOverridden("removeReviewers") && !m.scopedBuiltinOverridden("removeRequestedReviewers") &&
+			m.ctx.View == context.PullsView && key.Matches(msg, m.keys.RemoveReviewers):
+			return m, m.startAction(actions.KindRemoveReviewers)
 		case !m.scopedBuiltinOverridden("push") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.PushBranch):
 			return m, m.startAction(actions.KindPushBranch)
 		case !m.scopedBuiltinOverridden("forcePush") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.ForcePushBranch):
@@ -531,7 +692,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindFastForwardBranch)
 		case !m.scopedBuiltinOverridden("delete") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.DeleteBranch):
 			return m, m.startAction(actions.KindDeleteBranch)
-		case !m.scopedBuiltinOverridden("diff") && key.Matches(msg, m.keys.ExternalDiff):
+		case !m.scopedBuiltinOverridden("diff") && m.ctx.View == context.PullsView && key.Matches(msg, m.keys.ExternalDiff):
 			return m, m.startAction(actions.KindExternalDiff)
 		case !m.scopedBuiltinOverridden("checkout") && key.Matches(msg, m.keys.Checkout):
 			if m.ctx.View == context.BranchesView {
@@ -558,8 +719,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case !m.scopedBuiltinOverridden("copyurl") && key.Matches(msg, m.keys.CopyURL):
 			return m, m.copySelectedURL()
 		case !m.scopedBuiltinOverridden("help") && key.Matches(msg, m.keys.Help):
-			m.showHelp = !m.showHelp
+			m.openHelpOverlay()
 			return m, nil
+		case !m.scopedBuiltinOverridden("palette") && key.Matches(msg, m.keys.Palette):
+			return m, m.openPalette(paletteAll)
 		case !m.scopedBuiltinOverridden("nextSection") && key.Matches(msg, m.keys.NextSection):
 			if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 				m.currSectionId++
@@ -597,6 +760,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncSidebar()
 				return m, m.enrichCurrRow()
 			}
+			m.previewFocused = false // nothing left to focus
 			return m, nil
 		case !m.scopedBuiltinOverridden("toggleSmartFiltering") && key.Matches(msg, m.keys.ToggleSmart):
 			return m.toggleSmartFiltering()
@@ -606,17 +770,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncSidebar()
 			}
 			return m, nil
-		case !m.scopedBuiltinOverridden("prevSidebarTab") && key.Matches(msg, m.keys.PrevSidebarTab) && m.ctx.PreviewOpen:
-			m.sidebar.PrevTab()
-			return m, nil
-		case !m.scopedBuiltinOverridden("nextSidebarTab") && key.Matches(msg, m.keys.NextSidebarTab) && m.ctx.PreviewOpen:
-			m.sidebar.NextTab()
-			return m, nil
-		case (!m.scopedBuiltinOverridden("scrollUp") && key.Matches(msg, m.keys.ScrollUp) ||
-			!m.scopedBuiltinOverridden("scrollDown") && key.Matches(msg, m.keys.ScrollDown)) && m.ctx.PreviewOpen:
-			var cmd tea.Cmd
-			m.sidebar, cmd = m.sidebar.Update(msg)
-			return m, cmd
 		}
 	}
 
@@ -626,94 +779,430 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateCurrentSectionWithPreview(msg)
 }
 
-// View composes the same shell as before: title, (tab bar), section body,
-// status line, help.
+// View renders the framed full-space shell (spec §1): a one-row header
+// embedded in the top border, the list/preview panels as bordered boxes
+// with their tabs embedded in their own top borders, and a one-row status
+// bar embedded in the bottom border. Below the 40x10 floor it renders a
+// centered "too small" notice instead (see layout.Compute).
 func (m Model) View() tea.View {
-	subtitle := "  my pull requests"
-	switch m.ctx.View {
-	case context.IssuesView:
-		subtitle = "  my issues"
-	case context.NotificationsView:
-		subtitle = "  notifications"
-	case context.ActionsView:
-		subtitle = "  actions"
-	case context.BranchesView:
-		subtitle = "  local branches"
+	l := m.layout
+	var content string
+	if l.TooSmall {
+		// Nothing is clickable below the floor (just a centered notice) —
+		// clear the registry rather than leave stale zones from the last
+		// normal-size render sitting around matching bogus coordinates.
+		m.zones.Reset()
+		content = tooSmallNotice(l.Full, m.ctx.Styles)
+	} else {
+		content = m.renderShell(l)
 	}
-	title := m.ctx.Styles.Title.Render("tea-dash") + m.ctx.Styles.DimText.Render(subtitle)
-
-	parts := []string{title}
-	if tv := m.tabs.View(); tv != "" {
-		parts = append(parts, tv)
-	}
-	status := m.statusLine()
-	if m.actionPrompt.Active() {
-		status = m.actionPrompt.View(m.ctx.ScreenWidth - 4)
-	} else if m.notice != "" {
-		status = m.ctx.Styles.ErrorText.Render(m.notice)
-	} else if !m.actionFeedback.Empty() {
-		status = m.actionFeedback.View(m.ctx.ScreenWidth - 4)
-	}
-	body := ""
-	if s := m.getCurrSection(); s != nil {
-		body = s.View()
-	}
-	if m.ctx.PreviewOpen {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
-	}
-	parts = append(parts, body)
-	if bar := m.actionBarView(); bar != "" {
-		parts = append(parts, bar)
-	}
-	parts = append(parts, status, m.ctx.Styles.HelpText.Render(m.helpLine()))
-
-	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
 }
 
-func (m Model) helpLine() string {
-	if m.showHelp {
-		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
-		if m.ctx.CurrentRepo != "" {
-			text += " · t current repo"
-		}
-		switch m.ctx.View {
-		case context.ActionsView:
-			text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
-			if m.ctx.CurrentRepo != "" {
-				text += " · t current repo"
+// renderShell builds every row of the non-TooSmall shell. It guarantees
+// exactly l.Full.H rows of exactly l.Full.W cells each: every interior
+// block (section body, sidebar, help/prompt overlay) is passed through
+// fitBlock, and header/statusbar guarantee their own exact width.
+func (m Model) renderShell(l layout.Layout) string {
+	styles := m.ctx.Styles
+
+	// rebuildZones is the ONE place mouse hit-testing zones are ever
+	// written (see its doc comment) — every render recomputes them fresh
+	// from this exact geometry before anything below reads from
+	// m.tabs/m.sidebar, so the zones agree with what's about to be drawn.
+	m.rebuildZones(l)
+
+	host := m.ctx.MockHost
+	if host == "" {
+		host = m.ctx.InstanceHost
+	}
+	headerRow := header.View(l.Header.W, m.ctx.View, host, m.ctx.User, styles)
+
+	showPreview := l.PreviewPanel.W > 0 && l.PreviewPanel.H > 0
+
+	// A previewFocused=true with no visible preview panel to actually focus
+	// (closed, or auto-collapsed by layout.Compute on a narrow terminal)
+	// would otherwise leave the list panel drawn as unfocused/dim even
+	// though it's the only panel on screen — previewVisible()/the
+	// togglePreview handlers keep previewFocused false in that state, but
+	// this is a second, cheap belt-and-braces check right where it's drawn.
+	focused := m.previewFocused && showPreview
+	listStyle := styles.BorderBlurred
+	if !focused {
+		listStyle = styles.BorderFocused
+	}
+	previewStyle := styles.BorderBlurred
+	if focused {
+		previewStyle = styles.BorderFocused
+	}
+
+	rows := make([]string, 0, l.ListPanel.H+2)
+	rows = append(rows, headerRow)
+
+	// An action prompt or an open overlay (help, the command palette)
+	// replaces the list+preview area with one full-width panel — the
+	// plan's Task 5 explicitly allows this simpler "full interior
+	// replacement" over a true lipgloss.Place-centered floating modal, and
+	// it renders cleanly here, so that's the choice made. Using the
+	// combined width — instead of squeezing into the narrower list-only
+	// interior — avoids word-wrap breaking a short multi-word phrase (e.g.
+	// "R refresh all") across two lines, and gives the help overlay's
+	// viewport a reasonably wide column for its two-column key/desc rows.
+	if overlay, ok := m.overlayContent(); ok {
+		fullPanel := overlayFullPanel(l)
+		interior := overlayInterior(l)
+		body := fitBlock(overlay, interior.W, interior.H)
+		rows = append(rows, renderPanel(fullPanel, interior, m.tabs.View(), body, listStyle, listBorders(), true)...)
+	} else {
+		listBody := fitBlock(m.listInteriorContent(), l.ListInterior.W, l.ListInterior.H)
+		// drawRightBorder=!showPreview: when the preview follows, its own
+		// left border is the shared seam (see renderPanel's doc comment).
+		listRows := renderPanel(l.ListPanel, l.ListInterior, m.tabs.View(), listBody, listStyle, listBorders(), !showPreview)
+		if showPreview {
+			previewBody := fitBlock(m.sidebar.View(), l.PreviewInterior.W, l.PreviewInterior.H)
+			previewRows := renderPanel(l.PreviewPanel, l.PreviewInterior, m.sidebar.TabsBorderSegment(), previewBody, previewStyle, previewBorders(), true)
+			for i := range listRows {
+				rows = append(rows, listRows[i]+previewRows[i])
 			}
-		case context.NotificationsView:
-			text += " · m mark read · u mark unread · M mark all read · b pin/unpin · B unpin"
-		case context.BranchesView:
-			text += " · C/space switch · P push · f fast-forward · F force-push · d/backspace delete"
-		case context.IssuesView:
-			text += " · c comment · a/A assign/unassign · L/U labels · M milestone · b/B subscribe/unsubscribe · x/X close/reopen"
-		default:
-			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · w checks · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
+		} else {
+			rows = append(rows, listRows...)
 		}
-		return text + " · q quit"
 	}
-	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · [/] tabs · r/R refresh"
+
+	rows = append(rows, m.statusBarRow(l))
+	return strings.Join(rows, "\n")
+}
+
+// rebuildZones repopulates m.zones (a pointer field — see its doc comment)
+// with every mouse hit-testable region for the CURRENT frame, in Z-order
+// (later Add calls win overlapping hits, per layout.Zones.Hit). This is the
+// single place zones are ever written: handleMouseClick/handleMouseWheel
+// (Update) only ever call m.zones.Hit, relying on it reflecting the most
+// recently rendered frame — true in the live bubbletea loop, since View()
+// always runs immediately after the Update that could have changed
+// geometry (selecting a row, switching sections, data arriving, ...); a
+// unit test that changes state without an intervening m.View() call is
+// exercising a sequence that can't happen for real, so mouse tests call
+// View() once to render before dispatching a mouse message, exactly
+// mirroring that real ordering.
+func (m Model) rebuildZones(l layout.Layout) {
+	m.zones.Reset()
+	m.zones.Add(layout.ZoneStatusBar, l.StatusBar, 0)
+
+	host := m.ctx.MockHost
+	if host == "" {
+		host = m.ctx.InstanceHost
+	}
+	for _, lr := range header.Labels(l.Header.W, m.ctx.View, host, m.ctx.User, m.ctx.Styles) {
+		m.zones.Add(layout.ZoneViewLabel,
+			layout.Rect{X: lr.Start, Y: l.Header.Y, W: lr.End - lr.Start, H: 1},
+			int(lr.View))
+	}
+
+	// The action prompt swallows all mouse input unconditionally (see
+	// handleMouseClick) — no zones needed for that region. An open overlay
+	// (help, the command palette) replaces list+preview with one
+	// clickable region so spec §3's "click outside dismisses" has a
+	// single rect to test against instead of "didn't hit any of several
+	// other zones". The palette additionally layers a ZonePaletteItem zone
+	// per visible row on top of that background region (same Z-order
+	// trick as ZoneListRow over ZoneListBody below), so a click on an item
+	// resolves to it instead of the generic "click inside overlay, no-op"
+	// background — see handleMouseClick.
+	if m.actionPrompt.Active() {
+		return
+	}
+	if m.activeOverlay != overlayNone {
+		fullPanel := overlayFullPanel(l)
+		m.zones.Add(layout.ZoneOverlay, fullPanel, 0)
+		if m.activeOverlay == overlayPalette {
+			interior := overlayInterior(l)
+			top := interior.Y + palette.HeaderRows
+			items, _ := m.palette.Visible()
+			for i := range items {
+				y := top + i
+				if y >= interior.Y+interior.H {
+					break
+				}
+				m.zones.Add(layout.ZonePaletteItem, layout.Rect{X: interior.X, Y: y, W: interior.W, H: 1}, i)
+			}
+		}
+		return
+	}
+
+	m.zones.Add(layout.ZoneListBody, l.ListInterior, 0)
+	sectionTabsOriginX := l.ListPanel.X + 1
+	for _, r := range m.tabs.Ranges() {
+		m.zones.Add(layout.ZoneSectionTab,
+			layout.Rect{X: sectionTabsOriginX + r.Start, Y: l.SectionTabsRow, W: r.End - r.Start, H: 1},
+			r.Index)
+	}
+	if s := m.getCurrSection(); s != nil && !s.GetIsLoading() && s.GetError() == nil {
+		top, height := l.ListRows.Y, l.ListRows.H
+		for i := 0; i < s.NumRows() && i < height; i++ {
+			m.zones.Add(layout.ZoneListRow,
+				layout.Rect{X: l.ListRows.X, Y: top + i, W: l.ListRows.W, H: 1},
+				i)
+		}
+	}
+
+	showPreview := l.PreviewPanel.W > 0 && l.PreviewPanel.H > 0
+	if !showPreview {
+		return
+	}
+	m.zones.Add(layout.ZonePreviewBody, l.PreviewInterior, 0)
+	previewTabsOriginX := l.PreviewPanel.X + 1
+	for _, r := range m.sidebar.TabRanges() {
+		m.zones.Add(layout.ZonePreviewTab,
+			layout.Rect{X: previewTabsOriginX + r.Start, Y: l.PreviewTabsRow, W: r.End - r.Start, H: 1},
+			r.Index)
+	}
+}
+
+// overlayFullPanel is the single full-width/full-height rect an open
+// overlay (or the action prompt) replaces the list+preview area with —
+// shared by renderShell (which draws it) and rebuildZones (which registers
+// ZoneOverlay over it), so the two never disagree about its bounds.
+func overlayFullPanel(l layout.Layout) layout.Rect {
+	return layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
+}
+
+// overlayInterior strips overlayFullPanel's own border to the content rect
+// an overlay's View() is fitBlock'd into — the same rect rebuildZones
+// anchors the palette's per-item ZonePaletteItem zones to (see there),
+// since the geometry must agree exactly with what's actually drawn.
+func overlayInterior(l layout.Layout) layout.Rect {
+	fp := overlayFullPanel(l)
+	return layout.Rect{X: fp.X + 1, Y: fp.Y + 1, W: fp.W - 2, H: fp.H - 2}
+}
+
+// overlayContent returns the content that should replace the list/preview
+// area — the active action prompt, the open help overlay, or the open
+// command palette — and whether any of those is currently showing.
+func (m Model) overlayContent() (string, bool) {
+	if m.actionPrompt.Active() {
+		fullWidth := m.layout.ListPanel.W + m.layout.PreviewPanel.W - 2
+		if fullWidth < 0 {
+			fullWidth = 0
+		}
+		return m.actionPrompt.View(fullWidth), true
+	}
+	if m.activeOverlay == overlayHelp {
+		// Sized to this same full-width/full-height interior by
+		// resizeHelpOverlay (see its doc comment for why that has to
+		// happen on the persisted model in syncMainContentDimensions,
+		// not lazily here).
+		return m.helpOverlay.View(), true
+	}
+	if m.activeOverlay == overlayPalette {
+		// Sized by resizePalette, same reasoning as resizeHelpOverlay.
+		return m.palette.View(), true
+	}
+	return "", false
+}
+
+// listInteriorContent is the list panel's normal (non-overlay) body.
+func (m Model) listInteriorContent() string {
+	if s := m.getCurrSection(); s != nil {
+		return s.View()
+	}
+	return ""
+}
+
+// statusBarRow renders the bottom border/status row: left is transient
+// action feedback, middle is section status counts, right is a short
+// key-hint line ending in "? help · q quit" (spec §1). The full keymap
+// renders in the help overlay instead (see overlayContent); statusHints is
+// a separate, deliberately short line just for this row.
+func (m Model) statusBarRow(l layout.Layout) string {
+	return statusbar.View(l.StatusBar.W, m.statusLeftSegment(), m.statusLine(), m.statusHints(), m.ctx.Styles)
+}
+
+// statusHints is the status bar's right segment: short, global, and always
+// ends in the help/palette/quit hint (spec §1's mockup: "? help · : palette
+// · q quit").
+func (m Model) statusHints() string {
+	hints := []string{"p preview"}
 	if m.ctx.CurrentRepo != "" {
-		text += " · t current repo"
+		hints = append(hints, "t current repo")
 	}
-	switch m.ctx.View {
-	case context.ActionsView:
-		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · [/] tabs · r refresh · R rerun · ! cancel"
-		if m.ctx.CurrentRepo != "" {
-			text += " · t current repo"
+	hints = append(hints, fmt.Sprintf("%s help", keyHelp(m.keys.Help, "?")))
+	hints = append(hints, fmt.Sprintf("%s palette", keyHelp(m.keys.Palette, ":")))
+	hints = append(hints, fmt.Sprintf("%s quit", keyHelp(m.keys.Quit, "q")))
+	return strings.Join(hints, " · ")
+}
+
+// statusLeftSegment renders the toast (Task 8's actionfeedback, which
+// merged in the old separate `notice` field) pre-styled — statusbar.View
+// renders it as-is rather than re-wrapping it in the status bar's base
+// style, so its StatusToast*+icon coloring survives. Reads the configured
+// theme.icons set from ctx (Task 9; previously hardcoded to icons.Unicode).
+func (m Model) statusLeftSegment() string {
+	if m.actionFeedback.Empty() {
+		return ""
+	}
+	return m.actionFeedback.View(60, m.ctx.Styles, m.ctx.Icons)
+}
+
+// tooSmallNotice centers a "terminal too small" message in the full
+// terminal rect, used below the 40x10 floor instead of the framed shell.
+func tooSmallNotice(full layout.Rect, styles context.Styles) string {
+	if full.H <= 0 {
+		return ""
+	}
+	w := full.W
+	if w < 0 {
+		w = 0
+	}
+	if w == 0 {
+		return strings.Repeat("\n", full.H-1)
+	}
+	msg := styles.ErrorText.Render(tooSmallText(full.W, full.H, w))
+	return lipgloss.Place(w, full.H, lipgloss.Center, lipgloss.Center, msg)
+}
+
+// tooSmallText picks the longest of three too-small messages that still
+// fits within w columns (review fix): below ~40 columns, the full
+// "terminal too small (WxH, need 40x10)" message itself doesn't fit, and
+// lipgloss.Place's width constraint silently truncated it mid-word (e.g.
+// "terminal too small (30x7, need" at w=30) — exactly the kind of broken
+// text this notice exists to avoid. Degrades to "too small (WxH)" and
+// finally bare "WxH" as w shrinks further.
+func tooSmallText(fullW, fullH, w int) string {
+	full := fmt.Sprintf("terminal too small (%dx%d, need 40x10)", fullW, fullH)
+	if lipgloss.Width(full) <= w {
+		return full
+	}
+	short := fmt.Sprintf("too small (%dx%d)", fullW, fullH)
+	if lipgloss.Width(short) <= w {
+		return short
+	}
+	return fmt.Sprintf("%dx%d", fullW, fullH)
+}
+
+// panelBorders is the four corner runes a bordered panel draws, which
+// depend only on whether a panel to the right is also shown (this shell
+// never has more than list+preview side by side).
+type panelBorders struct {
+	topLeft, topRight, bottomLeft, bottomRight string
+}
+
+// listBorders is the list panel's corners: "├" on the left always (it
+// always starts at column 0, directly below the header's left run), "┤" on
+// the right — only actually drawn when the list panel is alone (no
+// preview): see renderPanel's drawRightBorder. When a preview follows,
+// the seam between them is the preview's own left border (previewBorders'
+// "┬"/"┴"/"│") instead of a second, redundant border column.
+func listBorders() panelBorders {
+	return panelBorders{topLeft: "├", topRight: "┤", bottomLeft: "├", bottomRight: "┤"}
+}
+
+// previewBorders is the preview panel's corners: always follows a list
+// panel to its left ("┬"/"┴") and always closes the frame on the right
+// ("┤"/"┤").
+func previewBorders() panelBorders {
+	return panelBorders{topLeft: "┬", topRight: "┤", bottomLeft: "┴", bottomRight: "┤"}
+}
+
+// renderPanel draws one full bordered panel — its own top border (carrying
+// tabsSegment, embedded per spec §1), bordered interior rows, and its own
+// bottom border — as exactly panel.H rows of exactly panel.W cells each.
+// body must already be fitBlock'd to interior.W x interior.H.
+//
+// drawRightBorder controls the panel's own right edge (top/mid/bottom):
+// when false, it's left as plain blank space instead of a border rune —
+// used for the list panel when a preview panel follows immediately to its
+// right, so the two panels share a SINGLE visible seam (the preview's own
+// left border) rather than two adjacent border columns. layout.Compute's
+// ListPanel/PreviewPanel rects are non-overlapping by contract (their own
+// golden tests assert ListPanel.W+PreviewPanel.W==W with no shared
+// column), so this reclaimed column is real width the list panel owns but
+// doesn't use for content — ListInterior stays exactly what layout says,
+// and the column renders as a 1-cell blank gap rather than extra content
+// (avoiding a mismatch with MainContentWidth, which the table is sized to).
+func renderPanel(panel, interior layout.Rect, tabsSegment, body string, style lipgloss.Style, b panelBorders, drawRightBorder bool) []string {
+	rightTop, rightMid, rightBottom := style.Render(b.topRight), style.Render("│"), style.Render(b.bottomRight)
+	if !drawRightBorder {
+		rightTop, rightMid, rightBottom = " ", " ", " "
+	}
+	rows := make([]string, 0, panel.H)
+	rows = append(rows, style.Render(b.topLeft)+embedInBorderRow(tabsSegment, interior.W, style)+rightTop)
+	for _, line := range strings.Split(body, "\n") {
+		rows = append(rows, style.Render("│")+line+rightMid)
+	}
+	rows = append(rows, style.Render(b.bottomLeft)+embedInBorderRow("", interior.W, style)+rightBottom)
+	return rows
+}
+
+// embedInBorderRow renders a w-cell border row: a plain dash rule when
+// segment is "" (no tabs to embed), otherwise segment (already styled —
+// e.g. components/tabs or sidebar.TabsBorderSegment's embedding format)
+// followed by dash fill out to w.
+func embedInBorderRow(segment string, w int, style lipgloss.Style) string {
+	if w <= 0 {
+		return ""
+	}
+	if segment == "" {
+		return style.Render(strings.Repeat("─", w))
+	}
+	segW := lipgloss.Width(segment)
+	if segW >= w {
+		return lipgloss.NewStyle().MaxWidth(w).Render(segment)
+	}
+	return segment + style.Render(strings.Repeat("─", w-segW))
+}
+
+// tabWidth is how many spaces fitBlock expands a literal tab character
+// into before measuring/padding. A fixed expansion (rather than aligning to
+// real tab stops, which would need to know the tab's starting column) is
+// simple, deterministic, and enough to keep the interior's right border
+// from floating.
+const tabWidth = 4
+
+// expandTabs replaces literal tabs with spaces before any width
+// measurement: lipgloss.Width counts a tab as exactly 1 cell, but a real
+// terminal expands it to the next tab stop — typically several columns —
+// so a tab-carrying line's measured width undercounts its actual rendered
+// width. Content that reaches fitBlock with raw tabs still in it (e.g.
+// prview surfacing CI log lines verbatim, like
+// "ok  \tgithub.com/x\t0.211s") would otherwise get padded short, leaving
+// the panel's right border rune shifted left of where the terminal
+// actually draws it once tabs expand.
+func expandTabs(s string) string {
+	return strings.ReplaceAll(s, "\t", strings.Repeat(" ", tabWidth))
+}
+
+// fitBlock pads or truncates content to exactly w columns by h rows, so
+// every panel interior contributes a fixed number of same-width rows to
+// the frame regardless of what it renders (a loading spinner, an error
+// block, a handful of table rows, or wrapped overlay text) — the shell's
+// exact total row/column count depends on it.
+func fitBlock(content string, w, h int) string {
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	content = expandTabs(content)
+	wrapped := lipgloss.NewStyle().Width(w).Render(content)
+	lines := strings.Split(wrapped, "\n")
+	out := make([]string, h)
+	for i := 0; i < h; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
 		}
-	case context.NotificationsView:
-		text += " · m read · u unread · M all read · b pin · B unpin"
-	case context.BranchesView:
-		text += " · C/space switch · P push · f/F sync · d delete"
-	case context.IssuesView:
-		text += " · c comment · a/A assign · L/U labels · M milestone · b/B subscribe · x/X close/reopen"
-	default:
-		text += " · c comment · a/A assign · L/U labels · m merge · u update · W ready · w checks · d/ctrl+t diff · C/space checkout"
+		out[i] = padOrTruncateLine(line, w)
 	}
-	return text + fmt.Sprintf(" · %s help · %s quit", keyHelp(m.keys.Help, "?"), keyHelp(m.keys.Quit, "q"))
+	return strings.Join(out, "\n")
+}
+
+func padOrTruncateLine(s string, w int) string {
+	if lipgloss.Width(s) > w {
+		s = lipgloss.NewStyle().MaxWidth(w).Render(s)
+	}
+	if lw := lipgloss.Width(s); lw < w {
+		s += strings.Repeat(" ", w-lw)
+	}
+	return s
 }
 
 func keyHelp(binding key.Binding, fallback string) string {
@@ -727,13 +1216,16 @@ func keyHelp(binding key.Binding, fallback string) string {
 	return fallback
 }
 
-func (m Model) actionButtons() []actionButton {
+// availableActions lists the builtin actions valid for view/row — the same
+// per-view/state logic the deleted action-bar row used to render as
+// clickable buttons. Extracted (rather than deleted with the action bar) so
+// Task 7's command palette can reuse it as its item source.
+func availableActions(view context.ViewType, row data.RowData) []actionButton {
 	buttons := []actionButton{
 		{Label: "Open", Builtin: "open"},
 		{Label: "Refresh", Builtin: "refresh"},
 	}
-	row := m.getCurrRowData()
-	switch m.ctx.View {
+	switch view {
 	case context.NotificationsView:
 		if n, ok := row.(data.Notification); ok {
 			if n.Unread {
@@ -816,54 +1308,6 @@ func rowState(row data.RowData) string {
 	default:
 		return ""
 	}
-}
-
-func (m Model) actionBarView() string {
-	if m.actionPrompt.Active() {
-		return ""
-	}
-	buttons := m.actionButtons()
-	if len(buttons) == 0 {
-		return ""
-	}
-	rendered := make([]string, 0, len(buttons)*2-1)
-	for i, b := range buttons {
-		if i > 0 {
-			rendered = append(rendered, " ")
-		}
-		rendered = append(rendered, m.renderActionButton(b))
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Left, rendered...)
-}
-
-func (m Model) renderActionButton(b actionButton) string {
-	return m.ctx.Styles.ActionButton.Render("[" + b.Label + "]")
-}
-
-func (m Model) actionBarY() int {
-	y := 1 // appStyle top padding
-	y++    // title
-	if len(m.currentViewSections()) > 1 {
-		y++ // tabs
-	}
-	y += m.ctx.MainContentHeight
-	return y
-}
-
-func (m Model) actionButtonAt(x int) (actionButton, bool) {
-	rel := x - 2 // appStyle left padding
-	if rel < 0 || m.actionPrompt.Active() {
-		return actionButton{}, false
-	}
-	pos := 0
-	for _, b := range m.actionButtons() {
-		w := lipgloss.Width(m.renderActionButton(b))
-		if rel >= pos && rel < pos+w {
-			return b, true
-		}
-		pos += w + 1
-	}
-	return actionButton{}, false
 }
 
 // currentViewSections returns the section slice for the active view.
@@ -1037,23 +1481,23 @@ func (m *Model) syncSidebar() {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		m.sidebar.SetTabs(sidebarTabs(prview.RenderPullTabs(r, m.pullDetails[key], w, m.expanded)))
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderPullTabs(r, m.pullDetails[key], w, m.expanded, m.ctx.Styles, m.ctx.Icons)))
 		return
 	case data.Issue:
 		if err := m.issueEnrichErr[key]; err != nil {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		m.sidebar.SetTabs(sidebarTabs(prview.RenderIssueTabs(r, m.issueDetails[key], w, m.expanded)))
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderIssueTabs(r, m.issueDetails[key], w, m.expanded, m.ctx.Styles, m.ctx.Icons)))
 		return
 	case data.Notification:
-		rendered = prview.RenderNotification(r, w)
+		rendered = prview.RenderNotification(r, w, m.ctx.Styles, m.ctx.Icons)
 	case data.ActionRun:
 		if err := m.actionEnrichErr[key]; err != nil {
 			m.sidebar.SetContent(m.failedPreview(row, err))
 			return
 		}
-		m.sidebar.SetTabs(sidebarTabs(prview.RenderActionTabs(r, m.actionDetails[key], w)))
+		m.sidebar.SetTabs(sidebarTabs(prview.RenderActionTabs(r, m.actionDetails[key], w, m.ctx.Styles, m.ctx.Icons)))
 		return
 	default:
 		m.sidebar.SetContent("")
@@ -1126,8 +1570,7 @@ func (m *Model) clearPreviewCacheForAction(target actions.Target) {
 func (m Model) watchSelectedPullChecks() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.PullRequest)
 	if !ok {
-		m.notice = "Select a pull request to watch checks."
-		return m, nil
+		return m, m.setInfo("Select a pull request to watch checks.")
 	}
 	branch, sha := pullCheckHead(row, m.pullDetails[m.selKey()])
 	if branch != "" || sha != "" {
@@ -1138,8 +1581,7 @@ func (m Model) watchSelectedPullChecks() (Model, tea.Cmd) {
 	}
 	owner, repo, ok := data.SplitOwnerRepo(row.RepoNameWithOwner)
 	if !ok {
-		m.notice = fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner)
-		return m, nil
+		return m, m.setError(fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner))
 	}
 	return m, func() tea.Msg {
 		detail, err := m.ctx.Client.GetPullDetail(owner, repo, row.Number)
@@ -1163,8 +1605,7 @@ func pullCheckHead(row data.PullRequest, detail *data.PullDetail) (branch, sha s
 
 func (m Model) switchToPullChecks(row data.PullRequest, branch, sha string) (Model, tea.Cmd) {
 	if _, _, ok := data.SplitOwnerRepo(row.RepoNameWithOwner); !ok {
-		m.notice = fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner)
-		return m, nil
+		return m, m.setError(fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner))
 	}
 	m.ctx.View = context.ActionsView
 	m.currSectionId = 0
@@ -1182,18 +1623,19 @@ func (m Model) switchToPullChecks(row data.PullRequest, branch, sha string) (Mod
 	m.setCurrentViewSections([]section.Section{actionsection.NewModel(0, m.ctx, cfg)})
 	m.tabs.SetCurrSectionId(0)
 	m.syncProgramContext()
+	var feedbackCmd tea.Cmd
 	if branch == "" && sha == "" {
-		m.notice = fmt.Sprintf("Showing Actions for %s; PR head was not available to narrow checks.", row.RepoNameWithOwner)
+		feedbackCmd = m.setInfo(fmt.Sprintf("Showing Actions for %s; PR head was not available to narrow checks.", row.RepoNameWithOwner))
 	} else {
-		m.notice = fmt.Sprintf("Watching checks for %s#%d.", row.RepoNameWithOwner, row.Number)
+		feedbackCmd = m.setInfo(fmt.Sprintf("Watching checks for %s#%d.", row.RepoNameWithOwner, row.Number))
 	}
 	if m.ctx.PreviewOpen {
 		m.syncSidebar()
 	}
 	if s := m.getCurrSection(); s != nil {
-		return m, s.FetchRows()
+		return m, tea.Batch(feedbackCmd, s.FetchRows())
 	}
-	return m, nil
+	return m, feedbackCmd
 }
 
 // switchView cycles pulls -> issues -> notifications -> actions -> branches, lazily
@@ -1240,26 +1682,6 @@ func (m *Model) switchToView(view context.ViewType) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (m Model) tableDataStartY() int {
-	y := 1 // appStyle top padding
-	y++    // title
-	if len(m.currentViewSections()) > 1 {
-		y++ // tabs
-	}
-	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
-		y++ // search bar
-	}
-	y++ // table header
-	return y
-}
-
-func (m Model) tabBarY() int {
-	if len(m.currentViewSections()) < 2 {
-		return -1
-	}
-	return 2 // appStyle top padding + title line
-}
-
 func (m Model) switchSectionTo(id int) (Model, tea.Cmd) {
 	if id < 0 || id >= len(m.currentViewSections()) || id == m.currSectionId {
 		return m, nil
@@ -1271,40 +1693,6 @@ func (m Model) switchSectionTo(id int) (Model, tea.Cmd) {
 		return m, m.enrichCurrRow()
 	}
 	return m, nil
-}
-
-func (m Model) inMainListPane(x, y int) bool {
-	if x < 2 || y < m.tableDataStartY() {
-		return false
-	}
-	width := m.ctx.MainContentWidth
-	if width <= 0 {
-		width = m.ctx.ScreenWidth - 4
-	}
-	return x < 2+width
-}
-
-func (m Model) rowIndexAtY(y int) (int, bool) {
-	s := m.getCurrSection()
-	if s == nil || s.GetIsLoading() || s.GetError() != nil {
-		return 0, false
-	}
-	i := y - m.tableDataStartY()
-	if i < 0 || i >= s.NumRows() {
-		return 0, false
-	}
-	return i, true
-}
-
-func (m Model) selectRowFromMouse(x, y int) (Model, tea.Cmd) {
-	if !m.inMainListPane(x, y) {
-		return m, nil
-	}
-	i, ok := m.rowIndexAtY(y)
-	if !ok {
-		return m, nil
-	}
-	return m.selectCurrentSectionRow(i)
 }
 
 func (m Model) selectCurrentSectionRow(i int) (Model, tea.Cmd) {
@@ -1322,44 +1710,228 @@ func (m Model) selectCurrentSectionRow(i int) (Model, tea.Cmd) {
 	return m, tea.Batch(moreCmd, m.enrichCurrRow())
 }
 
-func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
-	if msg.Button != tea.MouseLeft {
-		return m, nil
+// doubleClickWindow is spec §3's double-click threshold: two left clicks on
+// the same list row within this long count as one double-click.
+const doubleClickWindow = 400 * time.Millisecond
+
+// clockNow returns the current time for double-click timing, via nowFn when
+// a test has set one (tea.MouseClickMsg carries no timestamp of its own, so
+// there's nothing to read the real click time from) — real usage always
+// gets time.Now().
+func (m Model) clockNow() time.Time {
+	if m.nowFn != nil {
+		return m.nowFn()
 	}
+	return time.Now()
+}
+
+// handleMouseClick is the single zoneAt(x, y) dispatch every click resolves
+// through (spec §3's table): an open overlay or the action prompt claims
+// all mouse input first — action prompt: unconditionally swallowed,
+// unchanged from its pre-Task-6 behavior; overlay: a click on a
+// ZonePaletteItem runs that item (the palette's own click-to-run — see
+// its doc comment on the "compute from the rect" vs. "one zone per item"
+// choice), a click elsewhere inside the overlay's background
+// (ZoneOverlay) is a no-op, and a click outside either dismisses.
+// Otherwise the hit zone (if any) drives a left- or right-click handler.
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if m.actionPrompt.Active() {
 		return m, nil
 	}
-	if msg.Y == m.tabBarY() {
-		if id, ok := m.tabs.TabAt(msg.X - 2); ok {
-			return m.switchSectionTo(id)
+	if m.activeOverlay != overlayNone {
+		zone, ok := m.zones.Hit(msg.X, msg.Y)
+		if ok && zone.Kind == layout.ZonePaletteItem {
+			if item, itemOk := m.palette.ItemAtVisibleIndex(zone.Payload); itemOk {
+				m.activeOverlay = overlayNone
+				return m.dispatchPaletteItem(item)
+			}
+			return m, nil
 		}
-	}
-	if msg.Y == m.actionBarY() {
-		if button, ok := m.actionButtonAt(msg.X); ok {
-			return m.handleActionButton(button)
+		if ok && zone.Kind == layout.ZoneOverlay {
+			return m, nil
 		}
+		return m.dismissTop()
 	}
-	return m.selectRowFromMouse(msg.X, msg.Y)
-}
-
-func (m Model) handleActionButton(button actionButton) (Model, tea.Cmd) {
-	next, cmd, ok := m.handleBuiltinKeybinding(config.Keybinding{Builtin: button.Builtin})
-	if ok {
-		return next, cmd
-	}
-	m.notice = fmt.Sprintf("Action button %q is not wired.", button.Label)
-	return m, nil
-}
-
-func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
-	if !m.inMainListPane(msg.X, msg.Y) {
+	zone, ok := m.zones.Hit(msg.X, msg.Y)
+	if !ok {
+		// A left click that misses every registered zone entirely (e.g. a
+		// border gap) must still reset the double-click state, for the same
+		// reason handleZoneLeftClick resets it for a non-row zone HIT (T7
+		// Step 0, T8 Step 0(a) from the T7 review): otherwise a row click,
+		// then a miss, then the SAME row index again within
+		// doubleClickWindow reads as a double-click purely by coincidence
+		// of timing, since clickListRow only ever compares against the
+		// most recent click's time/row.
+		if msg.Button == tea.MouseLeft {
+			m.lastClickAt = time.Time{}
+		}
 		return m, nil
 	}
 	switch msg.Button {
-	case tea.MouseWheelUp:
-		return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
-	case tea.MouseWheelDown:
-		return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyDown})
+	case tea.MouseLeft:
+		return m.handleZoneLeftClick(zone)
+	case tea.MouseRight:
+		return m.handleZoneRightClick(zone)
+	default:
+		return m, nil
+	}
+}
+
+// handleZoneLeftClick dispatches a left click by zone kind (spec §3): view
+// label switches view, section tab switches section, a list row selects
+// (and double-click focuses/checks out — see clickListRow), a preview tab
+// switches the sidebar's tab, and the preview body focuses it. Zones with
+// no defined click behavior (list/preview body background, status bar) are
+// simply not listed, falling through to the no-op default.
+//
+// Any click that ISN'T on a list row resets lastClickAt first (T7 Step 0,
+// from the T6 review): without this, clicking a row, then a section tab,
+// then the SAME row index again within doubleClickWindow would read as a
+// double-click on that row purely by coincidence of timing and index,
+// even though a tab switch happened in between — clickListRow only ever
+// compares against the most recent click's time/row, so it can't tell the
+// difference unless something else clears that state first.
+func (m Model) handleZoneLeftClick(zone layout.Zone) (Model, tea.Cmd) {
+	if zone.Kind != layout.ZoneListRow {
+		m.lastClickAt = time.Time{}
+	}
+	switch zone.Kind {
+	case layout.ZoneViewLabel:
+		return m, m.switchToView(context.ViewType(zone.Payload))
+	case layout.ZoneSectionTab:
+		return m.switchSectionTo(zone.Payload)
+	case layout.ZoneListRow:
+		return m.clickListRow(zone.Payload)
+	case layout.ZonePreviewTab:
+		m.sidebar.SelectTab(zone.Payload)
+		return m, nil
+	case layout.ZonePreviewBody:
+		return m.focusPreviewIfVisible()
+	default:
+		return m, nil
+	}
+}
+
+// handleZoneRightClick implements spec §3's "right click list row -> command
+// palette scoped to that row's actions": select the row (consistent with a
+// left click), record the intent in pendingRowPalette, and immediately
+// consume it via openRowPaletteFromPending — see that function's and the
+// field's doc comments for why the set-then-immediately-read round trip
+// still goes through the field rather than opening the palette directly.
+func (m Model) handleZoneRightClick(zone layout.Zone) (Model, tea.Cmd) {
+	if zone.Kind != layout.ZoneListRow {
+		return m, nil
+	}
+	next, cmd := m.selectCurrentSectionRow(zone.Payload)
+	next.pendingRowPalette = zone.Payload
+	paletteCmd := next.openRowPaletteFromPending()
+	return next, tea.Batch(cmd, paletteCmd)
+}
+
+// clickListRow selects the clicked row, then checks whether this click and
+// the previous one form a double-click on the SAME row within
+// doubleClickWindow (spec §3: "double left click list row -> focus preview,
+// same as enter"). A detected double-click consumes lastClickAt (reset to
+// the zero value) so a third quick click starts a fresh pair rather than
+// immediately re-triggering.
+func (m Model) clickListRow(row int) (Model, tea.Cmd) {
+	next, cmd := m.selectCurrentSectionRow(row)
+	now := m.clockNow()
+	isDouble := !m.lastClickAt.IsZero() && row == m.lastClickRow && now.Sub(m.lastClickAt) < doubleClickWindow
+	if isDouble {
+		next.lastClickAt = time.Time{}
+		clicked, dblCmd := next.doubleClickRow()
+		return clicked, tea.Batch(cmd, dblCmd)
+	}
+	next.lastClickAt = now
+	next.lastClickRow = row
+	return next, cmd
+}
+
+// doubleClickRow is a double-click's action on the already-selected row:
+// the same "focus preview" toggle enter performs (spec §3: "same as
+// enter"), except in the Branches view, which keeps enter/double-click
+// meaning checkout instead (T4's Branches exception — its rows have no
+// preview drill-in target of their own).
+func (m Model) doubleClickRow() (Model, tea.Cmd) {
+	if m.ctx.View == context.BranchesView {
+		return m, m.startAction(actions.KindSwitchBranch)
+	}
+	return m.focusPreviewIfVisible()
+}
+
+func (m Model) focusPreviewIfVisible() (Model, tea.Cmd) {
+	if m.previewVisible() {
+		m.previewFocused = !m.previewFocused
+	}
+	return m, nil
+}
+
+// handleMouseWheel is the wheel half of the zoneAt dispatch: over the help
+// overlay it scrolls the overlay (reusing updateOverlay, the same routing
+// keyboard j/k use, so overlay-scroll logic lives in exactly one place);
+// over the palette it moves the selection DIRECTLY via
+// palette.Model.MoveSelection rather than that same synthetic-j/k trick —
+// plain "j"/"k" are ordinary filter characters in the palette (see its
+// Update doc comment), so routing a wheel tick through updateOverlay's key
+// path would type letters into the query instead of moving the cursor;
+// over the list it moves the selection (existing behavior, via the same
+// synthetic up/down key messages keyboard nav uses); over the preview it
+// scrolls the preview's own viewport regardless of focus (spec §3) without
+// touching list selection or previewFocused.
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
+	zone, ok := m.zones.Hit(msg.X, msg.Y)
+	if !ok {
+		return m, nil
+	}
+	if m.activeOverlay == overlayPalette {
+		if zone.Kind != layout.ZoneOverlay && zone.Kind != layout.ZonePaletteItem {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.palette = m.palette.MoveSelection(-1)
+		case tea.MouseWheelDown:
+			m.palette = m.palette.MoveSelection(1)
+		}
+		return m, nil
+	}
+	if m.activeOverlay != overlayNone {
+		if zone.Kind != layout.ZoneOverlay {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			return m.updateOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
+		case tea.MouseWheelDown:
+			return m.updateOverlay(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		default:
+			return m, nil
+		}
+	}
+	switch zone.Kind {
+	case layout.ZoneListRow, layout.ZoneListBody:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyUp})
+		case tea.MouseWheelDown:
+			return m.updateCurrentSectionWithPreview(tea.KeyPressMsg{Code: tea.KeyDown})
+		default:
+			return m, nil
+		}
+	case layout.ZonePreviewBody, layout.ZonePreviewTab:
+		var key tea.KeyPressMsg
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			key = tea.KeyPressMsg{Code: tea.KeyUp}
+		case tea.MouseWheelDown:
+			key = tea.KeyPressMsg{Code: tea.KeyDown}
+		default:
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.sidebar, cmd, _ = m.sidebar.Update(key)
+		return m, cmd
 	default:
 		return m, nil
 	}
@@ -1444,14 +2016,14 @@ func (m *Model) refreshAllSections() tea.Cmd {
 
 func (m Model) toggleSmartFiltering() (Model, tea.Cmd) {
 	if m.ctx.CurrentRepo == "" {
-		m.notice = "No matching git remote detected for this Gitea instance."
-		return m, nil
+		return m, m.setInfo("No matching git remote detected for this Gitea instance.")
 	}
 	m.ctx.SmartFiltering = !m.ctx.SmartFiltering
+	var feedbackCmd tea.Cmd
 	if m.ctx.SmartFiltering {
-		m.notice = fmt.Sprintf("Showing current repository: %s.", m.ctx.CurrentRepo)
+		feedbackCmd = m.setInfo(fmt.Sprintf("Showing current repository: %s.", m.ctx.CurrentRepo))
 	} else {
-		m.notice = "Showing all repositories."
+		feedbackCmd = m.setInfo("Showing all repositories.")
 	}
 	m.pullDetails = map[string]*data.PullDetail{}
 	m.pullEnrichErr = map[string]error{}
@@ -1468,10 +2040,10 @@ func (m Model) toggleSmartFiltering() (Model, tea.Cmd) {
 		if m.ctx.PreviewOpen {
 			m.syncSidebar()
 		}
-		return m, m.refreshAllSections()
+		return m, tea.Batch(feedbackCmd, m.refreshAllSections())
 	default:
 		m.syncProgramContext()
-		return m, nil
+		return m, feedbackCmd
 	}
 }
 
@@ -1493,33 +2065,27 @@ func (m Model) handleAutoRefresh() (Model, tea.Cmd) {
 func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 	target, ok := m.selectedActionTarget()
 	if !ok {
-		m.notice = "Select a row before running an action."
-		return nil
+		return m.setInfo("Select a row before running an action.")
 	}
 	if err := validateActionTarget(kind, target); err != nil {
-		m.notice = err.Error()
-		return nil
+		return m.setError(err.Error())
 	}
 	if kind == actions.KindSwitchBranch {
 		branch, ok := m.getCurrRowData().(localgit.Branch)
 		if !ok || target.RowKind != actions.RowKindBranch {
-			m.notice = "Switch branch is only available for local branches."
-			return nil
+			return m.setInfo("Switch branch is only available for local branches.")
 		}
 		if branch.Current {
-			m.notice = fmt.Sprintf("%s is already current in %s.", branch.Name, branch.Repository)
-			return nil
+			return m.setInfo(fmt.Sprintf("%s is already current in %s.", branch.Name, branch.Repository))
 		}
 	}
 	if kind == actions.KindDeleteBranch {
 		branch, ok := m.getCurrRowData().(localgit.Branch)
 		if !ok || target.RowKind != actions.RowKindBranch {
-			m.notice = "Delete branch is only available for local branches."
-			return nil
+			return m.setInfo("Delete branch is only available for local branches.")
 		}
 		if branch.Current {
-			m.notice = fmt.Sprintf("%s is current in %s; switch away before deleting it.", branch.Name, branch.Repository)
-			return nil
+			return m.setInfo(fmt.Sprintf("%s is current in %s; switch away before deleting it.", branch.Name, branch.Repository))
 		}
 	}
 	intent := actions.Intent{
@@ -1532,12 +2098,10 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 	}
 	m.pendingAction = intent
 	if reviewerPickerAction(kind) && m.ctx.Client != nil {
-		m.notice = "Loading reviewers..."
-		return loadReviewersCmd(m.ctx.Client, intent)
+		return tea.Batch(m.setStart("Loading reviewers..."), loadReviewersCmd(m.ctx.Client, intent))
 	}
 	if kind == actions.KindMerge && m.ctx.Client != nil {
-		m.notice = "Loading merge options..."
-		return loadMergeCapabilitiesCmd(m.ctx.Client, intent)
+		return tea.Batch(m.setStart("Loading merge options..."), loadMergeCapabilitiesCmd(m.ctx.Client, intent))
 	}
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(kind, target))
 	return nil
@@ -1546,8 +2110,7 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 func (m *Model) startCustomCommand(binding config.Keybinding) tea.Cmd {
 	target, ok := m.selectedActionTarget()
 	if !ok {
-		m.notice = "Select a row before running a custom command."
-		return nil
+		return m.setInfo("Select a row before running a custom command.")
 	}
 	intent := actions.Intent{
 		Kind:    actions.KindCustomCommand,
@@ -1558,6 +2121,22 @@ func (m *Model) startCustomCommand(binding config.Keybinding) tea.Cmd {
 	return m.dispatchActionIntent(intent)
 }
 
+// handleBuiltinKeybinding is one of three parallel builtin-name switches
+// (T7/T10 review note — considered consolidating into one shared table,
+// deferred: each switch's cases carry a different payload — this one runs
+// the actual behavior, keys.go's rebindBuiltin writes a keyMap field, and
+// keys.go's bindingForBuiltin reads one back for the palette's key hint —
+// and several builtins are asymmetric across them (e.g. "quit"/"redraw"/
+// "pageup" dispatch here with no keyMap field to rebind or read at all;
+// "firstline"/"lastline" dispatch here and have a keyMap field for the help
+// overlay's display but no rebindBuiltin case, since g/G aren't
+// user-remappable today). A single shared table would need to model that
+// asymmetry (optional keyMap field, optional behavior closure) rather than
+// just merging three flat maps, so it stayed a documented three-way
+// cross-reference instead of a mechanical merge. normalizeBuiltin is the
+// one piece already shared (case/punctuation canonicalization); the alias
+// groupings themselves (e.g. "opengithub"/"open"/"openbrowser") are
+// independently listed in each switch and must be kept in sync by hand.
 func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cmd, bool) {
 	switch normalizeBuiltin(binding.Builtin) {
 	case "refresh":
@@ -1615,10 +2194,21 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, nil, true
 	case "viewissues":
 		return m, m.switchToView(context.IssuesView), true
-	case "viewprs":
+	case "viewprs", "viewpulls":
 		return m, m.switchToView(context.PullsView), true
+	case "viewnotifications", "viewinbox":
+		return m, m.switchToView(context.NotificationsView), true
+	case "viewactions", "viewci":
+		return m, m.switchToView(context.ActionsView), true
+	case "viewbranches":
+		return m, m.switchToView(context.BranchesView), true
 	case "switchview":
 		return m, m.switchView(), true
+	case "focuspreview", "togglefocus":
+		if m.previewVisible() {
+			m.previewFocused = !m.previewFocused
+		}
+		return m, nil, true
 	case "search":
 		if s := m.getCurrSection(); s != nil {
 			return m, s.SetIsSearching(true), true
@@ -1633,6 +2223,7 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 			m.syncSidebar()
 			return m, m.enrichCurrRow(), true
 		}
+		m.previewFocused = false // nothing left to focus
 		return m, nil, true
 	case "togglesmartfiltering", "togglesmartfilter", "currentrepo":
 		next, cmd := m.toggleSmartFiltering()
@@ -1644,26 +2235,28 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		}
 		return m, nil, true
 	case "prevsidebartab", "previoussidebartab":
-		if m.ctx.PreviewOpen {
+		// [/] only act while the preview is focused (spec §2) — matches
+		// the default-key routing in Update (see previewVisible/previewFocused).
+		if m.previewFocused {
 			m.sidebar.PrevTab()
 		}
 		return m, nil, true
 	case "nextsidebartab":
-		if m.ctx.PreviewOpen {
+		if m.previewFocused {
 			m.sidebar.NextTab()
 		}
 		return m, nil, true
 	case "pageup", "scrollup":
 		if m.ctx.PreviewOpen {
 			var cmd tea.Cmd
-			m.sidebar, cmd = m.sidebar.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+			m.sidebar, cmd, _ = m.sidebar.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
 			return m, cmd, true
 		}
 		return m, nil, true
 	case "pagedown", "scrolldown":
 		if m.ctx.PreviewOpen {
 			var cmd tea.Cmd
-			m.sidebar, cmd = m.sidebar.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+			m.sidebar, cmd, _ = m.sidebar.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 			return m, cmd, true
 		}
 		return m, nil, true
@@ -1672,8 +2265,10 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "copynumber":
 		return m, m.copySelectedNumber(), true
 	case "help":
-		m.showHelp = !m.showHelp
+		m.openHelpOverlay()
 		return m, nil, true
+	case "palette", "commandpalette":
+		return m, m.openPalette(paletteAll), true
 	case "markasread", "markread", "markasdone", "markdone":
 		next, cmd := m.markSelectedNotificationRead()
 		return next, cmd, true
@@ -1748,8 +2343,7 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "logs", "viewlogs":
 		return m, m.startAction(actions.KindViewLogs), true
 	default:
-		m.notice = fmt.Sprintf("Unknown builtin keybinding %q.", binding.Builtin)
-		return m, nil, true
+		return m, m.setError(fmt.Sprintf("Unknown builtin keybinding %q.", binding.Builtin)), true
 	}
 }
 
@@ -1773,8 +2367,9 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	}
 	if result.Canceled {
 		m.pendingAction = actions.Intent{}
-		m.actionFeedback = m.actionFeedback.Set(actionfeedback.Cancel("Action cancelled."))
-		return cmd
+		var feedbackCmd tea.Cmd
+		m.actionFeedback, feedbackCmd = m.actionFeedback.Set(actionfeedback.Cancel("Action cancelled."))
+		return tea.Batch(cmd, feedbackCmd)
 	}
 	if !result.Submitted {
 		return cmd
@@ -1808,8 +2403,7 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	}
 	m.pendingAction = actions.Intent{}
 	if m.actionDispatcher == nil {
-		m.notice = "Action not wired yet."
-		return cmd
+		return tea.Batch(cmd, m.setError("Action not wired yet."))
 	}
 	dispatchCmd := m.dispatchActionIntent(intent)
 	if cmd == nil {
@@ -1821,53 +2415,58 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmd, dispatchCmd)
 }
 
-func (m *Model) handleReviewersLoaded(msg reviewersLoadedMsg) Model {
+func (m *Model) handleReviewersLoaded(msg reviewersLoadedMsg) (Model, tea.Cmd) {
 	if !reviewerPickerAction(msg.intent.Kind) {
-		return *m
+		return *m, nil
 	}
 	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
-		return *m
+		return *m, nil
 	}
 	m.pendingAction = msg.intent
 	if msg.err != nil {
-		m.notice = fmt.Sprintf("Couldn't load reviewers: %v. Enter usernames manually.", msg.err)
+		cmd := m.setError(fmt.Sprintf("Couldn't load reviewers: %v. Enter usernames manually.", msg.err))
 		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
-		return *m
+		return *m, cmd
 	}
 	if len(msg.reviewers) == 0 {
-		m.notice = "No requestable reviewers found. Enter usernames manually."
+		cmd := m.setInfo("No requestable reviewers found. Enter usernames manually.")
 		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
-		return *m
+		return *m, cmd
 	}
 	cfg := reviewerPickerPromptConfig(msg.intent.Kind, msg.intent.Target, msg.reviewers)
 	if len(cfg.Options) == 0 {
-		m.notice = "No requestable reviewers found. Enter usernames manually."
+		cmd := m.setInfo("No requestable reviewers found. Enter usernames manually.")
 		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
-		return *m
+		return *m, cmd
 	}
-	m.notice = ""
+	// The "Loading reviewers…" in-flight toast (started in startAction) is
+	// superseded by the picker opening, not by a new toast — Clear, not Set.
+	m.clearFeedback()
 	m.pendingAction.Prompt.Mode = actions.PromptMultiPicker
 	m.actionPrompt = m.actionPrompt.Focus(cfg)
-	return *m
+	return *m, nil
 }
 
-func (m *Model) handleMergeCapabilitiesLoaded(msg mergeCapabilitiesLoadedMsg) Model {
+func (m *Model) handleMergeCapabilitiesLoaded(msg mergeCapabilitiesLoadedMsg) (Model, tea.Cmd) {
 	if msg.intent.Kind != actions.KindMerge {
-		return *m
+		return *m, nil
 	}
 	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
-		return *m
+		return *m, nil
 	}
 	m.pendingAction = msg.intent
 	caps := msg.capabilities
+	var cmd tea.Cmd
 	if msg.err != nil {
-		m.notice = fmt.Sprintf("Couldn't load merge settings: %v. Showing default merge options.", msg.err)
+		cmd = m.setError(fmt.Sprintf("Couldn't load merge settings: %v. Showing default merge options.", msg.err))
 		caps = data.DefaultMergeCapabilities()
 	} else {
-		m.notice = ""
+		// The "Loading merge options…" in-flight toast is superseded by the
+		// picker opening, not by a new toast — Clear, not Set.
+		m.clearFeedback()
 	}
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForActionWithMergeCapabilities(msg.intent.Kind, msg.intent.Target, caps))
-	return *m
+	return *m, cmd
 }
 
 func reviewerPickerAction(kind actions.Kind) bool {
@@ -1972,6 +2571,241 @@ func mergeMessagePromptConfig(target actions.Target) actionprompt.Config {
 	}
 }
 
+// previewVisible reports whether the preview panel is actually rendered
+// right now — open (not just toggled on) and not auto-collapsed by the
+// terminal being too narrow (layout.Compute's PreviewCollapsed). Focus only
+// makes sense when there's a visible panel to focus.
+func (m Model) previewVisible() bool {
+	return m.ctx.PreviewOpen && !m.layout.PreviewCollapsed
+}
+
+// dismissTop implements the universal esc cascade (spec §2's Global "esc"
+// row): the first dismissible layer, most-nested first, closes; esc at the
+// top level (nothing open) does nothing. The cascade order is overlay →
+// action prompt → search → preview focus. In practice this whole function
+// is UNREACHABLE while any overlay is open (esc while help or the palette
+// is open never even reaches Update's KeyPressMsg switch that calls
+// dismissTop — see updateOverlay, which intercepts and closes both
+// overlays itself) — this entry is kept for when a future overlay wants to
+// esc-cascade to an outer state instead of just closing, and for
+// documentation. Action prompt and search are listed for the same reason:
+// both already intercept esc themselves, before Update ever reaches this
+// function (see the tea.KeyPressMsg + m.actionPrompt.Active() check at the
+// top of Update, and the tea.KeyPressMsg + IsSearchFocused check right
+// after it, which forward straight to the action prompt's / section's own
+// esc handling).
+func (m Model) dismissTop() (Model, tea.Cmd) {
+	if m.activeOverlay != overlayNone {
+		m.activeOverlay = overlayNone
+		return m, nil
+	}
+	if m.actionPrompt.Active() {
+		// Unreachable today (see doc comment above) — kept so this
+		// function documents the full, real cascade order.
+		return m, nil
+	}
+	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
+		// Unreachable today (see doc comment above).
+		cmd := s.SetIsSearching(false)
+		return m, cmd
+	}
+	if m.previewFocused {
+		m.previewFocused = false
+		return m, nil
+	}
+	return m, nil
+}
+
+// updateOverlay routes every key press to the active overlay while one is
+// open (spec §4: "overlay intercepts all keys while open"). The palette is
+// handled first and separately (updatePaletteOverlay) because — unlike the
+// read-only help overlay — it owns a text input that must receive
+// PRINTABLE keys as filter text, including "?" and "q": help's
+// esc/q/?-closes-anything rule below would otherwise make the palette
+// impossible to type a query into. The one exception is switching overlays
+// directly: pressing the palette's own open key while help is open
+// switches straight to the palette (spec: "only one overlay open at a
+// time") rather than requiring esc first — there's no printable-key
+// conflict for THIS direction since ":"/"ctrl+p" isn't a key help's
+// viewport recognizes either way. The reverse (pressing "?" to jump from
+// an open palette to help) is deliberately NOT wired: "?" must stay a
+// literal filter character while the palette has focus.
+func (m Model) updateOverlay(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.activeOverlay == overlayHelp && key.Matches(msg, m.keys.Palette) {
+		m.activeOverlay = overlayNone
+		return m, m.openPalette(paletteAll)
+	}
+	if m.activeOverlay == overlayPalette {
+		return m.updatePaletteOverlay(msg)
+	}
+	// esc/q/? close the (non-palette) overlay; everything else goes to its
+	// own scroll handling (j/k/d/u/g/G) and is swallowed regardless of
+	// whether it recognized it — nothing falls through to the normal
+	// routing below.
+	if key.Matches(msg, m.keys.Esc) || key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.Help) {
+		m.activeOverlay = overlayNone
+		return m, nil
+	}
+	switch m.activeOverlay {
+	case overlayHelp:
+		var cmd tea.Cmd
+		m.helpOverlay, cmd, _ = m.helpOverlay.Update(msg)
+		return m, cmd
+	default:
+		return m, nil
+	}
+}
+
+// updatePaletteOverlay forwards a key press to the palette component and
+// reacts to what it reports: EventDismiss closes the overlay (esc);
+// EventRun closes it and dispatches the selected item (enter); anything
+// else (typing, arrow navigation) just persists the palette's own state.
+func (m Model) updatePaletteOverlay(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var ev palette.Event
+	m.palette, cmd, ev = m.palette.Update(msg)
+	switch ev.Kind {
+	case palette.EventDismiss:
+		m.activeOverlay = overlayNone
+		return m, cmd
+	case palette.EventRun:
+		m.activeOverlay = overlayNone
+		next, dispatchCmd := m.dispatchPaletteItem(ev.Item)
+		return next, tea.Batch(cmd, dispatchCmd)
+	default:
+		return m, cmd
+	}
+}
+
+// openHelpOverlay opens the help overlay (spec §4), loading it fresh with
+// the current view's keymap groups every time — so a config rebind or a
+// view switch since the last time it was open is always reflected, per
+// helpoverlay.Model.SetGroups's contract. Mirrors the old showHelp toggle's
+// UX: pressing the help key again while it's already open closes it,
+// same as updateOverlay's own esc/q/? handling (both are reachable —
+// this one from the normal key switch below, before the overlay is open).
+// Opening help while the palette is open closes the palette first (spec:
+// "only one overlay open at a time").
+func (m *Model) openHelpOverlay() {
+	if m.activeOverlay == overlayHelp {
+		m.activeOverlay = overlayNone
+		return
+	}
+	m.helpOverlay.SetGroups(toHelpOverlayGroups(m.keys.Groups(m.ctx.View)))
+	m.activeOverlay = overlayHelp
+}
+
+// openPalette (re)opens the command palette scoped by scope, loading it
+// fresh with paletteItems(scope) every time — so it always reflects the
+// current view/row/keymap, same reasoning as openHelpOverlay. Opening the
+// palette while help is open closes help first (spec: "only one overlay
+// open at a time"); a second press of the palette's own open key while
+// it's ALREADY open does not toggle it closed the way help's does — that
+// branch is normally unreachable anyway (updateOverlay routes every key to
+// the palette's own Update first while it's open, so this function is only
+// ever entered from the big key switch below, i.e. with no overlay open or
+// with help open) and toggling here would be surprising UX for a text
+// input (typing ":" again while filtering shouldn't close the box).
+func (m *Model) openPalette(scope paletteScope) tea.Cmd {
+	m.activeOverlay = overlayPalette
+	return m.palette.Open(m.paletteItems(scope))
+}
+
+// openRowPaletteFromPending is the Task 6 seam's consumer: it reads and
+// clears pendingRowPalette (see that field's doc comment) and, if a
+// right-click was actually pending, opens the palette scoped to that row's
+// actions. -1 (nothing pending — e.g. called speculatively) is a no-op.
+func (m *Model) openRowPaletteFromPending() tea.Cmd {
+	if m.pendingRowPalette < 0 {
+		return nil
+	}
+	m.pendingRowPalette = -1
+	return m.openPalette(paletteRowActions)
+}
+
+// paletteItems builds the command palette's item list for the current
+// view/row: every builtin action valid right now (availableActions, the
+// same validity rules the old action-bar row used), reusing each
+// keyMap-derived key hint where one exists; "Go to <view>" for every view;
+// "Section: <title>" per the current view's sections; and the user's
+// custom commands (cfg.Keybindings entries with Command set, scoped to
+// what's actually reachable from here via activeKeybindings). scope ==
+// paletteRowActions (the right-click entry point) stops after the action
+// items, per spec §3.
+func (m Model) paletteItems(scope paletteScope) []palette.Item {
+	row := m.getCurrRowData()
+	items := make([]palette.Item, 0, 16)
+	for _, b := range availableActions(m.ctx.View, row) {
+		hint := ""
+		if binding, ok := m.keys.bindingForBuiltin(b.Builtin); ok {
+			hint = keyHelp(binding, "")
+		}
+		items = append(items, palette.Item{
+			Kind:    palette.KindAction,
+			Label:   b.Label,
+			Builtin: b.Builtin,
+			KeyHint: hint,
+		})
+	}
+	if scope == paletteRowActions {
+		return items
+	}
+	items = append(items,
+		palette.Item{Kind: palette.KindView, Label: "Go to Pulls", Index: int(context.PullsView), KeyHint: keyHelp(m.keys.ViewPulls, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to Issues", Index: int(context.IssuesView), KeyHint: keyHelp(m.keys.ViewIssues, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to Inbox", Index: int(context.NotificationsView), KeyHint: keyHelp(m.keys.ViewNotifications, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to CI", Index: int(context.ActionsView), KeyHint: keyHelp(m.keys.ViewActions, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to Branches", Index: int(context.BranchesView), KeyHint: keyHelp(m.keys.ViewBranches, "")},
+	)
+	for i, s := range m.currentViewSections() {
+		items = append(items, palette.Item{Kind: palette.KindSection, Label: "Section: " + s.GetTitle(), Index: i})
+	}
+	for _, b := range m.activeKeybindings() {
+		if strings.TrimSpace(b.Command) == "" {
+			continue
+		}
+		items = append(items, palette.Item{Kind: palette.KindCustom, Label: b.Name, Command: b.Command, KeyHint: b.Key})
+	}
+	return items
+}
+
+// dispatchPaletteItem runs item exactly the way its non-palette equivalent
+// would: a KindAction item goes through handleBuiltinKeybinding (same as a
+// keybinding match), so "Merge" in the palette opens the merge picker
+// exactly like pressing "m"; KindView/KindSection go through
+// switchToView/switchSectionTo; KindCustom goes through startCustomCommand.
+// The palette adds no new action plumbing, per the spec.
+func (m Model) dispatchPaletteItem(item palette.Item) (Model, tea.Cmd) {
+	switch item.Kind {
+	case palette.KindAction:
+		if next, cmd, handled := m.handleBuiltinKeybinding(config.Keybinding{Builtin: item.Builtin}); handled {
+			return next, cmd
+		}
+		return m, nil
+	case palette.KindView:
+		return m, m.switchToView(context.ViewType(item.Index))
+	case palette.KindSection:
+		return m.switchSectionTo(item.Index)
+	case palette.KindCustom:
+		return m, m.startCustomCommand(config.Keybinding{Command: item.Command, Name: item.Label})
+	default:
+		return m, nil
+	}
+}
+
+// toHelpOverlayGroups adapts keys.go's []BindingGroup (package ui) to
+// helpoverlay.Group — identical shape, different package, because
+// helpoverlay can't import package ui (see its package doc comment for the
+// import-cycle reasoning) and keyMap can't move there (it's the dispatch
+// table for the rest of app.go).
+func toHelpOverlayGroups(groups []BindingGroup) []helpoverlay.Group {
+	out := make([]helpoverlay.Group, len(groups))
+	for i, g := range groups {
+		out[i] = helpoverlay.Group{Title: g.Title, Bindings: g.Bindings}
+	}
+	return out
+}
+
 func (m Model) quitOrConfirm() (Model, tea.Cmd) {
 	if m.ctx != nil && m.ctx.Config != nil && m.ctx.Config.ConfirmQuitEnabled() {
 		m.pendingQuit = true
@@ -1987,11 +2821,10 @@ func (m Model) quitOrConfirm() (Model, tea.Cmd) {
 
 func (m *Model) dispatchActionIntent(intent actions.Intent) tea.Cmd {
 	if m.actionDispatcher == nil {
-		m.notice = "Action not wired yet."
-		return nil
+		return m.setError("Action not wired yet.")
 	}
-	m.actionFeedback = m.actionFeedback.Set(actionfeedback.Start(actionStartText(intent)))
-	return m.actionDispatcher(intent)
+	startCmd := m.setStart(actionStartText(intent))
+	return tea.Batch(startCmd, m.actionDispatcher(intent))
 }
 
 func (m Model) selectedActionTarget() (actions.Target, bool) {
@@ -2328,6 +3161,56 @@ func actionStartText(intent actions.Intent) string {
 	return fmt.Sprintf("Starting %s for %s#%d.", actionLabel(intent.Kind), intent.Target.Repo, intent.Target.Number)
 }
 
+// setInfo/setError/setSuccess/setStart are the only way app.go should ever
+// touch m.actionFeedback for a plain status message (feedbackFromActionResult
+// is the other path, for actions.ResultMsg specifically) — they exist so no
+// call site can forget to propagate the tea.Cmd Set returns for
+// auto-expiring kinds (Task 8: a dropped cmd means a toast that never
+// expires). Pointer receiver so they can be called as `m.setInfo(...)` from
+// both *Model and (addressable) Model-valued call sites alike; every one
+// returns the tea.Cmd the caller MUST return or tea.Batch into whatever it
+// already returns.
+//
+// notice->toast Kind mapping (this sweep replaced the old `notice` string
+// field entirely): validation/guidance ("select a row first", "X is only
+// available for Y") and state-description ("showing current repository")
+// messages are Info; genuine failures (an error value, "couldn't ...",
+// "no client available", "invalid repo") are Error; a completed
+// notification action (mark/pin/unpin) is Success; a long-running step
+// before a prompt opens ("loading reviewers…") is Start. See the Task 8
+// report for the handful of genuinely ambiguous calls.
+func (m *Model) setInfo(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Info(text))
+	return cmd
+}
+
+func (m *Model) setError(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Error(text))
+	return cmd
+}
+
+func (m *Model) setSuccess(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Success(text))
+	return cmd
+}
+
+func (m *Model) setStart(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Start(text))
+	return cmd
+}
+
+// clearFeedback silently drops the current toast (no generation bump — see
+// actionfeedback.Model.Clear) — used where a preceding "loading…"/Start
+// toast is being superseded by a state change that isn't itself a new
+// toast (e.g. a picker opening), not a real dismissal.
+func (m *Model) clearFeedback() {
+	m.actionFeedback = m.actionFeedback.Clear()
+}
+
 func feedbackFromActionResult(msg actions.ResultMsg) actionfeedback.Message {
 	text := msg.Message
 	if text == "" && msg.Err != nil {
@@ -2351,16 +3234,13 @@ func feedbackFromActionResult(msg actions.ResultMsg) actionfeedback.Message {
 func (m Model) markSelectedNotificationRead() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to mark read."
-		return m, nil
+		return m, m.setInfo("Select a notification to mark read.")
 	}
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to mark notifications read."
-		return m, nil
+		return m, m.setError("No Gitea client available to mark notifications read.")
 	}
 	return m, markNotificationReadCmd(m.ctx.Client, m.currSectionId, row.ID)
 }
@@ -2368,16 +3248,13 @@ func (m Model) markSelectedNotificationRead() (Model, tea.Cmd) {
 func (m Model) markSelectedNotificationUnread() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to mark unread."
-		return m, nil
+		return m, m.setInfo("Select a notification to mark unread.")
 	}
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to mark notifications unread."
-		return m, nil
+		return m, m.setError("No Gitea client available to mark notifications unread.")
 	}
 	return m, markNotificationUnreadCmd(m.ctx.Client, m.currSectionId, row.ID)
 }
@@ -2385,8 +3262,7 @@ func (m Model) markSelectedNotificationUnread() (Model, tea.Cmd) {
 func (m Model) toggleSelectedNotificationPin() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to pin."
-		return m, nil
+		return m, m.setInfo("Select a notification to pin.")
 	}
 	if row.Pinned {
 		return m.unpinNotification(row)
@@ -2397,44 +3273,37 @@ func (m Model) toggleSelectedNotificationPin() (Model, tea.Cmd) {
 func (m Model) unpinSelectedNotification() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to unpin."
-		return m, nil
+		return m, m.setInfo("Select a notification to unpin.")
 	}
 	return m.unpinNotification(row)
 }
 
 func (m Model) pinNotification(row data.Notification) (Model, tea.Cmd) {
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to pin notifications."
-		return m, nil
+		return m, m.setError("No Gitea client available to pin notifications.")
 	}
 	return m, markNotificationPinnedCmd(m.ctx.Client, m.currSectionId, row.ID)
 }
 
 func (m Model) unpinNotification(row data.Notification) (Model, tea.Cmd) {
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to unpin notifications."
-		return m, nil
+		return m, m.setError("No Gitea client available to unpin notifications.")
 	}
 	return m, markNotificationUnpinnedCmd(m.ctx.Client, m.currSectionId, row.ID, row.Unread)
 }
 
 func (m Model) markAllNotificationsRead() (Model, tea.Cmd) {
 	if m.ctx.View != context.NotificationsView {
-		m.notice = "Switch to notifications to mark all read."
-		return m, nil
+		return m, m.setInfo("Switch to notifications to mark all read.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to mark notifications read."
-		return m, nil
+		return m, m.setError("No Gitea client available to mark notifications read.")
 	}
 	return m, markAllNotificationsReadCmd(m.ctx.Client, m.currSectionId)
 }
@@ -2501,34 +3370,38 @@ func markAllNotificationsReadCmd(client *gitea.Client, sectionID int) tea.Cmd {
 
 func (m Model) handleNotificationAction(msg notificationActionMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
-		if msg.all {
-			m.notice = fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err)
-		} else if msg.pinned {
-			m.notice = fmt.Sprintf("Couldn't pin notification: %v", msg.err)
-		} else if msg.unpinned {
-			m.notice = fmt.Sprintf("Couldn't unpin notification: %v", msg.err)
-		} else if msg.unread {
-			m.notice = fmt.Sprintf("Couldn't mark notification unread: %v", msg.err)
-		} else {
-			m.notice = fmt.Sprintf("Couldn't mark notification read: %v", msg.err)
+		var feedbackCmd tea.Cmd
+		switch {
+		case msg.all:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err))
+		case msg.pinned:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't pin notification: %v", msg.err))
+		case msg.unpinned:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't unpin notification: %v", msg.err))
+		case msg.unread:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't mark notification unread: %v", msg.err))
+		default:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't mark notification read: %v", msg.err))
 		}
-		return m, nil
+		return m, feedbackCmd
 	}
-	if msg.all {
-		m.notice = "Marked all notifications read."
-	} else if msg.pinned {
-		m.notice = "Pinned notification."
-	} else if msg.unpinned {
-		m.notice = "Unpinned notification."
-	} else if msg.unread {
-		m.notice = "Marked notification unread."
-	} else {
-		m.notice = "Marked notification read."
+	var feedbackCmd tea.Cmd
+	switch {
+	case msg.all:
+		feedbackCmd = m.setSuccess("Marked all notifications read.")
+	case msg.pinned:
+		feedbackCmd = m.setSuccess("Pinned notification.")
+	case msg.unpinned:
+		feedbackCmd = m.setSuccess("Unpinned notification.")
+	case msg.unread:
+		feedbackCmd = m.setSuccess("Marked notification unread.")
+	default:
+		feedbackCmd = m.setSuccess("Marked notification read.")
 	}
 	if msg.sectionID < 0 || msg.sectionID >= len(m.notifications) {
-		return m, nil
+		return m, feedbackCmd
 	}
-	return m, m.notifications[msg.sectionID].FetchRows()
+	return m, tea.Batch(feedbackCmd, m.notifications[msg.sectionID].FetchRows())
 }
 
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {
@@ -2596,64 +3469,90 @@ func (m *Model) syncProgramContext() {
 	m.sidebar.UpdateProgramContext(m.ctx)
 }
 
-// syncMainContentDimensions splits the content area between the section table
-// and the preview pane. When the preview is open it uses defaults.preview.width
-// when configured, otherwise an automatic near-50/50 split. When closed, the
-// table gets the full width.
+// syncMainContentDimensions recomputes the shell's layout.Layout from the
+// current screen size and preview/search toggles and stores it on the
+// model (m.layout). MainContentWidth/Height and PreviewWidth/Height keep
+// feeding sections and the sidebar exactly as before — now sourced from the
+// computed layout's interior rects instead of hand-rolled arithmetic.
 func (m *Model) syncMainContentDimensions() {
-	h := m.ctx.ScreenHeight - 7
-	if h < 3 {
-		h = 3
-	}
-	m.ctx.MainContentHeight = h
-
-	if m.ctx.PreviewOpen {
-		pw := m.configuredPreviewWidth()
-		m.ctx.PreviewWidth = pw
-		mw := m.ctx.ScreenWidth - 4 - pw - 2
-		if mw < 0 {
-			mw = 0
-		}
-		m.ctx.MainContentWidth = mw
-		m.ctx.PreviewHeight = m.ctx.MainContentHeight
-		return
-	}
-	m.ctx.PreviewWidth = 0
-	m.ctx.PreviewHeight = 0
-	m.ctx.MainContentWidth = m.ctx.ScreenWidth - 4
-}
-
-func (m *Model) configuredPreviewWidth() int {
-	available := m.ctx.ScreenWidth - 4
-	if available < 0 {
-		available = 0
-	}
-	if available == 0 {
-		return 0
+	searchOpen := false
+	if s := m.getCurrSection(); s != nil {
+		searchOpen = s.IsSearchFocused()
 	}
 
-	configured := 0
+	// defaults.preview.width configures the preview's CONTENT width;
+	// layout.Input.PreviewWidth wants the panel's TOTAL width including its
+	// own two border columns.
+	previewWidthTotal := 0
 	if m.ctx.Config != nil {
-		configured = m.ctx.Config.Defaults.Preview.PreviewWidth()
-	}
-	pw := available / 2
-	if configured > 0 {
-		pw = configured
+		if configured := m.ctx.Config.Defaults.Preview.PreviewWidth(); configured > 0 {
+			previewWidthTotal = configured + 2
+		}
 	}
 
-	maxPreview := available - 2 // reserve the gutter; the table may shrink to zero.
-	if maxPreview < 0 {
-		maxPreview = 0
-	}
-	if pw > maxPreview {
-		pw = maxPreview
-	}
-	if pw < 0 {
-		pw = 0
-	}
-	return pw
+	m.layout = layout.Compute(layout.Input{
+		Width:        m.ctx.ScreenWidth,
+		Height:       m.ctx.ScreenHeight,
+		PreviewOpen:  m.ctx.PreviewOpen,
+		PreviewWidth: previewWidthTotal,
+		SectionCount: len(m.currentViewSections()),
+		SearchOpen:   searchOpen,
+	})
+
+	m.ctx.MainContentWidth = m.layout.ListInterior.W
+	m.ctx.MainContentHeight = m.layout.ListInterior.H
+	m.ctx.PreviewWidth = m.layout.PreviewInterior.W
+	m.ctx.PreviewHeight = m.layout.PreviewInterior.H
+	m.resizeHelpOverlay()
+	m.resizePalette()
 }
 
+// resizeHelpOverlay sizes the help overlay's viewport to the same
+// full-width list+preview interior overlayContent() composites it into.
+// This has to happen here — on the *pointer*-receiver model that
+// Update actually persists — rather than lazily inside overlayContent()/
+// View() (both value-receiver methods whose mutations are thrown away
+// after each render): Update's own scroll handling (j/k/g/G/d/u, routed
+// to helpoverlay.Model.Update) reads the viewport's OWN Height/Width to
+// compute the new offset (GotoBottom's max offset, HalfPageDown's step
+// size), not anything derived at render time. Sizing only at View() time
+// left the persisted viewport stuck at its New() zero size forever: 'd'
+// silently no-opped (half of a zero height is zero) and 'G' scrolled to
+// an offset equal to the full line count (max(0, total-0)), rendering
+// blank — both invisible in a quick glance at the rendered frame, since
+// fitBlock pads/crops every render to the right final size regardless of
+// what the viewport's internal window actually showed.
+func (m *Model) resizeHelpOverlay() {
+	w := m.layout.ListPanel.W + m.layout.PreviewPanel.W - 2
+	if w < 0 {
+		w = 0
+	}
+	h := m.layout.ListPanel.H - 2
+	if h < 1 {
+		h = 1
+	}
+	m.helpOverlay.SetSize(w, h)
+}
+
+// resizePalette sizes the palette's item list to the same full-width/
+// full-height interior overlayContent() composites it into, for the same
+// pointer-receiver-persistence reason as resizeHelpOverlay: the palette's
+// own scroll bookkeeping (Visible/ensureVisible) reads its OWN height, not
+// anything derived at render time.
+func (m *Model) resizePalette() {
+	w := m.layout.ListPanel.W + m.layout.PreviewPanel.W - 2
+	if w < 0 {
+		w = 0
+	}
+	h := m.layout.ListPanel.H - 2
+	if h < 1 {
+		h = 1
+	}
+	m.palette.SetSize(w, h)
+}
+
+// statusLine is the status bar's middle segment: plain (unstyled) text —
+// statusbar.View applies styles.StatusBar once over the whole assembled row.
 func (m Model) statusLine() string {
 	s := m.getCurrSection()
 	if s == nil || s.GetError() != nil {
@@ -2664,17 +3563,17 @@ func (m Model) statusLine() string {
 		if title == "" {
 			title = strings.TrimSpace(s.GetItemPlural())
 		}
-		return m.ctx.Styles.DimText.Render("Loading " + title + "…")
+		return "Loading " + title + "…"
 	}
 	total := s.GetTotalCount()
 	shown := s.NumRows()
 	if total > shown {
-		return m.ctx.Styles.DimText.Render(fmt.Sprintf("showing %d of %d %s", shown, total, s.GetItemPlural()))
+		return fmt.Sprintf("showing %d of %d %s", shown, total, s.GetItemPlural())
 	}
 	if total == 1 {
-		return m.ctx.Styles.DimText.Render(fmt.Sprintf("1 %s", s.GetItemSingular()))
+		return fmt.Sprintf("1 %s", s.GetItemSingular())
 	}
-	return m.ctx.Styles.DimText.Render(fmt.Sprintf("%d %s", total, s.GetItemPlural()))
+	return fmt.Sprintf("%d %s", total, s.GetItemPlural())
 }
 
 // toSectioners adapts sections to the tab bar's minimal interface.

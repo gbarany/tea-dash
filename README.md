@@ -8,13 +8,16 @@ tea-dash is a keyboard-driven TUI for triaging pull requests, issues,
 notifications, and local branches across one or more Gitea instances, without
 leaving the terminal.
 
-> **Status: early — v1.** A working multi-view dashboard: live tables of your
-> pull requests, issues, notifications, Actions runs, and read-only local
-> branch status (fetched via the Gitea API (Go SDK + REST) and local `git`),
-> with view switching (`s`), configurable sections you page through with `h`/`l`,
-> live keyword search (`/`), progressive PR/issue loading, a default-open
-> preview, and PR / issue actions. See [`docs/architecture.md`](docs/architecture.md)
-> for the design.
+> **Status: early — v1.** A full-screen, framed dashboard over five views —
+> pull requests, issues, notifications, Actions runs, and local branches
+> (fetched via the Gitea API (Go SDK + REST) and local `git`) — with
+> lazygit-style keys (`1`–`5` view jumps, `enter` to focus the preview, `?`
+> full help, `:` command palette), first-class mouse support (click, wheel,
+> double- and right-click), configurable sections, live keyword search,
+> progressive loading, state icons and colors, and actions for PRs, issues,
+> notifications, CI runs, and branches. Try it with zero setup:
+> `tea-dash --mock`. See [`docs/architecture.md`](docs/architecture.md) for
+> the design.
 
 ## Why
 
@@ -41,7 +44,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the details.
 
 ## Requirements
 
-- [Go](https://go.dev) 1.25+ (to build)
+- [Go](https://go.dev) 1.26+ (to build; matches go.mod and the Gitea SDK's own `go 1.26`)
 - A `tea` login for the instance URL and token. You only need
   [`tea`](https://gitea.com/gitea/tea) **once** to create a login
   (`tea login add`) — it is not a runtime dependency, and does not need to be on
@@ -73,57 +76,91 @@ make build      # -> ./bin/tea-dash
 
 ```sh
 tea-dash            # start the dashboard
+tea-dash --mock     # try it on built-in demo data (no Gitea needed)
 tea-dash --config ./team.tea-dash.yml
 tea-dash --debug    # append debug output to ./debug.log
 tea-dash --version  # print version info
 tea-dash --help
 ```
 
+### Try it without a Gitea instance
+
+```sh
+tea-dash --mock
+```
+
+Runs the full dashboard against an in-process fake Gitea preloaded with a
+fictional `teahouse` org — every view is populated, and actions (merge,
+comment, close, mark read, …) really mutate the demo data. No network, no
+login. A throwaway local git repo is seeded for the Branches view (needs
+`git` on PATH; without it, that view shows an error instead of demo
+branches).
+
+Notes: `--mock` composes with an explicit `--config`, but the fake's search
+ignores the `mentioned`, `since`, and `sort` filters. In the Branches view,
+push/force-push/fast-forward fail with a clear error (the demo repo has no
+real remote) — checkout works. A supplied `--config` REPLACES the demo's
+section definitions per view, not merges with them: a config that only sets
+`theme` (no `prSections`/`issuesSections`/`actionsSections`/etc.) falls back
+to tea-dash's normal single-section defaults, which empties views the demo
+otherwise populates richly (e.g. the CI view shows "No configured Actions
+sections." instead of the demo's kettle/steep workflow runs) — add explicit
+sections to your config if you want the full demo data alongside custom
+theme/keybinding settings.
+
 ### Keys
 
-| Key             | Action                  |
-| --------------- | ----------------------- |
-| `↑`/`↓`, `j`/`k`| move selection          |
-| mouse click      | select row              |
-| action button click | run common row action |
-| mouse wheel      | move selection          |
-| `g` / `G`       | first / last row        |
-| `s`             | switch view (PRs/issues/notifications/actions/branches)|
-| `h` / `l`       | prev / next section     |
-| `/`             | search by keyword       |
-| `t`             | toggle current-repo smart filtering (when launched from a matching git checkout) |
-| `p`             | show / hide preview panel |
-| `e`             | expand / fold preview body |
-| `[` / `]`       | previous / next preview tab |
-| `ctrl+u` / `ctrl+d` | scroll preview       |
-| `o` / `enter`   | open in browser         |
-| `y` / `Y`       | copy row number / URL   |
-| `c`             | add comment             |
-| `a` / `A`       | assign / unassign yourself |
-| `L` / `U`       | add / remove labels     |
-| `M`             | set issue milestone     |
-| `b` / `B`       | subscribe / unsubscribe issue |
-| `m`             | merge PR                |
-| `u`             | update PR branch from its base branch |
-| `W`             | mark draft PR ready for review |
-| `w`             | show/watch PR checks in the Actions view |
-| `@`             | request PR review from one or more users (picker when the server exposes reviewers) |
-| `m` / `u` / `M` | mark notification read / unread / all read |
-| `b` / `B`       | pin / unpin notification |
-| `x` / `X`       | close / reopen          |
-| `v`             | submit PR review        |
-| `d` / `ctrl+t`  | open PR diff in external pager |
-| `C` / `space`   | checkout PR/issue locally; switch branch in Branches view |
-| `P`             | push branch in Branches view   |
-| `f` / `F`       | fast-forward / force-push branch in Branches view |
-| `d` / `backspace` | delete branch in Branches view |
-| `L` / `R` / `!` | view logs / rerun / cancel Actions run |
-| `r` / `R`       | refresh section / all sections (`ctrl+r` refreshes all in Actions view) |
-| `?`             | show / hide full help   |
-| `q` / `ctrl+c`  | quit                    |
+tea-dash's keymap is lazygit-style: numbered view jumps, and `enter`/`tab`
+drill into (focus) the preview panel rather than opening a browser.
+
+| Group | Key | Action |
+| --- | --- | --- |
+| Views | `1`–`5` | jump to Pulls / Issues / Inbox / CI / Branches |
+| Views | `s` | cycle views (kept for continuity) |
+| Sections | `h`/`l`, `←`/`→` | previous / next section tab |
+| List | `j`/`k`, `↑`/`↓` | move selection |
+| List | `g`/`G` | first / last row |
+| List | `ctrl+d`/`ctrl+u` | half-page down / up in the list |
+| List | mouse click, double-click, mouse wheel | select row, focus preview, move selection |
+| List | right-click | open the command palette scoped to that row's actions |
+| Preview | `enter` or `tab` | focus preview (drill in) |
+| Preview (focused) | `j/k` scroll · `d/u` half-page · `g/G` top/bottom · `[`/`]` preview tabs · `esc`/`tab`/`enter` back |
+| Preview | `p` | toggle pane · `e` expand body |
+| Search | `/` | focus search · `enter` apply · `esc` revert |
+| Global | `esc` | universal dismiss: overlay (help/palette) → prompt → search → preview focus |
+| Global | `?` | show / hide full help |
+| Global | `:` / `ctrl+p` | command palette — fuzzy-filter actions, view/section jumps, and custom commands |
+| Global | `o` | open in browser |
+| Global | `r` / `R`† | refresh section / refresh all |
+| Global | `y` / `Y` | copy row number / URL |
+| Global | `t` | toggle current-repo smart filtering (when launched from a matching git checkout) |
+| Global | `q` / `ctrl+c` | quit |
+| PRs | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `m` merge · `u` update branch · `W` ready · `w` checks · `x`/`X` close/reopen · `v` review · `@`/`#` request/remove reviewers · `d`/`ctrl+t` diff · `C`/`space` checkout |
+| Issues | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `M` milestone · `b`/`B` subscribe/unsubscribe · `x`/`X` close/reopen · `C`/`space` checkout |
+| Inbox | `m` read · `u` unread · `M` all read · `b` pin/unpin · `B` unpin |
+| CI | `R` rerun · `!` cancel · `L` logs |
+| Branches | `C`/`space`/`enter`\* checkout · `P` push · `f` fast-forward · `F` force-push · `d`/`backspace` delete |
+
+\* In the Branches view `enter` keeps meaning checkout (its rows have no
+preview drill-in target of their own); the preview-focus binding falls back
+to `tab` there. This is the only view-specific `enter` exception.
+
+† In the CI view specifically, `R` is scoped to rerun instead (see the CI
+row) — refresh a CI section with `r`; there is no refresh-all default key
+in that view (a custom keybinding can still reach `refreshAll` there).
 
 The merge picker includes each merge strategy plus explicit `+ delete branch`,
 `with message`, `+ force merge`, `when checks pass`, and combined variants.
+
+#### Changed in vNEXT
+
+| Old | New | Why |
+| --- | --- | --- |
+| `enter` opened browser | `enter` focuses preview; use `o` | lazygit drill-in convention |
+| `ctrl+u`/`ctrl+d` scrolled preview | scroll the **list**; preview scrolls when focused (`j/k`/`d`/`u`/`g`/`G`), or via mouse wheel | lazygit/vim list paging |
+| `ctrl+r` refresh all | dropped; use `R` — except in the CI view, where `R` reruns instead and refresh-all has no default key at all | duplicate |
+| `[`/`]` preview tabs from list | only while preview is focused | `[`/`]` are panel-tab keys in lazygit |
+| — | `1`–`5` view jump, `tab` focus toggle, `esc` dismiss | new |
 
 ## Configuration
 
@@ -190,6 +227,7 @@ git:
   issueBranchTemplate: "issue-{{.IssueIndex}}"
 
 theme:
+  icons: unicode # "unicode" (default) | "nerd" (needs a Nerd Font) | "ascii"
   colors:
     text:
       primary: "#CBE3E7"   # title, active tab, spinner, table header, action buttons
@@ -200,6 +238,9 @@ theme:
       selected: "#3E3859"  # selected-row background
     border:
       primary: "#585273"   # parsed for gh-dash theme compatibility; deeper border theming is future work
+    state: # PR/issue/CI state colors (list state cells, preview headers, CI check lines)
+      open: "#2da44e"      # also draft/merged/closed/success/failure/running/neutral
+      failure: "#cf222e"   # shown here as an example override; omit any key to keep its gh-style default
 
 # Each section becomes a tab you page through with h/l. A section-level repo:
 # overrides global repos: for that tab. Omit prSections to get two
@@ -243,6 +284,13 @@ issuesSections:
 notificationsSections:
   - title: Inbox
     limit: 50
+
+actionsSections:
+  - title: Widget CI
+    repo: acme/widgets     # Actions sections are repo-scoped (repo: or global repos:)
+    limit: 25
+    filter:
+      branch: main         # optional: only runs for this branch
 
 branchSections:
   - title: Local Branches
@@ -339,6 +387,16 @@ tea-dash publishes a JSON Schema at
 [`schema.json`](schema.json). Add the `yaml-language-server` comment above to
 your config file to get editor validation and autocomplete in YAML-aware editors.
 
+`theme.icons` picks the glyph set used for state indicators (list state cells,
+preview headers, CI check lines, notification unread dots, branch ahead/behind
+markers): `unicode` (default, plain symbols that render in any modern
+monospace font), `ascii` (7-bit fallback for fonts/terminals with no Unicode
+glyph coverage), or `nerd` (git/CI icons from [Nerd
+Fonts](https://www.nerdfonts.com) — **requires a Nerd Font installed and
+selected as your terminal's font**; without one, `nerd` glyphs render as blank
+or "tofu" boxes). `theme.colors.state` overrides the color each state renders
+in, independently of the icon set.
+
 Use `include` to share config across files. Include paths are resolved relative
 to the file declaring them unless they are absolute or start with `~`. Includes
 are loaded first; later includes override earlier includes; the current file
@@ -401,8 +459,9 @@ tabs; sections and filters let you tailor what each tab shows. Notification
 sections currently support title/limit configuration and include read
 notifications by default; set `defaults.includeReadNotifications: false` for
 unread/pinned-only threads. The branches view shells out to local `git` for
-configured `localRepos` only and is read-only; with no `localRepos`, it falls
-back to the current working directory.
+configured `localRepos` (falling back to the current working directory when
+none are configured) and supports checkout, push, force-push, fast-forward,
+and delete.
 
 ## Development
 
@@ -417,23 +476,30 @@ make help    # list all targets
 Project layout:
 
 ```
-main.go                 entrypoint + flag handling; loads config, starts the TUI
-internal/ui/            Bubble Tea model, table, preview, keybindings, styles
-internal/gitea/         Gitea Go SDK client wrapper + PR/issue/notification APIs
-internal/git/           read-only local git branch status
+main.go                 entrypoint + flag handling (incl. --mock); loads config, starts the TUI
+internal/ui/            Bubble Tea root model, sections, preview, overlays, keymap, styles
+internal/ui/layout/     framed-shell rectangles + mouse-click zones
+internal/ui/icons/      unicode/nerd/ascii state glyph sets
+internal/gitea/         Gitea Go SDK client wrapper + PR/issue/notification/Actions APIs
+internal/git/           local git branch status + branch actions
+internal/actionrunner/  dispatches UI action intents (API mutations, local git, custom commands)
+internal/markdown/      glamour-based markdown rendering for preview bodies
+internal/mockgitea/     in-memory fake Gitea behind --mock and the e2e tests
 internal/auth/          resolves instance URL + token from the tea config
 internal/data/          TUI-agnostic domain models
 internal/config/        config discovery + YAML loading
+internal/shell/         runs custom keybinding commands
 internal/build/         version metadata (set via -ldflags)
 ```
 
 ## Tech stack
 
 Go with the **Bubble Tea v2** Charm stack — `charm.land/bubbletea/v2` +
-`charm.land/lipgloss/v2` + `charm.land/bubbles/v2` — the exact TUI stack
+`charm.land/lipgloss/v2` + `charm.land/bubbles/v2` + `charm.land/glamour/v2`
+(Markdown preview bodies) — the TUI stack
 [`gh-dash`](https://github.com/dlvhdr/gh-dash) and Gitea's own `tea` CLI are
-built on. Planned, to stay aligned with gh-dash: `glamour/v2` (Markdown bodies),
-`cobra`+`fang` (CLI), and `koanf`+`validator` (config).
+built on. Planned, to stay aligned with gh-dash: `cobra`+`fang` (CLI) and
+`koanf`+`validator` (config).
 
 ## License
 

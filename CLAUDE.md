@@ -19,9 +19,11 @@ Requires **Go 1.26+** (the Gitea SDK's go.mod declares `go 1.26`).
 - `main.go` -> `internal/auth` resolves URL+token, `internal/gitea` builds the client, `internal/ui` runs the TUI.
 - `internal/gitea` — SDK client + `search.go` (the me-scoped cross-repo `/repos/issues/search` via a raw
   `rawGet`; **C1 guard**: `@me` filters emit `created=true` etc., never `created_by`). `SearchPulls`/`SearchIssues`.
-- `internal/ui` — a `ProgramContext` DI seam + a `Section` interface with an embeddable `BaseModel`
-  (`components/section`); concrete `pullsection`/`issuesection`; a `tabs` bar; a `search` input widget.
-  Root `internal/ui/app.go` holds per-view `prs`/`issues` slices and routes async results by `(SectionId, SectionType)`.
+- `internal/ui` — a `ProgramContext` DI seam (`Icons`, `Styles`) + a `Section` interface with an embeddable
+  `BaseModel` (`components/section`, incl. `StateCell`/`GlyphText`); five sections (pull/issue/notification/
+  action/branch); `internal/ui/layout` computes the framed-shell rects + mouse zones; `helpoverlay`/`palette`
+  read the live `keyMap.Groups`. Root `internal/ui/app.go` holds per-view section slices, routes async results
+  by `(SectionId, SectionType)`, and tracks preview-focus/overlay state.
 - `internal/config` — yaml.v3; `Instance` (auth), structured `PrIssueFilter`, `prSections`/`issuesSections`, `Defaults`.
 
 ## Auth (how the token is resolved)

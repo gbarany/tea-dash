@@ -27,7 +27,6 @@ type SectionPullRequestsFetchedMsg = section.RowsFetchedMsg[data.PullRequest]
 // NewModel builds a pull-requests section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	programCtx := ctx
-	columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 	return section.New(section.Options[data.PullRequest]{
 		Id:           id,
 		Ctx:          ctx,
@@ -51,7 +50,14 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			return c.SearchPullsPage(fetchCtx, f, limit, page)
 		},
 		BuildRow: func(pr data.PullRequest) table.Row {
-			return prBuildRowWithColumns(pr, columnNames)
+			// Recompute the current column set on every call (not once at
+			// construction): ctx.MainContentWidth changes across resizes,
+			// and the generic section.Model rebuilds rows on
+			// UpdateProgramContext, so a stale/frozen column list here
+			// would leave row cell counts out of sync with SetColumns
+			// (dropped columns responsively per SixColumnSpec.Fit).
+			columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
+			return prBuildRowWithColumns(pr, columnNames, ctx)
 		},
 		Columns: func(width int) []table.Column {
 			return section.ColumnsFromConfig(cfg.Columns, section.DefaultColumnDefinitions(width))
@@ -80,20 +86,15 @@ func prState(pr data.PullRequest) string {
 	return pr.State
 }
 
-// prBuildRow maps a PR into the default table row.
-func prBuildRow(pr data.PullRequest) table.Row {
-	return prBuildRowWithColumns(pr, section.DefaultColumnNames())
-}
-
-func prBuildRowWithColumns(pr data.PullRequest, columns []string) table.Row {
+func prBuildRowWithColumns(pr data.PullRequest, columns []string, ctx *appctx.ProgramContext) table.Row {
 	row := make(table.Row, 0, len(columns))
 	for _, column := range columns {
-		row = append(row, prColumnValue(pr, column))
+		row = append(row, prColumnValue(pr, column, ctx))
 	}
 	return row
 }
 
-func prColumnValue(pr data.PullRequest, column string) string {
+func prColumnValue(pr data.PullRequest, column string, ctx *appctx.ProgramContext) string {
 	author := ""
 	if pr.Author != "" {
 		author = "@" + pr.Author
@@ -108,7 +109,7 @@ func prColumnValue(pr data.PullRequest, column string) string {
 	case "author":
 		return author
 	case "state":
-		return prState(pr)
+		return section.StateCell(prState(pr), ctx.Icons, ctx.Styles)
 	case "updated":
 		return section.HumanizeTime(pr.UpdatedAt)
 	default:

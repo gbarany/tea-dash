@@ -18,19 +18,34 @@ import (
 	localgit "github.com/gbarany/tea-dash/internal/git"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/actions"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionfeedback"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/header"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/palette"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/context"
+	"github.com/gbarany/tea-dash/internal/ui/layout"
 )
 
 func update(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	next, _ := m.Update(msg)
 	return next.(Model)
+}
+
+// viewed renders m once and returns it unchanged, so its mouse hit-testing
+// zones (m.zones, rebuilt by every View() call — see rebuildZones's doc
+// comment) reflect the model's CURRENT state before a test dispatches a
+// mouse message. This mirrors the real bubbletea loop, which always calls
+// View() immediately after an Update that could have changed geometry,
+// well before the terminal can produce the next input event.
+func viewed(m Model) Model {
+	_ = m.View()
+	return m
 }
 
 func fetchedMsg(prs []data.PullRequest) context.TaskFinishedMsg {
@@ -117,6 +132,450 @@ func TestViewEnablesMouseCellMotion(t *testing.T) {
 	}
 }
 
+// TestFramedShellRendersFullSpaceWithHeaderAndStatusBar is the Task 3
+// app-level assertion set from the plan: full-space (row count == height,
+// every row exactly the screen width, no outer padding), the header
+// showing the app name/active view/mock host, the status bar ending in the
+// help hint, and a border column between the list and preview panels.
+func TestFramedShellRendersFullSpaceWithHeaderAndStatusBar(t *testing.T) {
+	m := NewWithOptions(&config.Config{}, nil, Options{MockHost: "demo.gitea.local"})
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	content := m.View().Content
+	rows := strings.Split(content, "\n")
+	if len(rows) != 40 {
+		t.Fatalf("row count = %d, want 40 (full-space, no outer padding)", len(rows))
+	}
+	for i, row := range rows {
+		if w := lipgloss.Width(row); w != 120 {
+			t.Fatalf("row %d width = %d, want 120:\n%q", i, w, row)
+		}
+	}
+
+	first := rows[0]
+	for _, want := range []string{"tea-dash", "1 Pulls", "demo.gitea.local"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("header row missing %q:\n%s", want, first)
+		}
+	}
+
+	last := rows[len(rows)-1]
+	if !strings.Contains(last, "? help") {
+		t.Fatalf("status bar row missing %q:\n%s", "? help", last)
+	}
+
+	// A single shared border column exists between the list and preview
+	// panels (preview defaults open): the list panel's own right border is
+	// suppressed (blank) in favor of the preview panel's left border, so
+	// an interior row shows exactly 3 "│" runes (list-left, the shared
+	// seam, preview-right) — not 2 (a single bordered panel) or 4 (two
+	// independent, redundant border columns).
+	found := false
+	for _, row := range rows[2 : len(rows)-2] {
+		if strings.Count(row, "│") == 3 {
+			found = true
+			break
+		}
+		if n := strings.Count(row, "│"); n == 4 {
+			t.Fatalf("double border seam between panels (want a single shared seam, 3 runes): %q", row)
+		}
+	}
+	if !found {
+		t.Fatalf("expected a single shared border column between the list and preview panels:\n%s", content)
+	}
+
+	// The table's own column header ("Title" — a survivor at any width per
+	// SixColumnSpec.Fit) must occupy exactly one row: the column-budget bug
+	// (under-reserving bubbles/table's per-column padding overhead) wrapped
+	// the header onto two rows, stealing a data row and pushing content
+	// past the panel's right border.
+	titleRows := 0
+	for _, row := range rows {
+		if strings.Contains(row, "Title") {
+			titleRows++
+		}
+	}
+	if titleRows != 1 {
+		t.Fatalf("table header spans %d rows, want exactly 1:\n%s", titleRows, content)
+	}
+}
+
+// TestTooSmallRendersCenteredNotice covers the <40x10 floor (layout.Compute):
+// the framed shell is replaced entirely by a centered notice, still exactly
+// Full.H rows tall.
+func TestTooSmallRendersCenteredNotice(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 39, Height: 9})
+
+	content := m.View().Content
+	if !strings.Contains(content, "too small") {
+		t.Fatalf("expected a too-small notice, got:\n%s", content)
+	}
+	if rows := strings.Split(content, "\n"); len(rows) != 9 {
+		t.Fatalf("row count = %d, want 9 (Full.H)", len(rows))
+	}
+}
+
+// TestTooSmallText_DegradesAtNarrowWidths is the review fix: the full
+// "terminal too small (WxH, need 40x10)" message doesn't fit below ~40
+// columns, and lipgloss.Place's width constraint used to silently truncate
+// it mid-word instead of degrading gracefully.
+func TestTooSmallText_DegradesAtNarrowWidths(t *testing.T) {
+	if got := tooSmallText(30, 7, 80); got != "terminal too small (30x7, need 40x10)" {
+		t.Fatalf("tooSmallText at ample width = %q", got)
+	}
+	if got := tooSmallText(30, 7, 20); got != "too small (30x7)" {
+		t.Fatalf("tooSmallText at 20 cols = %q, want the short form", got)
+	}
+	if got := tooSmallText(30, 7, 5); got != "30x7" {
+		t.Fatalf("tooSmallText at 5 cols = %q, want the bare WxH form", got)
+	}
+}
+
+// TestTooSmallNoticeNeverExceedsWidthAtNarrowSizes is the integration-level
+// regression: at real too-small window sizes down to very narrow, no
+// rendered line's visible width exceeds the terminal's actual width (the
+// bug this fixes: a fixed too-long message got hard-clipped mid-word by
+// lipgloss.Place instead of degrading, which is a display bug in its own
+// right even though it happened to stay within width).
+func TestTooSmallNoticeNeverExceedsWidthAtNarrowSizes(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	for _, sz := range []tea.WindowSizeMsg{{Width: 39, Height: 9}, {Width: 20, Height: 6}, {Width: 10, Height: 3}} {
+		m = update(t, m, sz)
+		content := m.View().Content
+		for _, line := range strings.Split(content, "\n") {
+			if w := lipgloss.Width(line); w > sz.Width {
+				t.Fatalf("size %dx%d: line %q width %d exceeds terminal width %d", sz.Width, sz.Height, line, w, sz.Width)
+			}
+		}
+	}
+}
+
+// TestPreviewAutoCollapseOnShrinkPreservesToggleState covers the plan's
+// Task 3 step 3 requirement: shrinking below the 60x15 collapse floor hides
+// the preview (no second bordered panel rendered) but preserves
+// ctx.PreviewOpen, and growing back restores it automatically.
+func TestPreviewAutoCollapseOnShrinkPreservesToggleState(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("preview should start open")
+	}
+
+	m = update(t, m, tea.WindowSizeMsg{Width: 50, Height: 20})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("PreviewOpen should be preserved across an auto-collapse")
+	}
+	if !m.layout.PreviewCollapsed {
+		t.Fatal("layout should report PreviewCollapsed at 50x20")
+	}
+	if m.layout.PreviewPanel != (layout.Rect{}) {
+		t.Fatalf("PreviewPanel should be zero while collapsed, got %+v", m.layout.PreviewPanel)
+	}
+	content := m.View().Content
+	rows := strings.Split(content, "\n")
+	if len(rows) != 20 {
+		t.Fatalf("row count = %d, want 20", len(rows))
+	}
+	for i, row := range rows {
+		if w := lipgloss.Width(row); w != 50 {
+			t.Fatalf("row %d width = %d, want 50:\n%q", i, w, row)
+		}
+	}
+
+	// Grow back: the preview reappears automatically, no 'p' needed.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.layout.PreviewCollapsed {
+		t.Fatal("PreviewCollapsed should clear once the terminal grows back")
+	}
+	if m.layout.PreviewPanel == (layout.Rect{}) {
+		t.Fatal("PreviewPanel should render again once the collapse clears")
+	}
+}
+
+// TestPreviewFocusTogglesViaEnterAndTab covers spec §2's "enter or tab:
+// focus preview" row, both directions (enter/tab also unfocus, since the
+// binding is a symmetric toggle).
+func TestPreviewFocusTogglesViaEnterAndTab(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open",
+	}}))
+	if m.previewFocused {
+		t.Fatal("preview should not start focused")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.previewFocused {
+		t.Fatal("a second enter should unfocus the preview (symmetric toggle)")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !m.previewFocused {
+		t.Fatal("tab should also focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.previewFocused {
+		t.Fatal("a second tab should unfocus the preview")
+	}
+}
+
+// TestPreviewFocusRequiresAVisiblePreview confirms enter/tab don't set
+// previewFocused when there's no visible panel to focus — closed outright,
+// or auto-collapsed by a narrow terminal (previewVisible()).
+func TestPreviewFocusRequiresAVisiblePreview(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{Preview: config.PreviewConfig{Open: boolPtr(false)}}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.ctx.PreviewOpen {
+		t.Fatal("preview should start closed")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.previewFocused {
+		t.Fatal("enter should not focus a closed preview")
+	}
+
+	m2 := New(&config.Config{}, nil)
+	m2 = update(t, m2, tea.WindowSizeMsg{Width: 50, Height: 20}) // below the 60x15 collapse floor
+	if !m2.layout.PreviewCollapsed {
+		t.Fatal("preview should be auto-collapsed at 50x20")
+	}
+	m2 = update(t, m2, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m2.previewFocused {
+		t.Fatal("enter should not focus an auto-collapsed preview")
+	}
+}
+
+// TestPreviewFocusClosingPreviewUnfocuses confirms 'p' while focused both
+// closes the preview and drops previewFocused (nothing left to focus).
+func TestPreviewFocusClosingPreviewUnfocuses(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("preview should be focused")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if m.ctx.PreviewOpen {
+		t.Fatal("'p' should close the preview")
+	}
+	if m.previewFocused {
+		t.Fatal("closing the preview should clear previewFocused")
+	}
+}
+
+// TestPreviewFocusedScrollDoesNotMoveListSelection covers the plan's
+// explicit requirement: j/k while the preview is focused scroll the
+// preview, not the list — checked via selectedActionTarget (the row the
+// list has selected) staying the same PR across the scroll.
+func TestPreviewFocusedScrollDoesNotMoveListSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	before, ok := m.selectedActionTarget()
+	if !ok || before.Number != 1 {
+		t.Fatalf("selectedActionTarget() = %+v, %v; want row #1 selected", before, ok)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+
+	after, ok := m.selectedActionTarget()
+	if !ok || after.Number != before.Number {
+		t.Fatalf("selectedActionTarget() changed while preview focused: before=%+v after=%+v", before, after)
+	}
+}
+
+// TestViewJumpsWorkWhilePreviewFocused covers the plan's explicit
+// requirement: 1-5 still switch views even while the preview is focused
+// (view-jump keys aren't part of the focused-preview key set sidebar.Update
+// recognizes, so they fall through normally).
+func TestViewJumpsWorkWhilePreviewFocused(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: '2', Text: "2"})
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("'2' while focused: View = %v, want IssuesView", m.ctx.View)
+	}
+}
+
+// TestEscUnfocusesPreview covers the esc cascade's last (today, only live)
+// step: esc while the preview is focused unfocuses it.
+func TestEscUnfocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.previewFocused {
+		t.Fatal("enter should focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.previewFocused {
+		t.Fatal("esc should unfocus the preview")
+	}
+}
+
+// TestEscAtTopLevelDoesNothing covers spec §2's Global "esc" row: with
+// nothing open (no prompt, no search, preview unfocused), esc is a no-op —
+// in particular, it must NOT quit (unlike gh-dash's convention).
+func TestEscAtTopLevelDoesNothing(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if isQuitCmd(cmd) {
+		t.Fatal("esc at the top level must not quit")
+	}
+	if cmd != nil {
+		t.Fatalf("esc at the top level should return a nil cmd, got %v", cmd)
+	}
+	m2 := next.(Model)
+	if m2.previewFocused {
+		t.Fatal("esc at the top level should not focus/unfocus anything")
+	}
+}
+
+// TestDismissTop_UnfocusesPreview and TestDismissTop_NoopWhenNothingOpen
+// exercise dismissTop directly, per the plan's "unit-tested" requirement.
+func TestDismissTop_UnfocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.previewFocused = true
+
+	next, cmd := m.dismissTop()
+	if cmd != nil {
+		t.Fatalf("dismissTop() cmd = %v, want nil", cmd)
+	}
+	if next.previewFocused {
+		t.Fatal("dismissTop() should unfocus the preview")
+	}
+}
+
+func TestDismissTop_NoopWhenNothingOpen(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	next, cmd := m.dismissTop()
+	if cmd != nil {
+		t.Fatalf("dismissTop() cmd = %v, want nil", cmd)
+	}
+	if next.previewFocused {
+		t.Fatal("dismissTop() should not focus the preview out of nowhere")
+	}
+}
+
+// TestBranchesViewEnterAlwaysChecksOutNeverFocuses covers spec §2's
+// Branches footnote: enter keeps meaning checkout there (mirroring C/space
+// exactly — open a confirm, then enter submits it), never toggling preview
+// focus; tab is the only way to focus the preview in that view.
+func TestBranchesViewEnterAlwaysChecksOutNeverFocuses(t *testing.T) {
+	var got []actions.Intent
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m.actionDispatcher = func(intent actions.Intent) tea.Cmd {
+		got = append(got, intent)
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+		Name: "feature/local-ops", Current: false,
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.actionPrompt.Active() {
+		t.Fatal("enter in Branches should open a checkout confirm prompt, not focus the preview")
+	}
+	if m.previewFocused {
+		t.Fatal("enter in Branches should never focus the preview")
+	}
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(got) != 1 || got[0].Kind != actions.KindSwitchBranch {
+		t.Fatalf("second enter should submit the checkout: dispatched = %+v", got)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !m.previewFocused {
+		t.Fatal("tab should still focus the preview in Branches (the enter exception is enter-only)")
+	}
+}
+
+// TestConfiguredScrollDownBuiltinStillScrollsPreview covers the plan's
+// explicit "rebinding ... scrollDown ... still lands" requirement: with
+// ctrl+d/ctrl+u's default preview-scroll meaning removed (spec §2), the
+// "scrollDown"/"scrollUp"/"pageDown"/"pageUp" builtin NAMES remain fully
+// functional end to end via a custom keybinding — they no longer have a
+// dedicated keyMap default-key field (there's no default key to reflect
+// anymore), but matchBuiltinKeybinding/handleBuiltinKeybinding dispatch
+// them directly off the raw config entry, independent of keyMap fields.
+func TestConfiguredScrollDownBuiltinStillScrollsPreview(t *testing.T) {
+	cfg := &config.Config{
+		Keybindings: config.Keybindings{
+			Universal: []config.Keybinding{{Key: "X", Builtin: "scrollDown"}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open",
+	}}))
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = "line of preview content"
+	}
+	m.sidebar.SetContent(strings.Join(lines, "\n"))
+	before := m.sidebar.View()
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'X', Text: "X"})
+	if got := m.sidebar.View(); got == before {
+		t.Fatalf("configured scrollDown key should have scrolled the preview (view unchanged)")
+	}
+}
+
+// TestFitBlock_ExpandsTabsSoBorderStaysExact covers the fitBlock tab bug:
+// lipgloss.Width counts a literal tab as exactly 1 cell, but a real
+// terminal expands it to the next tab stop (several columns) — so a
+// tab-carrying line (e.g. prview surfacing a raw CI log line verbatim)
+// measured/padded without first expanding tabs would come up short,
+// leaving the panel's right border rune floating away from the true right
+// edge once the terminal actually renders the tab.
+func TestFitBlock_ExpandsTabsSoBorderStaysExact(t *testing.T) {
+	content := "a\tb"
+	w, h := 20, 3
+	block := fitBlock(content, w, h)
+	rows := strings.Split(block, "\n")
+	if len(rows) != h {
+		t.Fatalf("row count = %d, want %d", len(rows), h)
+	}
+	for i, row := range rows {
+		if got := lipgloss.Width(row); got != w {
+			t.Fatalf("row %d width = %d, want %d (exact, tab-safe):\n%q", i, got, w, row)
+		}
+	}
+	// The tab must have actually been expanded (not just happen to measure
+	// right due to short overall content): the rendered line's plain byte
+	// content should contain the expansion spaces, not a raw tab.
+	if strings.Contains(rows[0], "\t") {
+		t.Fatalf("expected the literal tab to be expanded, still present: %q", rows[0])
+	}
+}
+
 func TestNewWithOptionsSetsSmartFilteringContext(t *testing.T) {
 	m := NewWithOptions(&config.Config{}, nil, Options{CurrentRepo: "acme/widgets", SmartFiltering: true})
 	if m.ctx.CurrentRepo != "acme/widgets" {
@@ -144,28 +603,43 @@ func TestToggleSmartFilteringRefreshesCurrentView(t *testing.T) {
 	if s := m.getCurrSection(); s == nil || !s.GetIsLoading() {
 		t.Fatal("toggle should mark the rebuilt current section loading")
 	}
-	if !strings.Contains(m.notice, "all repositories") {
-		t.Fatalf("notice = %q, want all-repositories status", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "all repositories") {
+		t.Fatalf("notice = %q, want all-repositories status", m.statusLeftSegment())
 	}
 }
 
 func TestToggleSmartFilteringWithoutDetectedRepoShowsNotice(t *testing.T) {
 	m := New(&config.Config{}, nil)
+	// Keep the toast's own expiry tick fast (see actionfeedback.WithExpiry's
+	// doc comment) — this test executes cmd() below to confirm it's just
+	// that tick and not a refetch, and shouldn't block ~4 real seconds to do
+	// so.
+	m.actionFeedback = m.actionFeedback.WithExpiry(time.Millisecond)
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: 't', Text: "t"})
 	m = next.(Model)
+	// cmd is no longer necessarily nil here: it's now the Info toast's own
+	// auto-expiry tick (Task 8), not a refetch — draining it must not
+	// produce a fetch-shaped message.
 	if cmd != nil {
-		t.Fatalf("toggle without a detected repo should not refetch, got %v", cmd)
+		msg := cmd()
+		if _, ok := msg.(actionfeedback.ExpireMsg); !ok {
+			t.Fatalf("toggle without a detected repo should not refetch, cmd produced %T", msg)
+		}
 	}
-	if !strings.Contains(m.notice, "No matching git remote") {
-		t.Fatalf("notice = %q, want missing-remote message", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "No matching git remote") {
+		t.Fatalf("notice = %q, want missing-remote message", m.statusLeftSegment())
 	}
 }
 
-func TestHelpMentionsSmartFilteringWhenCurrentRepoDetected(t *testing.T) {
+// TestStatusHintsMentionsSmartFilteringWhenCurrentRepoDetected migrated off
+// the review-fix-deleted helpLine() (see TestNotificationsHelpShowsUnreadShortcut's
+// doc comment) onto statusHints, the status bar's actual right-segment hint
+// line — which already carries this same "t current repo" mention.
+func TestStatusHintsMentionsSmartFilteringWhenCurrentRepoDetected(t *testing.T) {
 	m := NewWithOptions(&config.Config{}, nil, Options{CurrentRepo: "acme/widgets", SmartFiltering: true})
-	if !strings.Contains(m.helpLine(), "t current repo") {
-		t.Fatalf("help line should mention the current-repo toggle:\n%s", m.helpLine())
+	if !strings.Contains(m.statusHints(), "t current repo") {
+		t.Fatalf("status hints should mention the current-repo toggle:\n%s", m.statusHints())
 	}
 }
 
@@ -193,7 +667,8 @@ func TestMouseClickSelectsVisibleRowAndRefreshesPreview(t *testing.T) {
 		pull: &data.PullDetail{Body: "firstdetailtoken", BaseRef: "main", HeadRef: "first"},
 	})
 
-	click := tea.MouseClickMsg{X: 3, Y: m.tableDataStartY() + 1, Button: tea.MouseLeft}
+	m = viewed(m) // render once so mouse zones reflect this state
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y + 1, Button: tea.MouseLeft}
 	next, _ := m.Update(click)
 	m = next.(Model)
 
@@ -217,8 +692,9 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 	}))
 
-	previewX := 2 + m.ctx.MainContentWidth + 2
-	click := tea.MouseClickMsg{X: previewX, Y: m.tableDataStartY() + 1, Button: tea.MouseLeft}
+	m = viewed(m)
+	previewX := m.layout.PreviewInterior.X
+	click := tea.MouseClickMsg{X: previewX, Y: m.layout.ListRows.Y + 1, Button: tea.MouseLeft}
 	m = update(t, m, click)
 
 	if got := m.getCurrRowData().GetNumber(); got != 1 {
@@ -226,104 +702,45 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 	}
 }
 
-func TestActionBarRendersCommonPullRequestButtons(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	view := m.View().Content
-	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Request review]", "[Remove reviewers]", "[Diff]", "[Checkout]", "[Merge]", "[Close]"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("action bar missing %q:\n%s", want, view)
+// TestAvailableActionsIncludeCommonPullRequestButtons exercises the pure
+// per-view/row action-list function extracted from the deleted action bar
+// (availableActions) — Task 7's command palette reuses it as its item
+// source, so it's tested directly rather than via a rendered/clickable bar.
+func TestAvailableActionsIncludeCommonPullRequestButtons(t *testing.T) {
+	row := data.PullRequest{Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"}
+	buttons := availableActions(context.PullsView, row)
+	for _, want := range []string{"Open", "Refresh", "Comment", "Request review", "Remove reviewers", "Diff", "Checkout", "Merge", "Close"} {
+		if !hasActionLabel(buttons, want) {
+			t.Fatalf("available actions missing %q: %+v", want, buttons)
 		}
 	}
 }
 
-func TestActionBarRendersReadyButtonForDraftPullRequest(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true,
-	}}))
-
-	view := m.View().Content
-	if !strings.Contains(view, "[Ready]") {
-		t.Fatalf("draft PR action bar missing Ready button:\n%s", view)
+func TestAvailableActionsIncludeReadyButtonForDraftPullRequest(t *testing.T) {
+	row := data.PullRequest{Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true}
+	buttons := availableActions(context.PullsView, row)
+	if !hasActionLabel(buttons, "Ready") {
+		t.Fatalf("draft PR available actions missing Ready button: %+v", buttons)
 	}
 }
 
-func TestActionBarRendersCommonIssueButtons(t *testing.T) {
-	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
-		Number: 7, Title: "Issue row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	view := m.View().Content
-	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Checkout]", "[Close]"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("issue action bar missing %q:\n%s", want, view)
+func TestAvailableActionsIncludeCommonIssueButtons(t *testing.T) {
+	row := data.Issue{Number: 7, Title: "Issue row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"}
+	buttons := availableActions(context.IssuesView, row)
+	for _, want := range []string{"Open", "Refresh", "Comment", "Checkout", "Close"} {
+		if !hasActionLabel(buttons, want) {
+			t.Fatalf("issue available actions missing %q: %+v", want, buttons)
 		}
 	}
 }
 
-func TestMouseClickActionButtonStartsPromptAction(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	x := actionButtonClickX(t, m, "Comment")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("comment button should open the prompt synchronously, got cmd %v", cmd)
+func hasActionLabel(buttons []actionButton, label string) bool {
+	for _, b := range buttons {
+		if b.Label == label {
+			return true
+		}
 	}
-	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindComment {
-		t.Fatalf("comment button prompt active=%v pending=%s, want comment prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
-	}
-}
-
-func TestMouseClickReadyActionButtonStartsPromptAction(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true,
-	}}))
-
-	x := actionButtonClickX(t, m, "Ready")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("ready button should open the prompt synchronously, got cmd %v", cmd)
-	}
-	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindMarkReady {
-		t.Fatalf("ready button prompt active=%v pending=%s, want mark-ready prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
-	}
-}
-
-func TestMouseClickRemoveReviewersActionButtonStartsPromptAction(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	x := actionButtonClickX(t, m, "Remove reviewers")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("remove-reviewers button should open the prompt synchronously, got cmd %v", cmd)
-	}
-	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindRemoveReviewers {
-		t.Fatalf("remove-reviewers button prompt active=%v pending=%s, want remove-reviewers prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
-	}
-	if !strings.Contains(m.actionPrompt.View(120), "Remove reviewers") {
-		t.Fatalf("remove-reviewers prompt should name the action:\n%s", m.actionPrompt.View(120))
-	}
+	return false
 }
 
 func TestRequestReviewersLoadsRepoReviewersIntoMultiPicker(t *testing.T) {
@@ -429,61 +846,13 @@ func TestWatchChecksUsesCachedPullDetailWhenRowLacksHead(t *testing.T) {
 	}
 }
 
-func TestMouseClickChecksActionButtonSwitchesToActions(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 7, Title: "Fix checks", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-		HeadRef: "feature/checks", HeadSHA: "abc123",
-	}}))
-
-	x := actionButtonClickX(t, m, "Checks")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("checks action button should fetch the transient Actions section")
-	}
-	if m.ctx.View != context.ActionsView {
-		t.Fatalf("view = %v, want ActionsView", m.ctx.View)
-	}
-}
-
-func TestMouseClickRefreshActionButtonRefreshesCurrentSection(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	x := actionButtonClickX(t, m, "Refresh")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("refresh action button should return a fetch command")
-	}
-	if s := m.getCurrSection(); s == nil || !s.GetIsLoading() {
-		t.Fatal("refresh action button should mark the current section loading")
-	}
-}
-
-func TestMouseClickNotificationActionButtonUsesNotificationFlow(t *testing.T) {
-	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, notificationFetchedMsg([]data.Notification{{
-		ID: 8, Number: 42, SubjectTitle: "Review notification", SubjectType: "Pull",
-		RepoNameWithOwner: "gitea/tea", Unread: true,
-	}}))
-
-	x := actionButtonClickX(t, m, "Mark read")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("nil-client mark-read button should not return a command, got %v", cmd)
-	}
-	if !strings.Contains(m.notice, "No Gitea client available") {
-		t.Fatalf("notice = %q, want nil-client notification message", m.notice)
-	}
-}
+// Note: mouse-click-on-action-button coverage for "Checks", "Refresh", and
+// notification "Mark read" moved to their keyboard-hotkey equivalents (the
+// action bar and its mouse hooks are deleted per the framed-shell plan) —
+// see TestWatchChecksHotkeySwitchesToActionsForSelectedPullRequest,
+// TestRefreshGatedWhileLoading, and TestMarkSelectedNotificationReadRefreshesNotifications.
+// "Remove reviewers" and "Ready" temporarily lose a no-hotkey UI trigger
+// path until Task 7's command palette restores one via availableActions.
 
 func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) {
 	m := New(&config.Config{}, nil)
@@ -509,8 +878,16 @@ func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) 
 		pull: &data.PullDetail{Body: "open-detail-token", BaseRef: "main", HeadRef: "open"},
 	})
 
-	firstWidth := m.tabs.TabWidth(0)
-	next, _ := m.Update(tea.MouseClickMsg{X: 2 + firstWidth + 1, Y: m.tabBarY(), Button: tea.MouseLeft})
+	m = viewed(m)
+	// Ranges() offsets are relative to the tab segment's own left edge; the
+	// zone registration (rebuildZones) adds the list panel's own left
+	// border column on top of that to get an absolute screen column.
+	ranges := m.tabs.Ranges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 rendered tab ranges, got %+v", ranges)
+	}
+	x := m.layout.ListPanel.X + 1 + ranges[1].Start
+	next, _ := m.Update(tea.MouseClickMsg{X: x, Y: m.layout.SectionTabsRow, Button: tea.MouseLeft})
 	m = next.(Model)
 
 	if m.currSectionId != 1 {
@@ -528,21 +905,6 @@ func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) 
 	}
 }
 
-func actionButtonClickX(t *testing.T, m Model, label string) int {
-	t.Helper()
-	x := 2
-	for _, b := range m.actionButtons() {
-		rendered := m.renderActionButton(b)
-		w := lipgloss.Width(rendered)
-		if b.Label == label {
-			return x + w/2
-		}
-		x += w + 1
-	}
-	t.Fatalf("button %q not found in %+v", label, m.actionButtons())
-	return 0
-}
-
 func TestMouseWheelMovesSelectionInList(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -558,8 +920,9 @@ func TestMouseWheelMovesSelectionInList(t *testing.T) {
 		pull: &data.PullDetail{Body: "firstdetailtoken", BaseRef: "main", HeadRef: "first"},
 	})
 
-	listY := m.tableDataStartY()
-	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelDown})
+	m = viewed(m)
+	listX, listY := m.layout.ListRows.X, m.layout.ListRows.Y
+	m = update(t, m, tea.MouseWheelMsg{X: listX, Y: listY, Button: tea.MouseWheelDown})
 	if got := m.getCurrRowData().GetNumber(); got != 2 {
 		t.Fatalf("wheel down selected row = %d, want 2", got)
 	}
@@ -567,28 +930,461 @@ func TestMouseWheelMovesSelectionInList(t *testing.T) {
 	if strings.Contains(view, "firstdetailtoken") || !strings.Contains(view, "Loading") {
 		t.Fatalf("wheel down should refresh preview to the selected row loading state:\n%s", view)
 	}
-	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelDown})
+	m = update(t, m, tea.MouseWheelMsg{X: listX, Y: listY, Button: tea.MouseWheelDown})
 	if got := m.getCurrRowData().GetNumber(); got != 3 {
 		t.Fatalf("second wheel down selected row = %d, want 3", got)
 	}
-	m = update(t, m, tea.MouseWheelMsg{X: 3, Y: listY, Button: tea.MouseWheelUp})
+	m = update(t, m, tea.MouseWheelMsg{X: listX, Y: listY, Button: tea.MouseWheelUp})
 	if got := m.getCurrRowData().GetNumber(); got != 2 {
 		t.Fatalf("wheel up selected row = %d, want 2", got)
 	}
 }
 
-func TestMouseWheelInPreviewDoesNotMoveListSelection(t *testing.T) {
+// TestMouseWheelInPreviewScrollsRegardlessOfFocus covers spec §3's "wheel
+// over preview -> scroll preview content" (not just "doesn't move the
+// list", which was all the pre-Task-6 behavior did): list selection and
+// previewFocused stay untouched, and the preview's own viewport actually
+// scrolls — a body long enough to overflow the pane is required to observe
+// that (see components/sidebar's identical longContent-style setup).
+func TestMouseWheelInPreviewScrollsRegardlessOfFocus(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = update(t, m, fetchedMsg([]data.PullRequest{
 		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 	}))
+	longBody := strings.Repeat("line of preview content\n", 100)
+	m = update(t, m, enrichedMsg{
+		key:  m.selKey(),
+		pull: &data.PullDetail{Body: longBody, BaseRef: "main", HeadRef: "first"},
+	})
+	// Un-fold the body: prview folds long bodies behind "Press e to read
+	// more…" by default, which is short enough to already sit at 100%
+	// scroll — nothing to scroll down into without expanding first.
+	m = update(t, m, tea.KeyPressMsg{Code: 'e', Text: "e"})
 
-	previewX := 2 + m.ctx.MainContentWidth + 2
-	m = update(t, m, tea.MouseWheelMsg{X: previewX, Y: m.tableDataStartY(), Button: tea.MouseWheelDown})
+	m = viewed(m)
+	before := m.sidebar.View()
+	previewX := m.layout.PreviewInterior.X
+	m = update(t, m, tea.MouseWheelMsg{X: previewX, Y: m.layout.PreviewInterior.Y, Button: tea.MouseWheelDown})
+
 	if got := m.getCurrRowData().GetNumber(); got != 1 {
 		t.Fatalf("preview wheel changed list selection: row = %d, want 1", got)
+	}
+	if m.previewFocused {
+		t.Fatal("wheel over the preview should scroll it, not focus it")
+	}
+	if after := m.sidebar.View(); after == before {
+		t.Fatalf("wheel over the preview should scroll its content:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+// TestClickViewLabelSwitchesView covers spec §3's "click view label ->
+// switch view", using the exact column range header.Labels (the same
+// function rebuildZones registers ZoneViewLabel from) reports for the
+// Issues label — never a hard-coded column.
+func TestClickViewLabelSwitchesView(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = viewed(m)
+
+	var issuesLabel header.LabelRange
+	found := false
+	for _, lr := range header.Labels(m.layout.Header.W, m.ctx.View, m.ctx.MockHost, m.ctx.User, m.ctx.Styles) {
+		if lr.View == context.IssuesView {
+			issuesLabel = lr
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Issues label not found in header.Labels output")
+	}
+
+	m = update(t, m, tea.MouseClickMsg{X: issuesLabel.Start, Y: m.layout.Header.Y, Button: tea.MouseLeft})
+	if m.ctx.View != context.IssuesView {
+		t.Fatalf("clicking the Issues label should switch view, got %v", m.ctx.View)
+	}
+}
+
+// TestDoubleClickListRowFocusesPreview covers spec §3's "double left click
+// list row -> focus preview (same as enter)". The clock is faked via nowFn
+// (tea.MouseClickMsg carries no timestamp of its own) so the test controls
+// exactly how far apart the two clicks land relative to doubleClickWindow.
+func TestDoubleClickListRowFocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+
+	m = update(t, m, click)
+	if m.previewFocused {
+		t.Fatal("a single click should not focus the preview")
+	}
+
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) } // well within the 400ms window
+	m = update(t, m, click)
+	if !m.previewFocused {
+		t.Fatal("a double click within the window should focus the preview")
+	}
+
+	// The double-click consumes lastClickAt, so a third click right after
+	// is treated as a fresh single — it must not toggle focus back off.
+	m.nowFn = func() time.Time { return base.Add(150 * time.Millisecond) }
+	m = update(t, m, click)
+	if !m.previewFocused {
+		t.Fatal("the third click (a fresh single, not a second double) should not unfocus the preview")
+	}
+}
+
+// TestDoubleClickOutsideWindowDoesNotFocusPreview confirms two clicks
+// slower than doubleClickWindow apart are two independent single clicks.
+func TestDoubleClickOutsideWindowDoesNotFocusPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, click)
+
+	m.nowFn = func() time.Time { return base.Add(time.Second) } // past the 400ms window
+	m = update(t, m, click)
+	if m.previewFocused {
+		t.Fatal("two clicks slower than the double-click window apart should not focus the preview")
+	}
+}
+
+// TestClickRowThenTabThenSameRowIndexIsNotADoubleClick covers Task 7 Step
+// 0 (from the T6 review): a row click, then a section-tab click, then a
+// click on the SAME row INDEX (in the now-different section) within the
+// double-click window must NOT register as a double-click — without
+// resetting lastClickAt on the intervening non-row click, clickListRow
+// would have no way to tell this apart from a genuine double-click on one
+// row, since it only compares the raw index and the previous click's time.
+func TestClickRowThenTabThenSameRowIndexIsNotADoubleClick(t *testing.T) {
+	m := New(&config.Config{}, nil) // default config: "Open"/"Closed" PR sections
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "Open row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId: 1, SectionType: pullsection.SectionType, TaskId: "p2",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows:       []data.PullRequest{{Number: 2, Title: "Closed row", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "closed"}},
+			TotalCount: 1,
+			TaskId:     "p2",
+		},
+	})
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	rowClick := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, rowClick) // row 0 in section 0 ("Open")
+
+	ranges := m.tabs.Ranges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 rendered tab ranges, got %+v", ranges)
+	}
+	tabX := m.layout.ListPanel.X + 1 + ranges[1].Start
+	m.nowFn = func() time.Time { return base.Add(50 * time.Millisecond) }
+	m = update(t, m, tea.MouseClickMsg{X: tabX, Y: m.layout.SectionTabsRow, Button: tea.MouseLeft}) // -> section 1 ("Closed")
+	if m.currSectionId != 1 {
+		t.Fatalf("tab click should have switched to section 1, got %d", m.currSectionId)
+	}
+
+	m = viewed(m)
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) }                                     // still within the 400ms window
+	m = update(t, m, tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}) // row 0 in section 1
+
+	if m.previewFocused {
+		t.Fatal("row -> tab -> same row index within the window must be a single click, not a double-click")
+	}
+}
+
+// TestClickRowThenZoneMissThenSameRowIndexIsNotADoubleClick covers Task 8
+// Step 0(a) from the T7 review: handleMouseClick previously reset
+// lastClickAt for a left click that hit a zone other than ZoneListRow (see
+// handleZoneLeftClick), but returned early — before any reset — when the
+// click missed every registered zone entirely (e.g. a border gap). A row
+// click, then a miss, then the SAME row index again within the
+// double-click window must still be a single click, not a double-click.
+func TestClickRowThenZoneMissThenSameRowIndexIsNotADoubleClick(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	rowClick := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, rowClick)
+
+	// Well outside the whole frame — guaranteed to miss every zone
+	// registered by rebuildZones, regardless of exact border geometry.
+	miss := tea.MouseClickMsg{X: m.layout.ListPanel.W + 1000, Y: m.layout.ListPanel.H + 1000, Button: tea.MouseLeft}
+	m.nowFn = func() time.Time { return base.Add(50 * time.Millisecond) }
+	m = update(t, m, miss)
+
+	m = viewed(m)
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) } // still within the 400ms window
+	m = update(t, m, rowClick)
+
+	if m.previewFocused {
+		t.Fatal("row -> zone-miss -> same row index within the window must be a single click, not a double-click")
+	}
+}
+
+// TestDoubleClickListRowInBranchesViewChecksOutInsteadOfFocusing covers the
+// T4 Branches exception carried into mouse routing: double-click there
+// checks out (opens the same confirm prompt enter does), never focuses the
+// preview — Branches rows have no preview drill-in target of their own.
+func TestDoubleClickListRowInBranchesViewChecksOutInsteadOfFocusing(t *testing.T) {
+	m := New(&config.Config{Defaults: config.Defaults{View: "branches"}}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, branchFetchedMsg([]localgit.Branch{{
+		Repository: "tea-dash", RepositoryPath: "/src/tea-dash",
+		Name: "feature/local-ops", Current: false,
+	}}))
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return base }
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseLeft}
+	m = update(t, m, click)
+
+	m.nowFn = func() time.Time { return base.Add(100 * time.Millisecond) }
+	m = update(t, m, click)
+
+	if !m.actionPrompt.Active() {
+		t.Fatal("double-click in Branches should open a checkout confirm, not focus the preview")
+	}
+	if m.previewFocused {
+		t.Fatal("double-click in Branches should never focus the preview")
+	}
+}
+
+// TestRightClickListRowOpensRowScopedPalette covers spec §3's "right click
+// list row -> command palette scoped to that row's actions": the row is
+// selected (like a left click), the palette opens, pendingRowPalette (the
+// Task 6 seam) is read-and-cleared back to -1 rather than left dangling,
+// and only action items are present (no "Go to <view>"/"Section: ..."/
+// custom-command items, unlike the ":"/ctrl+p global palette).
+func TestRightClickListRowOpensRowScopedPalette(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	if m.pendingRowPalette != -1 {
+		t.Fatalf("pendingRowPalette = %d before any right click, want -1 (none pending)", m.pendingRowPalette)
+	}
+
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y + 1, Button: tea.MouseRight}
+	m = update(t, m, click)
+
+	if got := m.getCurrRowData().GetNumber(); got != 2 {
+		t.Fatalf("right click should still select the row: got %d, want 2", got)
+	}
+	if m.pendingRowPalette != -1 {
+		t.Fatalf("pendingRowPalette = %d, want -1 (read and cleared once the palette opens)", m.pendingRowPalette)
+	}
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("right click should open the command palette")
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "Merge") {
+		t.Fatalf("row-scoped palette should list row actions like Merge:\n%s", view)
+	}
+	if strings.Contains(view, "Go to Issues") || strings.Contains(view, "Section:") {
+		t.Fatalf("row-scoped palette should NOT list view/section items:\n%s", view)
+	}
+}
+
+// TestClickPreviewTabSwitchesTab covers spec §3's "click preview tab ->
+// switch preview tab", using components/sidebar.TabRanges() (the same
+// source rebuildZones registers ZonePreviewTab from) for the click column.
+func TestClickPreviewTabSwitchesTab(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, enrichedMsg{
+		key:  m.selKey(),
+		pull: &data.PullDetail{Body: "body", BaseRef: "main", HeadRef: "first"},
+	})
+
+	m = viewed(m)
+	ranges := m.sidebar.TabRanges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 preview tab ranges, got %+v", ranges)
+	}
+	x := m.layout.PreviewPanel.X + 1 + ranges[1].Start
+	m = update(t, m, tea.MouseClickMsg{X: x, Y: m.layout.PreviewTabsRow, Button: tea.MouseLeft})
+
+	if got := m.sidebar.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("clicking the second preview tab = %q, want Checks", got)
+	}
+}
+
+// TestClickPreviewBodyFocusesPreview covers spec §3's "click preview body
+// -> focus preview".
+func TestClickPreviewBodyFocusesPreview(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = viewed(m)
+	if m.previewFocused {
+		t.Fatal("preview should start unfocused")
+	}
+
+	m = update(t, m, tea.MouseClickMsg{X: m.layout.PreviewInterior.X, Y: m.layout.PreviewInterior.Y, Button: tea.MouseLeft})
+	if !m.previewFocused {
+		t.Fatal("clicking the preview body should focus it")
+	}
+}
+
+// TestMouseWheelOverHelpOverlayScrollsIt covers spec §3's "wheel over help
+// overlay -> scroll it": a short window so the ~9-group keymap content
+// can't fit, so the very first line ("Views", the first group's title)
+// scrolls out of view after one wheel tick — mirrors keys_test.go's
+// TestHelpOverlayScrollKeysScrollOverlayNotList, but via mouse.
+func TestMouseWheelOverHelpOverlayScrollsIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 14})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = viewed(m)
+
+	opened := m.View().Content
+	if !strings.Contains(opened, "Views") {
+		t.Fatalf("help overlay should open scrolled to the top (Views group visible):\n%s", opened)
+	}
+
+	// Anywhere inside the list+preview interior is "inside the overlay"
+	// while it's open (Task 5's full-interior-replacement design).
+	m = update(t, m, tea.MouseWheelMsg{X: m.layout.ListInterior.X, Y: m.layout.ListInterior.Y, Button: tea.MouseWheelDown})
+
+	scrolled := m.View().Content
+	if strings.Contains(scrolled, "Views") {
+		t.Fatalf("wheel over the overlay should scroll it past the Views group heading:\n%s", scrolled)
+	}
+}
+
+// TestClickOutsideHelpOverlayDismissesIt and
+// TestClickInsideHelpOverlayDoesNotDismissIt cover spec §3's "click outside
+// [the overlay] dismisses" — the T5 review explicitly deferred this to
+// Task 6.
+func TestClickOutsideHelpOverlayDismissesIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = viewed(m)
+	if m.activeOverlay == overlayNone {
+		t.Fatal("'?' should have opened the help overlay")
+	}
+
+	// The header row sits outside the overlay's full list+preview rect.
+	m = update(t, m, tea.MouseClickMsg{X: 0, Y: m.layout.Header.Y, Button: tea.MouseLeft})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("clicking outside the overlay (the header) should dismiss it")
+	}
+}
+
+func TestClickInsideHelpOverlayDoesNotDismissIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = viewed(m)
+
+	m = update(t, m, tea.MouseClickMsg{X: m.layout.ListInterior.X, Y: m.layout.ListInterior.Y, Button: tea.MouseLeft})
+	if m.activeOverlay == overlayNone {
+		t.Fatal("clicking inside the overlay should not dismiss it")
+	}
+}
+
+// TestClickPaletteItemRunsIt covers Task 7 Step 5's "click on a palette
+// item runs it" — via the ZonePaletteItem zones rebuildZones registers at
+// overlayInterior's origin plus palette.HeaderRows (the same geometry
+// palette.Model.View renders at).
+func TestClickPaletteItemRunsIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	m = pressRunes(t, m, "merge") // narrow to a single, known-position item
+	m = viewed(m)
+
+	interior := overlayInterior(m.layout)
+	click := tea.MouseClickMsg{X: interior.X, Y: interior.Y + palette.HeaderRows, Button: tea.MouseLeft}
+	m = update(t, m, click)
+
+	if m.activeOverlay != overlayNone {
+		t.Fatal("clicking a palette item should close the palette")
+	}
+	if !m.actionPrompt.Active() {
+		t.Fatal("clicking 'Merge' should have opened the merge prompt")
+	}
+}
+
+// TestClickPaletteBackgroundDoesNotDismissIt mirrors
+// TestClickInsideHelpOverlayDoesNotDismissIt for the palette: a click on
+// the input row (no item there) is a no-op, not a dismiss.
+func TestClickPaletteBackgroundDoesNotDismissIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	m = viewed(m)
+
+	interior := overlayInterior(m.layout)
+	m = update(t, m, tea.MouseClickMsg{X: interior.X, Y: interior.Y, Button: tea.MouseLeft})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("clicking the palette's input row should not dismiss it")
+	}
+}
+
+// TestMouseWheelOverPaletteScrollsSelection covers Task 7 Step 5's "wheel
+// over open palette scrolls its list" — using palette.Model.MoveSelection
+// directly (see handleMouseWheel's doc comment for why, not the
+// synthetic-key trick the help overlay uses).
+func TestMouseWheelOverPaletteScrollsSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	m = viewed(m)
+
+	before, ok := m.palette.Selected()
+	if !ok {
+		t.Fatal("palette should have a selection once open")
+	}
+
+	interior := overlayInterior(m.layout)
+	m = update(t, m, tea.MouseWheelMsg{X: interior.X, Y: interior.Y + palette.HeaderRows, Button: tea.MouseWheelDown})
+
+	after, ok := m.palette.Selected()
+	if !ok || after == before {
+		t.Fatalf("wheel down over the palette should move the selection: before=%+v after=%+v", before, after)
+	}
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("scrolling should not close the palette")
 	}
 }
 
@@ -603,6 +1399,34 @@ func TestModelRendersError(t *testing.T) {
 	view := m.View().Content
 	if !strings.Contains(view, "Error") || !strings.Contains(view, "boom") {
 		t.Fatalf("expected an error view, got:\n%s", view)
+	}
+}
+
+// TestModelRendersExactHeightWithMultiLineErrorToast is the review fix
+// regression test: a real `git push`/`git fetch` failure surfaces
+// multi-line stderr (internal/git's commandError) straight into an Error
+// toast. Before the fix, actionfeedback.View() rendered that text verbatim
+// (with its embedded newlines intact) into the status bar's one-line left
+// segment, and renderShell's "\n"-joined rows blew straight past the
+// framed shell's exact-height contract (reproduced: 26 lines at 80x24
+// instead of 24).
+func TestModelRendersExactHeightWithMultiLineErrorToast(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Short per-line lengths matter here: a long enough multi-line message
+	// gets dropped entirely by statusbar.View's width budget (a pre-existing,
+	// harmless behavior) rather than exercising the bug — short lines
+	// reproduce the reviewer's "26 lines at 80x24 instead of 24".
+	multiLine := "err one\nerr two\nerr three"
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Error(multiLine))
+	_ = cmd
+
+	content := m.View().Content
+	lines := strings.Split(content, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("rendered %d lines, want exactly 24 (H) — a multi-line toast tore the frame:\n%s", len(lines), content)
 	}
 }
 
@@ -1186,8 +2010,8 @@ func TestMarkSelectedNotificationReadRefreshesNotifications(t *testing.T) {
 	if refresh == nil {
 		t.Fatal("successful mark-read should refresh the notifications section")
 	}
-	if !strings.Contains(m.notice, "Marked notification read") {
-		t.Fatalf("notice = %q, want mark-read confirmation", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Marked notification read") {
+		t.Fatalf("notice = %q, want mark-read confirmation", m.statusLeftSegment())
 	}
 }
 
@@ -1232,8 +2056,8 @@ func TestMarkSelectedNotificationUnreadRefreshesNotifications(t *testing.T) {
 	if refresh == nil {
 		t.Fatal("successful mark-unread should refresh the notifications section")
 	}
-	if !strings.Contains(m.notice, "Marked notification unread") {
-		t.Fatalf("notice = %q, want mark-unread confirmation", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Marked notification unread") {
+		t.Fatalf("notice = %q, want mark-unread confirmation", m.statusLeftSegment())
 	}
 }
 
@@ -1306,8 +2130,8 @@ func TestToggleNotificationPinRefreshesNotifications(t *testing.T) {
 			if refresh == nil {
 				t.Fatal("successful pin action should refresh the notifications section")
 			}
-			if !strings.Contains(m.notice, tt.wantNotice) {
-				t.Fatalf("notice = %q, want %q", m.notice, tt.wantNotice)
+			if !strings.Contains(m.statusLeftSegment(), tt.wantNotice) {
+				t.Fatalf("notice = %q, want %q", m.statusLeftSegment(), tt.wantNotice)
 			}
 		})
 	}
@@ -1332,13 +2156,13 @@ func TestNotificationActionButtonsIncludePinStateAction(t *testing.T) {
 				Unread: true, Pinned: tt.pinned, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
 			}}))
 			found := false
-			for _, b := range m.actionButtons() {
+			for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 				if b.Label == tt.want {
 					found = true
 				}
 			}
 			if !found {
-				t.Fatalf("%s notification buttons = %+v, want %q", tt.name, m.actionButtons(), tt.want)
+				t.Fatalf("%s notification buttons = %+v, want %q", tt.name, availableActions(m.ctx.View, m.getCurrRowData()), tt.want)
 			}
 		})
 	}
@@ -1385,8 +2209,8 @@ func TestMarkAllNotificationsReadRefreshesNotifications(t *testing.T) {
 	if refresh == nil {
 		t.Fatal("successful mark-all-read should refresh the notifications section")
 	}
-	if !strings.Contains(m.notice, "Marked all notifications read") {
-		t.Fatalf("notice = %q, want mark-all confirmation", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Marked all notifications read") {
+		t.Fatalf("notice = %q, want mark-all confirmation", m.statusLeftSegment())
 	}
 }
 
@@ -1534,6 +2358,8 @@ func TestActionsPreviewFetchesAndCachesRunDetail(t *testing.T) {
 			t.Fatalf("action overview tab should not include job detail %q:\n%s", absent, view)
 		}
 	}
+	// [/] only act while the preview is focused (spec §2) — focus it first.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = update(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
 	view = m.View().Content
 	for _, want := range []string{"Jobs:", "build", "ubuntu-latest", "checkout"} {
@@ -1586,11 +2412,13 @@ func TestAutomaticPreviewUsesHalfWidthOnWideScreens(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 220, Height: 40})
 
+	// Bordered panels split evenly: listW=previewW=110 (auto 50/50 of 220),
+	// each panel's interior is its own width minus its own two borders.
 	if m.ctx.PreviewWidth != 108 {
 		t.Fatalf("automatic preview width = %d, want half of available content width 108", m.ctx.PreviewWidth)
 	}
-	if m.ctx.MainContentWidth != 106 {
-		t.Fatalf("main content width = %d, want balanced 50/50 split after gutter", m.ctx.MainContentWidth)
+	if m.ctx.MainContentWidth != 108 {
+		t.Fatalf("main content width = %d, want balanced 50/50 split", m.ctx.MainContentWidth)
 	}
 }
 
@@ -1613,8 +2441,8 @@ func TestPreviewCanStartClosedFromConfig(t *testing.T) {
 	if m.ctx.PreviewWidth != 0 || m.ctx.PreviewHeight != 0 {
 		t.Fatalf("closed preview dimensions = %dx%d, want 0x0", m.ctx.PreviewWidth, m.ctx.PreviewHeight)
 	}
-	if m.ctx.MainContentWidth != 116 {
-		t.Fatalf("closed preview main width = %d, want full content width 116", m.ctx.MainContentWidth)
+	if m.ctx.MainContentWidth != 118 {
+		t.Fatalf("closed preview main width = %d, want full content width 118 (W-2 borders)", m.ctx.MainContentWidth)
 	}
 
 	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
@@ -1632,8 +2460,8 @@ func TestPreviewWidthCanBeConfigured(t *testing.T) {
 	if m.ctx.PreviewWidth != 64 {
 		t.Fatalf("preview width = %d, want configured width 64", m.ctx.PreviewWidth)
 	}
-	if m.ctx.MainContentWidth != 110 {
-		t.Fatalf("main content width = %d, want screen minus padding/gutter/preview = 110", m.ctx.MainContentWidth)
+	if m.ctx.MainContentWidth != 112 {
+		t.Fatalf("main content width = %d, want screen minus preview panel (66) minus list's own borders = 112", m.ctx.MainContentWidth)
 	}
 }
 
@@ -1711,6 +2539,8 @@ func TestPreviewSidebarTabsSwitchWithDefaultKeys(t *testing.T) {
 		t.Fatalf("overview tab should not include check details before switching tabs:\n%s", view)
 	}
 
+	// [/] only act while the preview is focused (spec §2) — focus it first.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = update(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
 	view = m.View().Content
 	if !strings.Contains(view, "unit-check-token") || strings.Contains(view, "overview-token") {
@@ -1758,6 +2588,9 @@ func TestConfiguredNextSidebarTabBuiltinSwitchesPreviewTab(t *testing.T) {
 	}
 	m.syncSidebar()
 
+	// [/] (default or custom-bound) only act while the preview is focused
+	// (spec §2) — focus it first.
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = update(t, m, tea.KeyPressMsg{Code: 'T', Text: "T"})
 	view := m.View().Content
 	if !strings.Contains(view, "configured-check-token") || strings.Contains(view, "configured-overview-token") {
@@ -2058,6 +2891,16 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 			wantPrompt: actions.Prompt{
 				Mode:  actions.PromptText,
 				Value: "alice",
+			},
+		},
+		{
+			name:      "remove reviewers",
+			key:       tea.KeyPressMsg{Code: '#', Text: "#"},
+			kind:      actions.KindRemoveReviewers,
+			textInput: []tea.KeyPressMsg{{Code: 'b', Text: "b"}, {Code: 'o', Text: "o"}, {Code: 'b', Text: "b"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptText,
+				Value: "bob",
 			},
 		},
 		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},
@@ -2470,13 +3313,13 @@ func TestIssueActionButtonsIncludeMilestone(t *testing.T) {
 	}}))
 
 	found := false
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		if b.Label == "Milestone" && b.Builtin == "setMilestone" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("milestone action button not found in %+v", m.actionButtons())
+		t.Fatalf("milestone action button not found in %+v", availableActions(m.ctx.View, m.getCurrRowData()))
 	}
 }
 
@@ -2526,29 +3369,37 @@ func TestIssueActionButtonsIncludeSubscriptionActions(t *testing.T) {
 	}}))
 
 	found := map[string]bool{}
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		found[b.Label] = true
 	}
 	for _, label := range []string{"Subscribe", "Unsubscribe"} {
 		if !found[label] {
-			t.Fatalf("issue action button %q not found in %+v", label, m.actionButtons())
+			t.Fatalf("issue action button %q not found in %+v", label, availableActions(m.ctx.View, m.getCurrRowData()))
 		}
 	}
 }
 
+// TestIssueHelpShowsIssueActionsOnly migrated off the review-fix-deleted
+// helpLine()/helpLineShort() (a compact key-hint string never rendered
+// anywhere by default — see TestNotificationsHelpShowsUnreadShortcut's
+// identical note) onto the real production surface: the help overlay,
+// generated straight from keyMap.Groups(view).
 func TestIssueHelpShowsIssueActionsOnly(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Tall window so the trailing view-scoped "Issues" group fits without
+	// scrolling — see TestHelpKeyTogglesFullHelp's doc comment.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
-	help := m.helpLine()
-	for _, want := range []string{"M milestone", "b/B subscribe", "x/X close/reopen"} {
-		if !strings.Contains(help, want) {
-			t.Fatalf("issue help = %q, want %q", help, want)
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	view := m.View().Content
+	for _, want := range []string{"milestone", "subscribe", "close", "reopen"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("issue full help missing %q:\n%s", want, view)
 		}
 	}
-	for _, bad := range []string{"merge", "diff", "update"} {
-		if strings.Contains(help, bad) {
-			t.Fatalf("issue help = %q, should not advertise PR-only action %q", help, bad)
+	for _, bad := range []string{"merge", "external diff", "update branch"} {
+		if strings.Contains(view, bad) {
+			t.Fatalf("issue full help should not advertise PR-only action %q:\n%s", bad, view)
 		}
 	}
 }
@@ -2707,12 +3558,12 @@ func TestBranchActionButtonsIncludeLocalOps(t *testing.T) {
 	}}))
 
 	found := map[string]bool{}
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		found[b.Label] = true
 	}
 	for _, label := range []string{"Push", "Force push", "Fast-forward", "Delete"} {
 		if !found[label] {
-			t.Fatalf("branch action button %q not found in %+v", label, m.actionButtons())
+			t.Fatalf("branch action button %q not found in %+v", label, availableActions(m.ctx.View, m.getCurrRowData()))
 		}
 	}
 }
@@ -2726,12 +3577,12 @@ func TestActionsActionButtonsIncludeRunControlsAndLogs(t *testing.T) {
 	}}))
 
 	found := map[string]bool{}
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		found[b.Label] = true
 	}
 	for _, label := range []string{"Logs", "Rerun", "Cancel"} {
 		if !found[label] {
-			t.Fatalf("actions action button %q not found in %+v", label, m.actionButtons())
+			t.Fatalf("actions action button %q not found in %+v", label, availableActions(m.ctx.View, m.getCurrRowData()))
 		}
 	}
 }
@@ -2841,30 +3692,47 @@ func TestBranchSwitchCurrentBranchShowsNotice(t *testing.T) {
 	if m.actionPrompt.Active() {
 		t.Fatal("current branch switch must not open a prompt")
 	}
-	if !strings.Contains(m.notice, "already current") {
-		t.Fatalf("current branch notice = %q", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "already current") {
+		t.Fatalf("current branch notice = %q", m.statusLeftSegment())
 	}
 	if view := m.View().Content; !strings.Contains(view, "already current") {
 		t.Fatalf("current branch notice should render in the view:\n%s", view)
 	}
 }
 
+// TestHelpKeyTogglesFullHelp covers the plan's Task 5 Step 3 requirement:
+// "?" opens the help overlay (universal group titles "Views"/"List" plus
+// the current view's scoped group — "PRs" on the default Pulls view — all
+// visible), and a second "?" closes it again. Individual binding
+// descriptions (rather than the old hand-written "R refresh all"-style
+// concatenated strings) are asserted since the overlay's content now comes
+// straight from keyMap.Groups(view)'s help text, which render() lays out
+// as padded "key   desc" columns, not "key desc" one-space pairs. The
+// window is tall (90 rows) so every group — including the trailing
+// view-scoped one — fits without scrolling; scrolling itself is covered
+// separately by TestHelpOverlayScrollKeysScrollOverlayNotList.
 func TestHelpKeyTogglesFullHelp(t *testing.T) {
 	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
-	if strings.Contains(m.View().Content, "R refresh all") {
+	if strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("full help should be hidden before '?' is pressed")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayHelp {
+		t.Fatal("'?' should open the help overlay")
+	}
 	view := m.View().Content
-	for _, want := range []string{"R refresh all", "y copy number", "Y copy URL", "C/space checkout"} {
+	for _, want := range []string{"Views", "List", "PRs", "refresh all", "copy number", "copy URL", "checkout"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("full help missing %q:\n%s", want, view)
 		}
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
-	if strings.Contains(m.View().Content, "R refresh all") {
+	if m.activeOverlay != overlayNone {
+		t.Fatal("second '?' should close the help overlay")
+	}
+	if strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("second '?' should hide full help")
 	}
 }
@@ -2875,20 +3743,350 @@ func TestConfigKeybindingRebindsBuiltin(t *testing.T) {
 			Universal: []config.Keybinding{{Key: "H", Builtin: "help"}},
 		},
 	}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
-	if strings.Contains(m.View().Content, "R refresh all") {
+	if strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("default '?' help key should be replaced by the configured binding")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'H', Text: "H"})
-	if !strings.Contains(m.View().Content, "R refresh all") {
+	if !strings.Contains(m.View().Content, "refresh all") {
 		t.Fatal("configured 'H' key should toggle full help")
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: 'H', Text: "H"})
 	view := m.View().Content
 	if !strings.Contains(view, "H help") || strings.Contains(view, "? help") {
 		t.Fatalf("compact help should show configured help key and hide the old key:\n%s", view)
+	}
+}
+
+// pressRunes feeds s into m one KeyPressMsg per rune, exactly like a user
+// typing into a focused text input.
+func pressRunes(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	for _, r := range s {
+		m = update(t, m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	return m
+}
+
+// TestPaletteColonOpensWithAllItemKinds covers Task 7 Step 2/3's requirement
+// that ':' opens the palette with every item kind present: a builtin action
+// valid for the selected PR row (Merge), a "Go to <view>" entry, and a
+// "Section: <title>" entry for the current view's section.
+func TestPaletteColonOpensWithAllItemKinds(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("':' should open the command palette")
+	}
+	view := m.View().Content
+	for _, want := range []string{"Merge", "Go to Issues", "Go to Inbox", "Section: Open Pull Requests"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("palette missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// TestPaletteCtrlPAlsoOpens covers the second documented open binding.
+func TestPaletteCtrlPAlsoOpens(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("ctrl+p should open the command palette")
+	}
+}
+
+// TestPaletteTypingFilters covers "typing filters" (Step 2): typing "mer"
+// narrows the palette down to just items whose label subsequence-matches
+// it, so unrelated actions like "Refresh" drop out of view.
+func TestPaletteTypingFilters(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+
+	m = pressRunes(t, m, "mer")
+	view := m.View().Content
+	if !strings.Contains(view, "Merge") {
+		t.Fatalf("filtering by 'mer' should keep Merge:\n%s", view)
+	}
+	if strings.Contains(view, "Refresh") || strings.Contains(view, "Go to Issues") {
+		t.Fatalf("filtering by 'mer' should drop non-matching items:\n%s", view)
+	}
+}
+
+// TestPaletteEnterRunsMergeExactlyLikeKey covers Step 2's explicit
+// requirement: running "Merge" through the palette opens the same merge
+// prompt pressing 'm' does — both go through handleBuiltinKeybinding/
+// startAction, so the resulting prompt is byte-for-byte identical.
+func TestPaletteEnterRunsMergeExactlyLikeKey(t *testing.T) {
+	newModelWithPR := func() Model {
+		m := New(&config.Config{}, nil)
+		m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+		m = update(t, m, fetchedMsg([]data.PullRequest{
+			{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		}))
+		return m
+	}
+
+	viaKey := update(t, newModelWithPR(), tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !viaKey.actionPrompt.Active() {
+		t.Fatal("pressing 'm' should open the merge prompt")
+	}
+
+	viaPalette := newModelWithPR()
+	viaPalette = update(t, viaPalette, tea.KeyPressMsg{Code: ':', Text: ":"})
+	viaPalette = pressRunes(t, viaPalette, "merge")
+	viaPalette = update(t, viaPalette, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if !viaPalette.actionPrompt.Active() {
+		t.Fatal("running 'Merge' through the palette should open the merge prompt")
+	}
+	if viaPalette.activeOverlay != overlayNone {
+		t.Fatal("running an item should close the palette")
+	}
+	if viaKey.actionPrompt.View(120) != viaPalette.actionPrompt.View(120) {
+		t.Fatalf("palette-run merge prompt differs from key-run one:\nkey:    %q\npalette: %q",
+			viaKey.actionPrompt.View(120), viaPalette.actionPrompt.View(120))
+	}
+}
+
+// TestPaletteGoToInboxSwitchesView covers Step 2's "Go to Inbox" item.
+func TestPaletteGoToInboxSwitchesView(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+
+	m = pressRunes(t, m, "Go to Inbox")
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if m.ctx.View != context.NotificationsView {
+		t.Fatalf("running 'Go to Inbox' should switch to NotificationsView, got %v", m.ctx.View)
+	}
+	if m.activeOverlay != overlayNone {
+		t.Fatal("running an item should close the palette")
+	}
+}
+
+// TestPaletteEscCloses covers Step 2's "esc closes" cascade-order
+// assertion (both overlays never open at once).
+func TestPaletteEscCloses(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("':' should have opened the palette")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("esc should close the palette")
+	}
+}
+
+// TestPaletteOpeningWhileHelpOpenClosesHelp covers Step 2's explicit
+// cascade assertion: opening the palette while help is open closes help
+// (only one overlay open at a time).
+func TestPaletteOpeningWhileHelpOpenClosesHelp(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayHelp {
+		t.Fatal("'?' should have opened help")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("opening the palette while help is open should switch to the palette, not stack both")
+	}
+	if strings.Contains(m.View().Content, "refresh all") {
+		t.Fatal("help content should be gone once the palette takes over")
+	}
+}
+
+// TestPaletteQuestionMarkIsFilterCharNotHelpShortcut guards the asymmetry
+// documented on updateOverlay: since "?" must be typeable as an ordinary
+// filter character, it must NOT jump from an open palette to help.
+func TestPaletteQuestionMarkIsFilterCharNotHelpShortcut(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("'?' while the palette is open should stay in the palette (typed as a filter char)")
+	}
+	if m.palette.Value() != "?" {
+		t.Fatalf("palette query = %q, want \"?\" to have been typed", m.palette.Value())
+	}
+}
+
+// TestRightClickPaletteScopedToRowActionsDispatchesLikeGlobal confirms the
+// row-scoped palette dispatches an action exactly like the global one
+// (regression guard alongside TestRightClickListRowOpensRowScopedPalette,
+// which only checks the item list).
+func TestRightClickPaletteScopedToRowActionsDispatchesLikeGlobal(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseRight}
+	m = update(t, m, click)
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("right click should open the row-scoped palette")
+	}
+
+	m = pressRunes(t, m, "merge")
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.actionPrompt.Active() {
+		t.Fatal("running Merge from the row-scoped palette should open the merge prompt")
+	}
+}
+
+// TestPaletteCustomCommandDispatches covers Step 2's custom-command item
+// source: a configured PRs custom command shows up in the palette and,
+// when run, dispatches exactly the same KindCustomCommand intent the key
+// binding itself would.
+func TestPaletteCustomCommandDispatches(t *testing.T) {
+	cfg := &config.Config{
+		RepoPaths: map[string]string{"gbarany/tea-dash": "/src/tea-dash"},
+		Keybindings: config.Keybindings{
+			PRs: []config.Keybinding{{
+				Key:     "g",
+				Name:    "lazygit",
+				Command: "cd {{.RepoPath}} && echo {{.PrNumber}}",
+			}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 12, Title: "Custom command row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	var got actions.Intent
+	m.SetActionDispatcher(func(intent actions.Intent) tea.Cmd {
+		got = intent
+		return nil
+	})
+
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	if !strings.Contains(m.View().Content, "lazygit") {
+		t.Fatalf("palette should list the custom command by its Name:\n%s", m.View().Content)
+	}
+	m = pressRunes(t, m, "lazygit")
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if got.Kind != actions.KindCustomCommand || got.Command != "cd {{.RepoPath}} && echo {{.PrNumber}}" {
+		t.Fatalf("custom intent = %+v", got)
+	}
+}
+
+// TestHelpOverlayScrollKeysScrollOverlayNotList covers the plan's Task 5
+// Step 3 requirement that 'j' scrolls the overlay, not the underlying
+// list: at a short window height the ~9-group keymap content can't fit,
+// so the very first line ("Views", the first group's title) scrolls out
+// of view after a single 'j'. 'esc' then closes the overlay (also
+// required), and the list's own row selection — never touched by the
+// overlay's key routing (updateOverlay swallows every key) — is confirmed
+// unchanged from before the overlay opened.
+func TestHelpOverlayScrollKeysScrollOverlayNotList(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 14})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"},
+		{Number: 2, Title: "Second", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"},
+		{Number: 3, Title: "Third", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"},
+	}))
+	before := m.getCurrRowData().GetNumber()
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	opened := m.View().Content
+	if !strings.Contains(opened, "Views") {
+		t.Fatalf("help overlay should open scrolled to the top (Views group visible):\n%s", opened)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	scrolled := m.View().Content
+	if strings.Contains(scrolled, "Views") {
+		t.Fatalf("'j' should scroll the overlay past the Views group heading, not move the list:\n%s", scrolled)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("esc should close the help overlay")
+	}
+	if got := m.getCurrRowData().GetNumber(); got != before {
+		t.Fatalf("scrolling the overlay must not move the underlying list's selection: got row %d, want %d", got, before)
+	}
+}
+
+// TestHelpOverlayHalfPageAndBottomScrollActuallyMove is a regression guard:
+// SetSize used to only ever run inside the render path (overlayContent, a
+// value-receiver method whose mutations to its copy of m.helpOverlay are
+// thrown away after each View() call), so the PERSISTED model's viewport
+// Height stayed stuck at its New() zero value forever. That broke two of
+// helpoverlay's scroll keys in a way invisible from a single
+// top-of-content screenshot (fitBlock always pads/crops every render to
+// the right final size regardless of the viewport's internal window):
+// 'd' (half-page down) silently moved by half of zero — a no-op — and 'G'
+// (goto bottom) computed an offset equal to the full content length,
+// rendering a blank panel. Fixed by sizing the overlay in
+// syncMainContentDimensions (a pointer-receiver method Update actually
+// persists) instead of lazily at render time.
+func TestHelpOverlayHalfPageAndBottomScrollActuallyMove(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	opened := m.View().Content
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'd', Text: "d"})
+	afterHalfPage := m.View().Content
+	if afterHalfPage == opened {
+		t.Fatalf("'d' (half-page down) should have scrolled the overlay, content unchanged:\n%s", afterHalfPage)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
+	atBottom := m.View().Content
+	if !strings.Contains(atBottom, "wheel") {
+		t.Fatalf("'G' should scroll to the bottom (mouse cheatsheet's \"wheel\" row should be visible), got:\n%s", atBottom)
+	}
+}
+
+// TestSearchFocusedHelpKeyTypesIntoSearch covers the plan's Task 5
+// requirement that "?" while the search bar is focused types into search
+// instead of opening the help overlay — the search-focus interception in
+// Update runs before the keymap switch that calls openHelpOverlay, but
+// only when no overlay is already open, so this guards the ordering stays
+// right.
+func TestSearchFocusedHelpKeyTypesIntoSearch(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = update(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
+	if !m.getCurrSection().IsSearchFocused() {
+		t.Fatal("'/' should focus the search bar")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("'?' while searching must not open the help overlay")
+	}
+	if got := m.getCurrSection().(*pullsection.Model).SearchBar.Value(); !strings.Contains(got, "?") {
+		t.Fatalf("search value = %q, want it to contain the typed \"?\"", got)
 	}
 }
 
@@ -2905,8 +4103,8 @@ func TestRedrawBuiltinClearsScreen(t *testing.T) {
 	if got, want := fmt.Sprintf("%T", msg), fmt.Sprintf("%T", tea.ClearScreen()); got != want {
 		t.Fatalf("redraw command returned %T, want %T", msg, tea.ClearScreen())
 	}
-	if next.notice != "" {
-		t.Fatalf("redraw should not set a notice, got %q", next.notice)
+	if next.statusLeftSegment() != "" {
+		t.Fatalf("redraw should not set a notice, got %q", next.statusLeftSegment())
 	}
 }
 
@@ -3086,40 +4284,73 @@ func TestScopedBuiltinKeybindingDoesNotLeakToOtherViews(t *testing.T) {
 	}
 }
 
+// TestNotificationsHelpShowsUnreadShortcut: the status bar's right segment
+// is a deliberately short, view-agnostic hint line (statusHints) — the
+// per-view shortcuts render only in the help overlay (see overlayContent),
+// generated from keyMap.Groups(view)'s view-scoped "Inbox" group for the
+// notifications view. (The compact helpLine()/helpLineShort() text blob
+// this test used to also check at the function level — never rendered
+// anywhere by default — was deleted as dead code; this overlay assertion
+// is the coverage that matters.)
 func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Tall window so the trailing view-scoped "Inbox" group fits without
+	// scrolling — see TestHelpKeyTogglesFullHelp's doc comment.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
-	if view := m.View().Content; !strings.Contains(view, "u unread") {
-		t.Fatalf("compact notifications help missing unread shortcut:\n%s", view)
-	}
-	if view := m.View().Content; !strings.Contains(view, "b pin") {
-		t.Fatalf("compact notifications help missing pin shortcut:\n%s", view)
-	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
-	if view := m.View().Content; !strings.Contains(view, "u mark unread") {
-		t.Fatalf("full notifications help missing mark-unread shortcut:\n%s", view)
+	view := m.View().Content
+	if !strings.Contains(view, "Inbox") {
+		t.Fatalf("full notifications help missing the view-scoped Inbox group:\n%s", view)
 	}
-	if view := m.View().Content; !strings.Contains(view, "b pin") {
-		t.Fatalf("full notifications help missing pin shortcut:\n%s", view)
+	for _, want := range []string{"mark unread", "pin"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("full notifications help missing %q:\n%s", want, view)
+		}
 	}
 }
 
-func TestActionsHelpShowsRunControlsAndRefreshAllFallback(t *testing.T) {
+// TestActionsHelpShowsRunControls replaces a stale pre-Task-5 assertion:
+// the old hand-written helpLineFull() text advertised "ctrl+r refresh all"
+// for the actions view as a fallback around the R/rerun clash, but Task 4
+// (commit a55a433) already dropped ctrl+r entirely (see README's "Changed
+// in vNEXT" table and keys_test.go) without updating that hardcoded
+// string — a live example of exactly the kind of drift the keymap-
+// generated help overlay exists to prevent. The overlay instead renders
+// the CI group's real bindings (rerun, cancel run) straight from
+// keyMap.Groups, and never mentions the long-gone ctrl+r shortcut.
+func TestActionsHelpShowsRunControls(t *testing.T) {
 	m := New(&config.Config{
 		Defaults: config.Defaults{View: "actions"},
 		ActionsSections: []config.SectionConfig{{
 			Title: "CI", Repo: "gbarany/tea-dash",
 		}},
 	}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Tall window so the trailing view-scoped "CI" group fits without
+	// scrolling — see TestHelpKeyTogglesFullHelp's doc comment.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 90})
 
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	view := m.View().Content
-	for _, want := range []string{"R rerun", "! cancel run", "ctrl+r refresh all"} {
+	for _, want := range []string{"rerun", "cancel run", "view logs"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("actions full help missing %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "ctrl+r") {
+		t.Fatalf("actions help should not advertise the long-dropped ctrl+r refresh-all shortcut:\n%s", view)
+	}
+	// Fix-round regression: "R" is CI's rerun key AND (universally)
+	// RefreshAll's key, but app.go's dispatch switch resolves "R" to
+	// rerun-only in this view (RefreshAll has no reachable key here — see
+	// README's migration table), so keys.go's Groups suppresses the
+	// shadowed RefreshAll entry from Global here. The overlay should show
+	// exactly one "R" line ("rerun"), never "refresh all" too.
+	if strings.Contains(view, "refresh all") {
+		t.Fatalf("actions help should not list refresh all — it's shadowed by rerun's \"R\" in this view:\n%s", view)
+	}
+	if n := strings.Count(view, "rerun"); n != 1 {
+		t.Fatalf("actions help should show \"rerun\" exactly once, got %d:\n%s", n, view)
 	}
 }
 
@@ -3163,42 +4394,30 @@ func TestRefreshAllFetchesEveryCurrentSection(t *testing.T) {
 	}
 }
 
-func TestActionsViewRefreshAllUsesCtrlRBecauseRerunIsScopedToR(t *testing.T) {
+// TestCtrlRNoLongerRefreshesAll covers spec §2's migration table: "ctrl+r
+// refresh all: dropped; use R" — RefreshAll's default is "R" only now.
+// (In the Actions view specifically this means refresh-all has no default
+// key at all, since "R" there is scoped to rerun — an accepted trade-off
+// per the migration table, not a bug; a custom keybinding can still reach
+// "refreshAll" there if wanted.)
+func TestCtrlRNoLongerRefreshesAll(t *testing.T) {
 	cfg := &config.Config{
-		Defaults: config.Defaults{View: "actions"},
-		ActionsSections: []config.SectionConfig{
-			{Title: "CI", Repo: "gbarany/tea-dash"},
-			{Title: "Nightly", Repo: "gbarany/tea-dash"},
+		PRSections: []config.SectionConfig{
+			{Title: "A", Filter: config.PrIssueFilter{State: "open"}},
+			{Title: "B", Filter: config.PrIssueFilter{State: "closed"}},
 		},
 	}
 	m := New(cfg, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, context.TaskFinishedMsg{
-		SectionId: 0, SectionType: actionsection.SectionType, TaskId: "a0",
-		Msg: actionsection.SectionActionsFetchedMsg{
-			Rows: []data.ActionRun{{
-				ID: 101, RunNumber: 77, DisplayTitle: "First row", RepoNameWithOwner: "gbarany/tea-dash",
-			}},
-			TotalCount: 1, TaskId: "a0",
-		},
-	})
-	m = update(t, m, context.TaskFinishedMsg{
-		SectionId: 1, SectionType: actionsection.SectionType, TaskId: "a1",
-		Msg: actionsection.SectionActionsFetchedMsg{
-			Rows: []data.ActionRun{{
-				ID: 102, RunNumber: 78, DisplayTitle: "Second row", RepoNameWithOwner: "gbarany/tea-dash",
-			}},
-			TotalCount: 1, TaskId: "a1",
-		},
-	})
+	m = update(t, m, fetchedMsg(nil))
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("ctrl+r should batch refresh commands for all Actions sections")
+	if cmd != nil {
+		t.Fatalf("ctrl+r should no longer do anything (dropped per spec §2), got cmd %v", cmd)
 	}
-	if len(m.tasks) != 2 {
-		t.Fatalf("len(tasks) = %d, want both Actions sections to register refresh tasks", len(m.tasks))
+	if s := m.getCurrSection(); s == nil || s.GetIsLoading() {
+		t.Fatal("ctrl+r should not have triggered a refresh")
 	}
 }
 
@@ -3308,7 +4527,17 @@ func TestConfiguredUpDownBuiltinsMoveSelection(t *testing.T) {
 	}
 }
 
-func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
+// TestMergeKeyInIssuesViewIsANoOp is the review fix: PR-only dispatch cases
+// (merge/update/ready/checks/review/requestReviewers/removeReviewers/diff)
+// are now guarded to context.PullsView (mirroring how Notifications/CI/
+// Branches-scoped cases already guard), so the default "m" key is
+// unreachable outside Pulls — not just caught after the fact by
+// validateActionTarget's error toast. Before this fix, "m" in Issues view
+// would dispatch KindMerge and validateActionTarget would reject it with a
+// "Merge is only available for pull requests." toast: help (the Issues
+// scoped group never lists Merge) and behavior (the key still did
+// something) disagreed. Now it's a plain no-op, matching the help overlay.
+func TestMergeKeyInIssuesViewIsANoOp(t *testing.T) {
 	var dispatched bool
 	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
 	m.actionDispatcher = func(actions.Intent) tea.Cmd {
@@ -3328,11 +4557,44 @@ func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
 	if m.actionPrompt.Active() {
 		t.Fatal("merge on an issue must not open a prompt")
 	}
-	if !strings.Contains(m.notice, "pull requests") {
-		t.Fatalf("invalid action notice = %q, want pull requests message", m.notice)
+	if got := m.statusLeftSegment(); got != "" {
+		t.Fatalf("merge key in Issues view should be a silent no-op, got notice = %q", got)
 	}
-	if view := m.View().Content; !strings.Contains(view, "pull requests") {
-		t.Fatalf("invalid action notice should render in the view:\n%s", view)
+}
+
+// TestValidateActionTargetStillRejectsMergeViaCustomKeybinding keeps
+// coverage on validateActionTarget's PR-only safety net (app.go's
+// handleBuiltinKeybinding "merge" case has no view guard, unlike the
+// default-key dispatch switch, since a custom `keybindings.universal`
+// entry can invoke any builtin from any view — see matchBuiltinKeybinding):
+// a user-configured "Z" -> merge keybinding on an Issues-view row still
+// gets rejected with the "only available for pull requests" toast, rather
+// than silently doing nothing or crashing.
+func TestValidateActionTargetStillRejectsMergeViaCustomKeybinding(t *testing.T) {
+	var dispatched bool
+	cfg := &config.Config{
+		Defaults: config.Defaults{View: "issues"},
+		Keybindings: config.Keybindings{
+			Universal: []config.Keybinding{{Key: "Z", Builtin: "merge"}},
+		},
+	}
+	m := New(cfg, nil)
+	m.actionDispatcher = func(actions.Intent) tea.Cmd {
+		dispatched = true
+		return nil
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
+		Number: 7, Title: "Issue row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'Z', Text: "Z"})
+	if dispatched {
+		t.Fatal("merge on an issue must not dispatch")
+	}
+	if !strings.Contains(m.statusLeftSegment(), "pull requests") {
+		t.Fatalf("invalid action notice = %q, want pull requests message", m.statusLeftSegment())
 	}
 }
 
@@ -3352,8 +4614,8 @@ func TestNilActionDispatcherShowsNoticeOnSubmit(t *testing.T) {
 	if m.actionPrompt.Active() {
 		t.Fatal("submitted prompt should close")
 	}
-	if !strings.Contains(m.notice, "Action not wired yet") {
-		t.Fatalf("nil dispatcher notice = %q, want action-not-wired message", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice = %q, want action-not-wired message", m.statusLeftSegment())
 	}
 	if view := m.View().Content; !strings.Contains(view, "Action not wired yet") {
 		t.Fatalf("nil dispatcher notice should render in the view:\n%s", view)
@@ -3394,6 +4656,53 @@ func TestSuccessfulActionRefreshesRowsAndClearsPreviewCache(t *testing.T) {
 	view := m.View().Content
 	if strings.Contains(view, "staledetailtoken") || !strings.Contains(view, "Loading") {
 		t.Fatalf("successful action should replace stale preview with loading state:\n%s", view)
+	}
+}
+
+// TestSuccessToastExpiresAfterTickThroughUpdate covers Task 8 Step 4's
+// explicit ask: a Set() call whose expiry tea.Cmd is dropped never expires.
+// This drives the real cmd actions.ResultMsg's handler returns all the way
+// through Update (not a synthetic ExpireMsg constructed by the test), so a
+// regression that drops the cmd on this path — the easiest one to get
+// wrong, since the case also conditionally batches a refetch — would show
+// up here as a toast that never clears. WithExpiry keeps the real timer
+// short so the test doesn't block ~4 real seconds (see its doc comment).
+func TestSuccessToastExpiresAfterTickThroughUpdate(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	m.actionFeedback = m.actionFeedback.WithExpiry(time.Millisecond)
+
+	// SectionID 999 doesn't match the current section (0), so the handler
+	// takes its "no matching section" branch and returns just the toast's
+	// own cmd — no fetch to drain alongside it.
+	next, cmd := m.Update(actions.ResultMsg{
+		Intent: actions.Intent{Kind: actions.KindClose, Target: actions.Target{
+			SectionID: 999, SectionType: pullsection.SectionType, RowKind: actions.RowKindPullRequest,
+			Repo: "gbarany/tea-dash", Number: 42,
+		}},
+		Status:  actions.ResultSucceeded,
+		Message: "Closed gbarany/tea-dash#42.",
+	})
+	m = next.(Model)
+	if !strings.Contains(m.statusLeftSegment(), "Closed gbarany/tea-dash#42.") {
+		t.Fatalf("toast = %q, want the success message", m.statusLeftSegment())
+	}
+	if cmd == nil {
+		t.Fatal("a Success Set() should return a non-nil expiry cmd")
+	}
+
+	msg := cmd()
+	if _, ok := msg.(actionfeedback.ExpireMsg); !ok {
+		t.Fatalf("cmd produced %T, want actionfeedback.ExpireMsg", msg)
+	}
+	next2, _ := m.Update(msg)
+	m = next2.(Model)
+	if got := m.statusLeftSegment(); got != "" {
+		t.Fatalf("success toast should be empty once its expiry tick flows through Update, got %q", got)
 	}
 }
 

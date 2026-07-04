@@ -192,6 +192,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "icons": {
+          "type": "string",
+          "enum": ["unicode", "nerd", "ascii"],
+          "description": "Icon glyph set for state indicators (rows, previews, tabs). Defaults to unicode."
+        },
         "colors": { "$ref": "#/$defs/themeColors" }
       }
     },
@@ -201,7 +206,8 @@
       "properties": {
         "text": { "$ref": "#/$defs/themeTextColors" },
         "background": { "$ref": "#/$defs/themeBackgroundColors" },
-        "border": { "$ref": "#/$defs/themeBorderColors" }
+        "border": { "$ref": "#/$defs/themeBorderColors" },
+        "state": { "$ref": "#/$defs/themeStateColors" }
       }
     },
     "themeTextColors": {
@@ -231,6 +237,20 @@
         "primary": { "$ref": "#/$defs/colorString" },
         "secondary": { "$ref": "#/$defs/colorString" },
         "faint": { "$ref": "#/$defs/colorString" }
+      }
+    },
+    "themeStateColors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "open": { "$ref": "#/$defs/colorString" },
+        "draft": { "$ref": "#/$defs/colorString" },
+        "merged": { "$ref": "#/$defs/colorString" },
+        "closed": { "$ref": "#/$defs/colorString" },
+        "success": { "$ref": "#/$defs/colorString" },
+        "failure": { "$ref": "#/$defs/colorString" },
+        "running": { "$ref": "#/$defs/colorString" },
+        "neutral": { "$ref": "#/$defs/colorString" }
       }
     },
     "prIssueSection": {

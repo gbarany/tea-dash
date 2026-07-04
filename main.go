@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/config"
 	localgit "github.com/gbarany/tea-dash/internal/git"
 	"github.com/gbarany/tea-dash/internal/gitea"
+	"github.com/gbarany/tea-dash/internal/mockgitea"
 	"github.com/gbarany/tea-dash/internal/ui"
 )
 
@@ -45,6 +47,7 @@ func main() {
 type cliOptions struct {
 	configPath  string
 	debug       bool
+	mock        bool
 	showVersion bool
 	showHelp    bool
 }
@@ -56,6 +59,8 @@ func parseArgs(args []string) (cliOptions, error) {
 		switch {
 		case arg == "--debug":
 			opts.debug = true
+		case arg == "--mock":
+			opts.mock = true
 		case arg == "-v" || arg == "--version" || arg == "version":
 			opts.showVersion = true
 		case arg == "-h" || arg == "--help" || arg == "help":
@@ -92,27 +97,11 @@ func run(opts cliOptions) error {
 		defer debugLog.Close()
 	}
 
-	cfg, err := config.Load(opts.configPath)
+	cfg, authCfg, cleanup, err := resolveEnvironment(opts, cwd)
 	if err != nil {
 		return err
 	}
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-
-	ov := auth.Overrides{
-		Login:        firstNonEmpty(cfg.Instance.Login, cfg.Login),
-		URL:          cfg.Instance.URL,
-		Token:        cfg.Instance.Token,
-		TokenCommand: cfg.Instance.TokenCommand,
-		TokenEnv:     cfg.Instance.TokenEnv,
-		Insecure:     cfg.Instance.Insecure,
-		CACertPath:   expandHome(cfg.Instance.CACert),
-	}
-	authCfg, err := auth.Resolve(ov)
-	if err != nil {
-		return fmt.Errorf("authentication: %w", err)
-	}
+	defer cleanup()
 
 	ctx := context.Background()
 	client, err := gitea.NewClient(ctx, authCfg)
@@ -120,7 +109,7 @@ func run(opts cliOptions) error {
 		return fmt.Errorf("connecting to %s: %w", authCfg.URL, err)
 	}
 
-	model := ui.NewWithOptions(cfg, client, launchOptions(cfg, authCfg.URL, cwd))
+	model := ui.NewWithOptions(cfg, client, launchOptions(cfg, authCfg.URL, cwd, opts.mock))
 	runner := actionrunner.New(actionrunner.Options{
 		Client:      client,
 		Config:      cfg,
@@ -149,8 +138,108 @@ func startDebugLog(enabled bool, cwd string) (*os.File, error) {
 	return f, nil
 }
 
-func launchOptions(cfg *config.Config, instanceURL, cwd string) ui.Options {
-	opts := ui.Options{SmartFiltering: cfg.SmartFilteringEnabled()}
+// resolveEnvironment picks real config+auth, or the in-process mock stack
+// when opts.mock is set. The returned cleanup func is never nil — callers
+// should always defer it, mock path or not.
+func resolveEnvironment(opts cliOptions, cwd string) (*config.Config, auth.Config, func(), error) {
+	if opts.mock {
+		srv := mockgitea.NewServer(mockgitea.DemoData(time.Now()))
+
+		// parent (the MkdirTemp tree SeedLocalRepo writes the throwaway repo
+		// under) is removed by cleanup below — closing the server alone would
+		// leak it on every --mock run otherwise.
+		// A seeding failure is non-fatal, but repoDir must never end up ""
+		// here: DemoConfig("") would omit LocalRepos, and the branches
+		// section then falls back to the invoking cwd's git repo — leaking
+		// the operator's real branches into the demo. On failure, point the
+		// section at an isolated non-repo path instead.
+		var repoDir, parent string
+		if p, err := os.MkdirTemp("", "tea-dash-mock-"); err != nil {
+			repoDir = filepath.Join(os.TempDir(), "tea-dash-mock-unavailable")
+			fmt.Fprintln(os.Stderr, "note: local demo repo unavailable; Branches view will not have demo data")
+		} else {
+			parent = p
+			if dir, err := mockgitea.SeedLocalRepo(parent); err != nil {
+				repoDir = parent
+				fmt.Fprintln(os.Stderr, "note: could not seed the demo repo (is git installed?); Branches view will not have demo data")
+			} else {
+				repoDir = dir
+			}
+		}
+		cleanup := func() {
+			srv.Close()
+			if parent != "" {
+				os.RemoveAll(parent)
+			}
+		}
+
+		var cfg *config.Config
+		if opts.configPath != "" {
+			// An explicit --config composes with mock mode: load exactly
+			// that file (config.Load with a non-empty path bypasses the
+			// TEA_DASH_CONFIG/repo-local-.tea-dash.yml lookup chain, going
+			// straight to the given path) rather than DemoConfig.
+			loaded, err := config.Load(opts.configPath)
+			if err != nil {
+				cleanup()
+				return nil, auth.Config{}, func() {}, err
+			}
+			cfg = loaded
+		} else {
+			// No explicit --config: use the built-in demo config, and
+			// deliberately do NOT call config.Load("") here — that would
+			// run the full lookup chain (TEA_DASH_CONFIG env, a repo-local
+			// .tea-dash.yml/.tea-dash.yaml under cwd) and could pull in
+			// whatever config the user happens to be sitting in, making
+			// --mock's behavior depend on cwd instead of being predictable.
+			cfg = mockgitea.DemoConfig(repoDir)
+		}
+		if err := cfg.Validate(); err != nil {
+			cleanup()
+			return nil, auth.Config{}, func() {}, err
+		}
+		return cfg, auth.Config{URL: srv.URL(), Token: "mock-token"}, cleanup, nil
+	}
+
+	cfg, err := config.Load(opts.configPath)
+	if err != nil {
+		return nil, auth.Config{}, func() {}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, auth.Config{}, func() {}, err
+	}
+
+	ov := auth.Overrides{
+		Login:        firstNonEmpty(cfg.Instance.Login, cfg.Login),
+		URL:          cfg.Instance.URL,
+		Token:        cfg.Instance.Token,
+		TokenCommand: cfg.Instance.TokenCommand,
+		TokenEnv:     cfg.Instance.TokenEnv,
+		Insecure:     cfg.Instance.Insecure,
+		CACertPath:   expandHome(cfg.Instance.CACert),
+	}
+	authCfg, err := auth.Resolve(ov)
+	if err != nil {
+		return nil, auth.Config{}, func() {}, fmt.Errorf("authentication: %w", err)
+	}
+	return cfg, authCfg, func() {}, nil
+}
+
+// mockHost is the header's fixed right-side host label for --mock runs
+// (spec §5's deferred item, closed in the UI-overhaul plan's Task 3).
+const mockHost = "demo.gitea.local"
+
+// launchOptions builds the UI's smart-filtering and header-host options.
+// mock forces smart filtering off unconditionally: it scopes sections to
+// the git repo tea-dash was launched from, and --mock must never let that
+// repo (very likely the real tea-dash checkout, if that's where someone
+// runs the demo from) leak into the fake teahouse data. mock runs show
+// mockHost in the header; real runs show instanceURL's host.
+func launchOptions(cfg *config.Config, instanceURL, cwd string, mock bool) ui.Options {
+	if mock {
+		return ui.Options{MockHost: mockHost}
+	}
+	opts := ui.Options{SmartFiltering: cfg.SmartFilteringEnabled(), InstanceHost: instanceHost(instanceURL)}
 	if !opts.SmartFiltering {
 		return opts
 	}
@@ -162,6 +251,17 @@ func launchOptions(cfg *config.Config, instanceURL, cwd string) ui.Options {
 	opts.CurrentRepo = remote.FullName()
 	opts.SmartFiltering = opts.CurrentRepo != ""
 	return opts
+}
+
+// instanceHost extracts the host (without scheme/port-if-default) from the
+// resolved instance URL for the header's right-side label. An unparseable
+// URL degrades to showing it verbatim rather than an empty header segment.
+func instanceHost(instanceURL string) string {
+	u, err := url.Parse(instanceURL)
+	if err != nil || u.Host == "" {
+		return instanceURL
+	}
+	return u.Host
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -189,6 +289,7 @@ const usage = `tea-dash — a terminal dashboard for Gitea
 
 Usage:
   tea-dash                 start the dashboard
+  tea-dash --mock          run against built-in demo data (no Gitea needed)
   tea-dash --config <path> use a specific config file
   tea-dash --debug         append debug output to ./debug.log
   tea-dash --version       print version information

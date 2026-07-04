@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gbarany/tea-dash/internal/data"
+	appctx "github.com/gbarany/tea-dash/internal/ui/context"
+	"github.com/gbarany/tea-dash/internal/ui/icons"
 )
 
 func samplePull() data.PullRequest {
@@ -29,7 +31,7 @@ func longBody(items int) string {
 // TestRenderPullLoading verifies the nil-detail placeholder shows "Loading…"
 // alongside the locator and title.
 func TestRenderPullLoading(t *testing.T) {
-	out := RenderPull(samplePull(), nil, 60, false)
+	out := RenderPull(samplePull(), nil, 60, false, appctx.DefaultStyles(), icons.Unicode)
 	for _, want := range []string{"Loading", "#42", "Add preview pane", "gbarany/tea-dash"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("loading preview missing %q:\n%s", want, out)
@@ -48,7 +50,7 @@ func TestRenderPullWithDetail(t *testing.T) {
 		Deletions:    3,
 		ChangedFiles: 2,
 	}
-	out := RenderPull(samplePull(), detail, 60, false)
+	out := RenderPull(samplePull(), detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
 	if strings.Contains(out, "Loading") {
 		t.Fatalf("loaded preview still shows Loading:\n%s", out)
 	}
@@ -63,8 +65,8 @@ func TestRenderPullWithDetail(t *testing.T) {
 // not expanded and shows in full when expanded.
 func TestRenderPullFoldVsExpanded(t *testing.T) {
 	detail := &data.PullDetail{Body: longBody(40)}
-	folded := RenderPull(samplePull(), detail, 60, false)
-	expanded := RenderPull(samplePull(), detail, 60, true)
+	folded := RenderPull(samplePull(), detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
+	expanded := RenderPull(samplePull(), detail, 60, true, appctx.DefaultStyles(), icons.Unicode)
 
 	if len(expanded) <= len(folded) {
 		t.Fatalf("expanded (%d) should be longer than folded (%d)", len(expanded), len(folded))
@@ -82,7 +84,7 @@ func TestRenderPullFoldVsExpanded(t *testing.T) {
 func TestRenderPullDraft(t *testing.T) {
 	row := samplePull()
 	row.Draft = true
-	out := RenderPull(row, nil, 60, false)
+	out := RenderPull(row, nil, 60, false, appctx.DefaultStyles(), icons.Unicode)
 	if !strings.Contains(out, "DRAFT") {
 		t.Fatalf("draft preview missing DRAFT pill:\n%s", out)
 	}
@@ -97,7 +99,7 @@ func TestRenderIssue(t *testing.T) {
 		RepoNameWithOwner: "gbarany/tea-dash",
 		State:             "closed",
 	}
-	loading := RenderIssue(row, nil, 60, false)
+	loading := RenderIssue(row, nil, 60, false, appctx.DefaultStyles(), icons.Unicode)
 	for _, want := range []string{"Loading", "#7", "Something broke", "CLOSED"} {
 		if !strings.Contains(loading, want) {
 			t.Fatalf("issue loading preview missing %q:\n%s", want, loading)
@@ -105,7 +107,7 @@ func TestRenderIssue(t *testing.T) {
 	}
 
 	detail := &data.IssueDetail{Body: "issue body token-abc here"}
-	loaded := RenderIssue(row, detail, 60, false)
+	loaded := RenderIssue(row, detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
 	if strings.Contains(loaded, "Loading") {
 		t.Fatalf("loaded issue preview still shows Loading:\n%s", loaded)
 	}
@@ -136,7 +138,7 @@ func TestRenderPullCommentsCIReviews(t *testing.T) {
 			{Author: "bob", Body: "second comment body omega", CreatedAt: now.Add(-30 * time.Minute)},
 		},
 	}
-	out := RenderPull(samplePull(), detail, 60, false)
+	out := RenderPull(samplePull(), detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
 
 	wants := []string{
 		// CI block
@@ -175,7 +177,7 @@ func TestRenderPullTabsSeparatesOverviewChecksReviewsAndComments(t *testing.T) {
 		}},
 	}
 
-	tabs := RenderPullTabs(samplePull(), detail, 60, false)
+	tabs := RenderPullTabs(samplePull(), detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
 	if len(tabs) != 4 {
 		t.Fatalf("len(RenderPullTabs) = %d, want 4 tabs: %+v", len(tabs), tabs)
 	}
@@ -215,7 +217,7 @@ func TestRenderIssueTabsSeparatesOverviewAndComments(t *testing.T) {
 			Author: "issue-commenter-token",
 			Body:   "issue-comment-token",
 		}},
-	}, 60, false)
+	}, 60, false, appctx.DefaultStyles(), icons.Unicode)
 
 	if len(tabs) != 2 {
 		t.Fatalf("len(RenderIssueTabs) = %d, want 2 tabs: %+v", len(tabs), tabs)
@@ -248,7 +250,7 @@ func TestRenderIssueSingleComment(t *testing.T) {
 			{Author: "carol", Body: "only comment here delta", CreatedAt: time.Now()},
 		},
 	}
-	out := RenderIssue(row, detail, 60, false)
+	out := RenderIssue(row, detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
 
 	if !strings.Contains(out, "1 comment") {
 		t.Fatalf("issue preview missing singular \"1 comment\":\n%s", out)
@@ -297,7 +299,7 @@ func TestRenderActionWithDetailShowsJobsAndSteps(t *testing.T) {
 		}},
 	}
 
-	out := RenderAction(row, detail, 80)
+	out := RenderAction(row, detail, 80, appctx.DefaultStyles(), icons.Unicode)
 	for _, want := range []string{
 		"gbarany/tea-dash · #77",
 		"CI passed",
@@ -318,7 +320,7 @@ func TestRenderActionWithDetailShowsJobsAndSteps(t *testing.T) {
 // TestRenderNilDetailNoComments verifies a nil detail keeps the Loading
 // placeholder and renders no comments/CI sections.
 func TestRenderNilDetailNoComments(t *testing.T) {
-	out := RenderPull(samplePull(), nil, 60, false)
+	out := RenderPull(samplePull(), nil, 60, false, appctx.DefaultStyles(), icons.Unicode)
 	if !strings.Contains(out, "Loading") {
 		t.Fatalf("nil-detail preview should show Loading:\n%s", out)
 	}
