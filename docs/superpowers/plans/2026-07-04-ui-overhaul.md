@@ -198,6 +198,11 @@ New defaults per spec §2 table: `1`–`5` direct view jump; `s` cycles; `h/l` s
 - Modify: `internal/ui/app.go` (`handleMouseClick`/`handleMouseWheel` rewritten over `layout.Zones`; delete `tableDataStartY`, `tabBarY`, `inMainListPane`, `rowIndexAtY`, `selectRowFromMouse` Y-math), `internal/ui/components/header/header.go` (view-label hit ranges registered as zones), tabs/sidebar zone registration
 - Test: app_test.go mouse suite rewritten to click zone coordinates taken from `m.layout` (never hard-coded), plus new cases
 
+Carry-forward (T3 review, Minor): border-embedded section/preview tab labels
+truncate mid-word at narrow widths ("Needs My Rev") — add an ellipsis or
+whole-label priority-drop rule while touching tab rendering for zones here
+(or at latest in Task 10's QA sweep).
+
 - [ ] **Step 1: failing tests.** Click view label → view switches; click section tab → section switches; click list row → selection; double-click row (two `tea.MouseClickMsg` within the double-click window — implement `lastClick time.Time + position`, threshold 400ms, monotonic-safe) → preview focus; right-click row (`tea.MouseRight`) → opens palette scoped to row actions (palette lands in Task 7 — for this task assert the intent: a `pendingPaletteScope` field set, or defer the right-click case to Task 7 and note it); click preview tab → tab switch; click preview body → focus; wheel over list → selection moves; wheel over preview → preview scrolls (selection unchanged); wheel over overlay → overlay scrolls; click outside overlay → dismiss.
 - [ ] **Step 2: implement** — one `zoneAt(msg.X, msg.Y)` dispatch in `handleMouseClick`; zones registered during View (store `*layout.Zones` on Model, rebuilt per render).
 - [ ] **Step 3:** e2e wheel test through drain (wheel messages are sync — direct Update calls). tmux: manual mouse verification is limited — send SGR sequences: `printf '\e[<0;10;5M\e[<0;10;5m'` via `tmux send-keys -H` if workable, else note keyboard-verified + unit-covered. Commit: `feat(ui): first-class mouse — zone-based routing, double-click, preview wheel`.
