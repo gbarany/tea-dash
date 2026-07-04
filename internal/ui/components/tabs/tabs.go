@@ -1,9 +1,12 @@
-// Package tabs renders the section tab bar. It is hidden (empty) while there is
-// fewer than two sections, so a single-section view looks unchanged.
+// Package tabs renders the section tab bar, embedded in the list panel's
+// top border line (spec §1: "├─ Open (12) ── Closed (3) ─..."). It is
+// hidden (empty) while there are fewer than two sections, so a
+// single-section view's border row is a plain dash rule.
 package tabs
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 
@@ -64,25 +67,27 @@ func (m Model) TabWidth(i int) int {
 	return lipgloss.Width(m.renderedTabAt(i))
 }
 
-// TabAt maps a cell offset relative to the tab bar's left edge to a section
-// index. It returns false when the tab bar is hidden or the offset is outside
-// all rendered tabs.
+// TabAt maps a cell offset relative to the embedded segment's own left edge
+// (the leading "─", i.e. offset 0) to a section index. It returns false when
+// the tab bar is hidden or the offset is outside all rendered tabs.
 func (m Model) TabAt(x int) (int, bool) {
 	if len(m.sections) < 2 || x < 0 {
 		return 0, false
 	}
-	pos := 0
+	pos := 1 // skip the leading "─"
 	for i := range m.sections {
 		w := m.TabWidth(i)
 		if x >= pos && x < pos+w {
 			return i, true
 		}
-		pos += w
+		pos += w + 2 // "──" separator before the next tab
 	}
 	return 0, false
 }
 
-// View renders the tab bar, or "" when there are fewer than two sections.
+// View renders the tab bar as a segment embeddable in the list panel's top
+// border line — "─ Open (12) ── Closed (3) ─" — or "" when there are fewer
+// than two sections (the border row is then a plain dash rule).
 func (m Model) View() string {
 	if len(m.sections) < 2 {
 		return ""
@@ -91,5 +96,5 @@ func (m Model) View() string {
 	for i := range m.sections {
 		rendered[i] = m.renderedTabAt(i)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
+	return "─" + strings.Join(rendered, "──")
 }

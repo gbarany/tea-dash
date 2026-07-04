@@ -40,6 +40,38 @@ func TestLaunchOptionsForcesOffForMock(t *testing.T) {
 	}
 }
 
+// TestLaunchOptionsSetsMockHost closes spec §5's deferred item: --mock runs
+// show a fixed "demo.gitea.local" header host label.
+func TestLaunchOptionsSetsMockHost(t *testing.T) {
+	got := launchOptions(&config.Config{}, "https://gitea.example.com", t.TempDir(), true)
+	if got.MockHost != "demo.gitea.local" {
+		t.Fatalf("MockHost = %q, want demo.gitea.local", got.MockHost)
+	}
+	if got.InstanceHost != "" {
+		t.Fatalf("InstanceHost = %q, want empty on the --mock path", got.InstanceHost)
+	}
+}
+
+// TestLaunchOptionsSetsInstanceHostForRealRuns confirms real (non-mock)
+// runs surface the resolved instance URL's host for the header, and that
+// MockHost stays empty so the header falls back to it.
+func TestLaunchOptionsSetsInstanceHostForRealRuns(t *testing.T) {
+	got := launchOptions(&config.Config{}, "https://gitea.example.com:3000", t.TempDir(), false)
+	if got.InstanceHost != "gitea.example.com:3000" {
+		t.Fatalf("InstanceHost = %q, want gitea.example.com:3000", got.InstanceHost)
+	}
+	if got.MockHost != "" {
+		t.Fatalf("MockHost = %q, want empty on a real run", got.MockHost)
+	}
+}
+
+func TestInstanceHostFallsBackToVerbatimURLWhenUnparseable(t *testing.T) {
+	// A URL with a raw control character is what net/url.Parse rejects.
+	if got := instanceHost("http://\x7f"); got != "http://\x7f" {
+		t.Fatalf("instanceHost(unparseable) = %q, want the URL verbatim", got)
+	}
+}
+
 func TestParseArgsMock(t *testing.T) {
 	opts, err := parseArgs([]string{"--mock"})
 	if err != nil || !opts.mock {

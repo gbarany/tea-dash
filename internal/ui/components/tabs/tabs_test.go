@@ -44,13 +44,16 @@ func TestTabAtMapsRenderedCellsToSections(t *testing.T) {
 	firstWidth := lipgloss.Width(ctx.Styles.ActiveTab.Render("Open Pull Requests (0)"))
 	secondWidth := lipgloss.Width(ctx.Styles.Tab.Render("Closed Pull Requests (0)"))
 
+	// Offsets are relative to the embedded segment's own left edge: a
+	// leading "─" occupies column 0, the first tab starts at column 1, and
+	// a "──" separator (2 columns) precedes the next tab.
 	if idx, ok := tb.TabAt(1); !ok || idx != 0 {
 		t.Fatalf("TabAt(first tab cell) = %d, %v; want 0, true", idx, ok)
 	}
-	if idx, ok := tb.TabAt(firstWidth + 1); !ok || idx != 1 {
+	if idx, ok := tb.TabAt(1 + firstWidth + 2); !ok || idx != 1 {
 		t.Fatalf("TabAt(second tab cell) = %d, %v; want 1, true", idx, ok)
 	}
-	if idx, ok := tb.TabAt(firstWidth + secondWidth); ok {
+	if idx, ok := tb.TabAt(1 + firstWidth + 2 + secondWidth); ok {
 		t.Fatalf("TabAt(after tabs) = %d, %v; want no tab", idx, ok)
 	}
 }

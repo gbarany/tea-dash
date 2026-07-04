@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,16 +225,21 @@ func resolveEnvironment(opts cliOptions, cwd string) (*config.Config, auth.Confi
 	return cfg, authCfg, func() {}, nil
 }
 
-// launchOptions builds the UI's smart-filtering options. mock forces smart
-// filtering off unconditionally: it scopes sections to the git repo tea-dash
-// was launched from, and --mock must never let that repo (very likely the
-// real tea-dash checkout, if that's where someone runs the demo from) leak
-// into the fake teahouse data.
+// mockHost is the header's fixed right-side host label for --mock runs
+// (spec §5's deferred item, closed in the UI-overhaul plan's Task 3).
+const mockHost = "demo.gitea.local"
+
+// launchOptions builds the UI's smart-filtering and header-host options.
+// mock forces smart filtering off unconditionally: it scopes sections to
+// the git repo tea-dash was launched from, and --mock must never let that
+// repo (very likely the real tea-dash checkout, if that's where someone
+// runs the demo from) leak into the fake teahouse data. mock runs show
+// mockHost in the header; real runs show instanceURL's host.
 func launchOptions(cfg *config.Config, instanceURL, cwd string, mock bool) ui.Options {
 	if mock {
-		return ui.Options{}
+		return ui.Options{MockHost: mockHost}
 	}
-	opts := ui.Options{SmartFiltering: cfg.SmartFilteringEnabled()}
+	opts := ui.Options{SmartFiltering: cfg.SmartFilteringEnabled(), InstanceHost: instanceHost(instanceURL)}
 	if !opts.SmartFiltering {
 		return opts
 	}
@@ -245,6 +251,17 @@ func launchOptions(cfg *config.Config, instanceURL, cwd string, mock bool) ui.Op
 	opts.CurrentRepo = remote.FullName()
 	opts.SmartFiltering = opts.CurrentRepo != ""
 	return opts
+}
+
+// instanceHost extracts the host (without scheme/port-if-default) from the
+// resolved instance URL for the header's right-side label. An unparseable
+// URL degrades to showing it verbatim rather than an empty header segment.
+func instanceHost(instanceURL string) string {
+	u, err := url.Parse(instanceURL)
+	if err != nil || u.Host == "" {
+		return instanceURL
+	}
+	return u.Host
 }
 
 func firstNonEmpty(vals ...string) string {

@@ -6,6 +6,7 @@ package sidebar
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -106,7 +107,8 @@ func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) {
 
 // View renders the viewport plus a right-aligned "NN%" scroll indicator, or ""
 // while the preview is closed. The indicator occupies the last row, so the whole
-// pane fits within PreviewHeight.
+// pane fits within PreviewHeight. Sidebar tabs no longer render here — they're
+// embedded in the preview panel's top border line (see TabsBorderSegment).
 func (m Model) View() string {
 	if !m.ctx.PreviewOpen {
 		return ""
@@ -116,26 +118,36 @@ func (m Model) View() string {
 		Width(m.ctx.PreviewWidth).
 		Align(lipgloss.Right).
 		Render(pct)
-	parts := []string{}
-	if tabs := m.tabBar(); tabs != "" {
-		parts = append(parts, tabs)
+	return lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), indicator)
+}
+
+// TabsBorderSegment renders the sidebar's tabs as a segment embeddable in
+// the preview panel's top border line — "─ Overview ── Checks ─" — or ""
+// when there are fewer than two tabs (the border row is then a plain dash
+// rule), mirroring components/tabs' embedding format.
+func (m Model) TabsBorderSegment() string {
+	if len(m.tabs) <= 1 {
+		return ""
 	}
-	parts = append(parts, m.vp.View(), indicator)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	rendered := make([]string, len(m.tabs))
+	for i, t := range m.tabs {
+		style := m.ctx.Styles.Tab
+		if i == m.tab {
+			style = m.ctx.Styles.ActiveTab
+		}
+		rendered[i] = style.Render(t.Title)
+	}
+	return "─" + strings.Join(rendered, "──")
 }
 
 // resize sizes the viewport to the preview area, reserving one row for the
-// scroll indicator and, when present, one row for tabs so View()'s total height
-// stays within PreviewHeight.
+// scroll indicator so View()'s total height stays within PreviewHeight.
 func (m *Model) resize() {
 	w := m.ctx.PreviewWidth
 	if w < 0 {
 		w = 0
 	}
 	h := m.ctx.PreviewHeight - 1 // reserve the last row for the scroll indicator
-	if len(m.tabs) > 1 {
-		h--
-	}
 	if h < 1 {
 		h = 1
 	}
@@ -154,24 +166,6 @@ func (m *Model) syncViewport() {
 	}
 	m.content = m.tabs[m.tab].Content
 	m.vp.SetContent(m.content)
-}
-
-func (m Model) tabBar() string {
-	if len(m.tabs) <= 1 {
-		return ""
-	}
-	parts := make([]string, 0, len(m.tabs)*2-1)
-	for i, t := range m.tabs {
-		if i > 0 {
-			parts = append(parts, m.ctx.Styles.TabSeparator.Render(" "))
-		}
-		style := m.ctx.Styles.Tab
-		if i == m.tab {
-			style = m.ctx.Styles.ActiveTab
-		}
-		parts = append(parts, style.Render(t.Title))
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 }
 
 func compactTabs(tabs []Tab) []Tab {

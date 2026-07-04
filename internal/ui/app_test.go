@@ -25,6 +25,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/context"
+	"github.com/gbarany/tea-dash/internal/ui/layout"
 )
 
 func update(t *testing.T, m Model, msg tea.Msg) Model {
@@ -114,6 +115,114 @@ func TestViewEnablesMouseCellMotion(t *testing.T) {
 	view := m.View()
 	if view.MouseMode != tea.MouseModeCellMotion {
 		t.Fatalf("MouseMode = %v, want MouseModeCellMotion", view.MouseMode)
+	}
+}
+
+// TestFramedShellRendersFullSpaceWithHeaderAndStatusBar is the Task 3
+// app-level assertion set from the plan: full-space (row count == height,
+// every row exactly the screen width, no outer padding), the header
+// showing the app name/active view/mock host, the status bar ending in the
+// help hint, and a border column between the list and preview panels.
+func TestFramedShellRendersFullSpaceWithHeaderAndStatusBar(t *testing.T) {
+	m := NewWithOptions(&config.Config{}, nil, Options{MockHost: "demo.gitea.local"})
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
+	}}))
+
+	content := m.View().Content
+	rows := strings.Split(content, "\n")
+	if len(rows) != 40 {
+		t.Fatalf("row count = %d, want 40 (full-space, no outer padding)", len(rows))
+	}
+	for i, row := range rows {
+		if w := lipgloss.Width(row); w != 120 {
+			t.Fatalf("row %d width = %d, want 120:\n%q", i, w, row)
+		}
+	}
+
+	first := rows[0]
+	for _, want := range []string{"tea-dash", "1 Pulls", "demo.gitea.local"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("header row missing %q:\n%s", want, first)
+		}
+	}
+
+	last := rows[len(rows)-1]
+	if !strings.Contains(last, "? help") {
+		t.Fatalf("status bar row missing %q:\n%s", "? help", last)
+	}
+
+	// A border column exists between the list and preview panels (preview
+	// defaults open): an interior row has more than the 2 "│" runes a
+	// single bordered panel would draw on its own.
+	found := false
+	for _, row := range rows[2 : len(rows)-2] {
+		if strings.Count(row, "│") > 2 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a border column between the list and preview panels:\n%s", content)
+	}
+}
+
+// TestTooSmallRendersCenteredNotice covers the <40x10 floor (layout.Compute):
+// the framed shell is replaced entirely by a centered notice, still exactly
+// Full.H rows tall.
+func TestTooSmallRendersCenteredNotice(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 39, Height: 9})
+
+	content := m.View().Content
+	if !strings.Contains(content, "too small") {
+		t.Fatalf("expected a too-small notice, got:\n%s", content)
+	}
+	if rows := strings.Split(content, "\n"); len(rows) != 9 {
+		t.Fatalf("row count = %d, want 9 (Full.H)", len(rows))
+	}
+}
+
+// TestPreviewAutoCollapseOnShrinkPreservesToggleState covers the plan's
+// Task 3 step 3 requirement: shrinking below the 60x15 collapse floor hides
+// the preview (no second bordered panel rendered) but preserves
+// ctx.PreviewOpen, and growing back restores it automatically.
+func TestPreviewAutoCollapseOnShrinkPreservesToggleState(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("preview should start open")
+	}
+
+	m = update(t, m, tea.WindowSizeMsg{Width: 50, Height: 20})
+	if !m.ctx.PreviewOpen {
+		t.Fatal("PreviewOpen should be preserved across an auto-collapse")
+	}
+	if !m.layout.PreviewCollapsed {
+		t.Fatal("layout should report PreviewCollapsed at 50x20")
+	}
+	if m.layout.PreviewPanel != (layout.Rect{}) {
+		t.Fatalf("PreviewPanel should be zero while collapsed, got %+v", m.layout.PreviewPanel)
+	}
+	content := m.View().Content
+	rows := strings.Split(content, "\n")
+	if len(rows) != 20 {
+		t.Fatalf("row count = %d, want 20", len(rows))
+	}
+	for i, row := range rows {
+		if w := lipgloss.Width(row); w != 50 {
+			t.Fatalf("row %d width = %d, want 50:\n%q", i, w, row)
+		}
+	}
+
+	// Grow back: the preview reappears automatically, no 'p' needed.
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.layout.PreviewCollapsed {
+		t.Fatal("PreviewCollapsed should clear once the terminal grows back")
+	}
+	if m.layout.PreviewPanel == (layout.Rect{}) {
+		t.Fatal("PreviewPanel should render again once the collapse clears")
 	}
 }
 
@@ -217,7 +326,7 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 	}))
 
-	previewX := 2 + m.ctx.MainContentWidth + 2
+	previewX := m.layout.PreviewInterior.X
 	click := tea.MouseClickMsg{X: previewX, Y: m.tableDataStartY() + 1, Button: tea.MouseLeft}
 	m = update(t, m, click)
 
@@ -226,104 +335,45 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 	}
 }
 
-func TestActionBarRendersCommonPullRequestButtons(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	view := m.View().Content
-	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Request review]", "[Remove reviewers]", "[Diff]", "[Checkout]", "[Merge]", "[Close]"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("action bar missing %q:\n%s", want, view)
+// TestAvailableActionsIncludeCommonPullRequestButtons exercises the pure
+// per-view/row action-list function extracted from the deleted action bar
+// (availableActions) — Task 7's command palette reuses it as its item
+// source, so it's tested directly rather than via a rendered/clickable bar.
+func TestAvailableActionsIncludeCommonPullRequestButtons(t *testing.T) {
+	row := data.PullRequest{Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"}
+	buttons := availableActions(context.PullsView, row)
+	for _, want := range []string{"Open", "Refresh", "Comment", "Request review", "Remove reviewers", "Diff", "Checkout", "Merge", "Close"} {
+		if !hasActionLabel(buttons, want) {
+			t.Fatalf("available actions missing %q: %+v", want, buttons)
 		}
 	}
 }
 
-func TestActionBarRendersReadyButtonForDraftPullRequest(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true,
-	}}))
-
-	view := m.View().Content
-	if !strings.Contains(view, "[Ready]") {
-		t.Fatalf("draft PR action bar missing Ready button:\n%s", view)
+func TestAvailableActionsIncludeReadyButtonForDraftPullRequest(t *testing.T) {
+	row := data.PullRequest{Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true}
+	buttons := availableActions(context.PullsView, row)
+	if !hasActionLabel(buttons, "Ready") {
+		t.Fatalf("draft PR available actions missing Ready button: %+v", buttons)
 	}
 }
 
-func TestActionBarRendersCommonIssueButtons(t *testing.T) {
-	m := New(&config.Config{Defaults: config.Defaults{View: "issues"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedIssuesMsg([]data.Issue{{
-		Number: 7, Title: "Issue row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	view := m.View().Content
-	for _, want := range []string{"[Open]", "[Refresh]", "[Comment]", "[Checkout]", "[Close]"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("issue action bar missing %q:\n%s", want, view)
+func TestAvailableActionsIncludeCommonIssueButtons(t *testing.T) {
+	row := data.Issue{Number: 7, Title: "Issue row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"}
+	buttons := availableActions(context.IssuesView, row)
+	for _, want := range []string{"Open", "Refresh", "Comment", "Checkout", "Close"} {
+		if !hasActionLabel(buttons, want) {
+			t.Fatalf("issue available actions missing %q: %+v", want, buttons)
 		}
 	}
 }
 
-func TestMouseClickActionButtonStartsPromptAction(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	x := actionButtonClickX(t, m, "Comment")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("comment button should open the prompt synchronously, got cmd %v", cmd)
+func hasActionLabel(buttons []actionButton, label string) bool {
+	for _, b := range buttons {
+		if b.Label == label {
+			return true
+		}
 	}
-	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindComment {
-		t.Fatalf("comment button prompt active=%v pending=%s, want comment prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
-	}
-}
-
-func TestMouseClickReadyActionButtonStartsPromptAction(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "Draft work", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open", Draft: true,
-	}}))
-
-	x := actionButtonClickX(t, m, "Ready")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("ready button should open the prompt synchronously, got cmd %v", cmd)
-	}
-	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindMarkReady {
-		t.Fatalf("ready button prompt active=%v pending=%s, want mark-ready prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
-	}
-}
-
-func TestMouseClickRemoveReviewersActionButtonStartsPromptAction(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	x := actionButtonClickX(t, m, "Remove reviewers")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("remove-reviewers button should open the prompt synchronously, got cmd %v", cmd)
-	}
-	if !m.actionPrompt.Active() || m.pendingAction.Kind != actions.KindRemoveReviewers {
-		t.Fatalf("remove-reviewers button prompt active=%v pending=%s, want remove-reviewers prompt", m.actionPrompt.Active(), m.pendingAction.Kind)
-	}
-	if !strings.Contains(m.actionPrompt.View(120), "Remove reviewers") {
-		t.Fatalf("remove-reviewers prompt should name the action:\n%s", m.actionPrompt.View(120))
-	}
+	return false
 }
 
 func TestRequestReviewersLoadsRepoReviewersIntoMultiPicker(t *testing.T) {
@@ -429,61 +479,13 @@ func TestWatchChecksUsesCachedPullDetailWhenRowLacksHead(t *testing.T) {
 	}
 }
 
-func TestMouseClickChecksActionButtonSwitchesToActions(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 7, Title: "Fix checks", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-		HeadRef: "feature/checks", HeadSHA: "abc123",
-	}}))
-
-	x := actionButtonClickX(t, m, "Checks")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("checks action button should fetch the transient Actions section")
-	}
-	if m.ctx.View != context.ActionsView {
-		t.Fatalf("view = %v, want ActionsView", m.ctx.View)
-	}
-}
-
-func TestMouseClickRefreshActionButtonRefreshesCurrentSection(t *testing.T) {
-	m := New(&config.Config{}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, fetchedMsg([]data.PullRequest{{
-		Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open",
-	}}))
-
-	x := actionButtonClickX(t, m, "Refresh")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("refresh action button should return a fetch command")
-	}
-	if s := m.getCurrSection(); s == nil || !s.GetIsLoading() {
-		t.Fatal("refresh action button should mark the current section loading")
-	}
-}
-
-func TestMouseClickNotificationActionButtonUsesNotificationFlow(t *testing.T) {
-	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = update(t, m, notificationFetchedMsg([]data.Notification{{
-		ID: 8, Number: 42, SubjectTitle: "Review notification", SubjectType: "Pull",
-		RepoNameWithOwner: "gitea/tea", Unread: true,
-	}}))
-
-	x := actionButtonClickX(t, m, "Mark read")
-	next, cmd := m.Update(tea.MouseClickMsg{X: x, Y: m.actionBarY(), Button: tea.MouseLeft})
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatalf("nil-client mark-read button should not return a command, got %v", cmd)
-	}
-	if !strings.Contains(m.notice, "No Gitea client available") {
-		t.Fatalf("notice = %q, want nil-client notification message", m.notice)
-	}
-}
+// Note: mouse-click-on-action-button coverage for "Checks", "Refresh", and
+// notification "Mark read" moved to their keyboard-hotkey equivalents (the
+// action bar and its mouse hooks are deleted per the framed-shell plan) —
+// see TestWatchChecksHotkeySwitchesToActionsForSelectedPullRequest,
+// TestRefreshGatedWhileLoading, and TestMarkSelectedNotificationReadRefreshesNotifications.
+// "Remove reviewers" and "Ready" temporarily lose a no-hotkey UI trigger
+// path until Task 7's command palette restores one via availableActions.
 
 func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) {
 	m := New(&config.Config{}, nil)
@@ -510,7 +512,11 @@ func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) 
 	})
 
 	firstWidth := m.tabs.TabWidth(0)
-	next, _ := m.Update(tea.MouseClickMsg{X: 2 + firstWidth + 1, Y: m.tabBarY(), Button: tea.MouseLeft})
+	// Offsets are relative to the screen: sectionTabsOriginX() + the leading
+	// "─" (1) + firstWidth + the "──" separator (2) lands inside the second
+	// tab (see components/tabs.TabAt's embedding format).
+	x := m.sectionTabsOriginX() + 1 + firstWidth + 2
+	next, _ := m.Update(tea.MouseClickMsg{X: x, Y: m.tabBarY(), Button: tea.MouseLeft})
 	m = next.(Model)
 
 	if m.currSectionId != 1 {
@@ -526,21 +532,6 @@ func TestMouseClickOnSectionTabSwitchesSectionAndRefreshesPreview(t *testing.T) 
 	if !strings.Contains(view, "Closed row") || !strings.Contains(view, "Loading") {
 		t.Fatalf("tab click should render the clicked section preview loading state:\n%s", view)
 	}
-}
-
-func actionButtonClickX(t *testing.T, m Model, label string) int {
-	t.Helper()
-	x := 2
-	for _, b := range m.actionButtons() {
-		rendered := m.renderActionButton(b)
-		w := lipgloss.Width(rendered)
-		if b.Label == label {
-			return x + w/2
-		}
-		x += w + 1
-	}
-	t.Fatalf("button %q not found in %+v", label, m.actionButtons())
-	return 0
 }
 
 func TestMouseWheelMovesSelectionInList(t *testing.T) {
@@ -585,7 +576,7 @@ func TestMouseWheelInPreviewDoesNotMoveListSelection(t *testing.T) {
 		{Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
 	}))
 
-	previewX := 2 + m.ctx.MainContentWidth + 2
+	previewX := m.layout.PreviewInterior.X
 	m = update(t, m, tea.MouseWheelMsg{X: previewX, Y: m.tableDataStartY(), Button: tea.MouseWheelDown})
 	if got := m.getCurrRowData().GetNumber(); got != 1 {
 		t.Fatalf("preview wheel changed list selection: row = %d, want 1", got)
@@ -1332,13 +1323,13 @@ func TestNotificationActionButtonsIncludePinStateAction(t *testing.T) {
 				Unread: true, Pinned: tt.pinned, HTMLURL: "https://git.example/gbarany/tea-dash/pulls/42",
 			}}))
 			found := false
-			for _, b := range m.actionButtons() {
+			for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 				if b.Label == tt.want {
 					found = true
 				}
 			}
 			if !found {
-				t.Fatalf("%s notification buttons = %+v, want %q", tt.name, m.actionButtons(), tt.want)
+				t.Fatalf("%s notification buttons = %+v, want %q", tt.name, availableActions(m.ctx.View, m.getCurrRowData()), tt.want)
 			}
 		})
 	}
@@ -1586,11 +1577,13 @@ func TestAutomaticPreviewUsesHalfWidthOnWideScreens(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 220, Height: 40})
 
+	// Bordered panels split evenly: listW=previewW=110 (auto 50/50 of 220),
+	// each panel's interior is its own width minus its own two borders.
 	if m.ctx.PreviewWidth != 108 {
 		t.Fatalf("automatic preview width = %d, want half of available content width 108", m.ctx.PreviewWidth)
 	}
-	if m.ctx.MainContentWidth != 106 {
-		t.Fatalf("main content width = %d, want balanced 50/50 split after gutter", m.ctx.MainContentWidth)
+	if m.ctx.MainContentWidth != 108 {
+		t.Fatalf("main content width = %d, want balanced 50/50 split", m.ctx.MainContentWidth)
 	}
 }
 
@@ -1613,8 +1606,8 @@ func TestPreviewCanStartClosedFromConfig(t *testing.T) {
 	if m.ctx.PreviewWidth != 0 || m.ctx.PreviewHeight != 0 {
 		t.Fatalf("closed preview dimensions = %dx%d, want 0x0", m.ctx.PreviewWidth, m.ctx.PreviewHeight)
 	}
-	if m.ctx.MainContentWidth != 116 {
-		t.Fatalf("closed preview main width = %d, want full content width 116", m.ctx.MainContentWidth)
+	if m.ctx.MainContentWidth != 118 {
+		t.Fatalf("closed preview main width = %d, want full content width 118 (W-2 borders)", m.ctx.MainContentWidth)
 	}
 
 	m = update(t, m, tea.KeyPressMsg{Code: 'p', Text: "p"})
@@ -1632,8 +1625,8 @@ func TestPreviewWidthCanBeConfigured(t *testing.T) {
 	if m.ctx.PreviewWidth != 64 {
 		t.Fatalf("preview width = %d, want configured width 64", m.ctx.PreviewWidth)
 	}
-	if m.ctx.MainContentWidth != 110 {
-		t.Fatalf("main content width = %d, want screen minus padding/gutter/preview = 110", m.ctx.MainContentWidth)
+	if m.ctx.MainContentWidth != 112 {
+		t.Fatalf("main content width = %d, want screen minus preview panel (66) minus list's own borders = 112", m.ctx.MainContentWidth)
 	}
 }
 
@@ -2470,13 +2463,13 @@ func TestIssueActionButtonsIncludeMilestone(t *testing.T) {
 	}}))
 
 	found := false
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		if b.Label == "Milestone" && b.Builtin == "setMilestone" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("milestone action button not found in %+v", m.actionButtons())
+		t.Fatalf("milestone action button not found in %+v", availableActions(m.ctx.View, m.getCurrRowData()))
 	}
 }
 
@@ -2526,12 +2519,12 @@ func TestIssueActionButtonsIncludeSubscriptionActions(t *testing.T) {
 	}}))
 
 	found := map[string]bool{}
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		found[b.Label] = true
 	}
 	for _, label := range []string{"Subscribe", "Unsubscribe"} {
 		if !found[label] {
-			t.Fatalf("issue action button %q not found in %+v", label, m.actionButtons())
+			t.Fatalf("issue action button %q not found in %+v", label, availableActions(m.ctx.View, m.getCurrRowData()))
 		}
 	}
 }
@@ -2707,12 +2700,12 @@ func TestBranchActionButtonsIncludeLocalOps(t *testing.T) {
 	}}))
 
 	found := map[string]bool{}
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		found[b.Label] = true
 	}
 	for _, label := range []string{"Push", "Force push", "Fast-forward", "Delete"} {
 		if !found[label] {
-			t.Fatalf("branch action button %q not found in %+v", label, m.actionButtons())
+			t.Fatalf("branch action button %q not found in %+v", label, availableActions(m.ctx.View, m.getCurrRowData()))
 		}
 	}
 }
@@ -2726,12 +2719,12 @@ func TestActionsActionButtonsIncludeRunControlsAndLogs(t *testing.T) {
 	}}))
 
 	found := map[string]bool{}
-	for _, b := range m.actionButtons() {
+	for _, b := range availableActions(m.ctx.View, m.getCurrRowData()) {
 		found[b.Label] = true
 	}
 	for _, label := range []string{"Logs", "Rerun", "Cancel"} {
 		if !found[label] {
-			t.Fatalf("actions action button %q not found in %+v", label, m.actionButtons())
+			t.Fatalf("actions action button %q not found in %+v", label, availableActions(m.ctx.View, m.getCurrRowData()))
 		}
 	}
 }
@@ -3090,11 +3083,17 @@ func TestNotificationsHelpShowsUnreadShortcut(t *testing.T) {
 	m := New(&config.Config{Defaults: config.Defaults{View: "notifications"}}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 
-	if view := m.View().Content; !strings.Contains(view, "u unread") {
-		t.Fatalf("compact notifications help missing unread shortcut:\n%s", view)
+	// The compact form's per-view shortcuts (helpLine()/helpLineShort())
+	// aren't rendered anywhere by default now — the status bar's right
+	// segment is a deliberately short, view-agnostic hint line (statusHints)
+	// — so the compact form is exercised at the function level here, and
+	// the expanded (showHelp=true) form is what actually renders in the
+	// view, as a list-panel overlay (see overlayContent).
+	if help := m.helpLine(); !strings.Contains(help, "u unread") {
+		t.Fatalf("compact notifications help missing unread shortcut: %q", help)
 	}
-	if view := m.View().Content; !strings.Contains(view, "b pin") {
-		t.Fatalf("compact notifications help missing pin shortcut:\n%s", view)
+	if help := m.helpLine(); !strings.Contains(help, "b pin") {
+		t.Fatalf("compact notifications help missing pin shortcut: %q", help)
 	}
 	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	if view := m.View().Content; !strings.Contains(view, "u mark unread") {

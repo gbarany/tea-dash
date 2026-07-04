@@ -155,10 +155,15 @@ func TestE2ESwitchViewsRendersAllFive(t *testing.T) {
 	// unreachable because main.go's resolveEnvironment always passes a
 	// non-empty path into DemoConfig (the seeded repo, or an isolated
 	// non-repo dir when seeding fails), populating LocalRepos. This test
-	// uses DemoConfig("") deliberately, so the fallback fires here; the
-	// "local branches" breadcrumb is what's actually stable to assert on.
-	if view := m.View().Content; !strings.Contains(view, "local branches") {
-		t.Fatalf("branches view missing %q:\n%s", "local branches", view)
+	// uses DemoConfig("") deliberately, so the fallback fires here.
+	//
+	// The old flat layout's "  local branches" subtitle line is gone with
+	// the framed shell (Task 3) — the header's active view label is the
+	// stable equivalent: it's always rendered (independent of section
+	// count/title), and its PanelTitle styling is exactly what the header
+	// package renders for the active view (see components/header).
+	if want := m.ctx.Styles.PanelTitle.Render("5 Branches"); !strings.Contains(m.View().Content, want) {
+		t.Fatalf("branches view missing the active header label %q:\n%s", want, m.View().Content)
 	}
 }
 

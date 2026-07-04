@@ -21,14 +21,17 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/header"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
 	"github.com/gbarany/tea-dash/internal/ui/components/sidebar"
+	"github.com/gbarany/tea-dash/internal/ui/components/statusbar"
 	"github.com/gbarany/tea-dash/internal/ui/components/tabs"
 	"github.com/gbarany/tea-dash/internal/ui/context"
+	"github.com/gbarany/tea-dash/internal/ui/layout"
 )
 
 // Model is the root tea-dash model: a set of sections rendered as tabs. Each
@@ -47,6 +50,15 @@ type Model struct {
 	actions       []section.Section
 	branches      []section.Section
 	notice        string // transient status message (e.g. browser-open failure)
+
+	// layout is every rectangle of the framed shell, recomputed by
+	// syncMainContentDimensions on every resize/toggle that can change it.
+	layout layout.Layout
+	// previewFocused routes keys to the preview pane and swaps which panel
+	// gets the focused border color. Task 4 wires the toggle (enter/tab,
+	// esc); it is always false until then, so the list panel is always the
+	// focused one.
+	previewFocused bool
 
 	actionDispatcher func(actions.Intent) tea.Cmd
 	actionPrompt     actionprompt.Model
@@ -130,6 +142,12 @@ type notificationActionMsg struct {
 type Options struct {
 	CurrentRepo    string
 	SmartFiltering bool
+
+	// MockHost and InstanceHost feed the header's right-side host label
+	// (spec §5). main.go sets MockHost ("demo.gitea.local") on the --mock
+	// path and InstanceHost (the real instance URL's host) otherwise.
+	MockHost     string
+	InstanceHost string
 }
 
 type watchChecksMsg struct {
@@ -175,6 +193,8 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		Styles:         context.StylesForConfig(cfg),
 		CurrentRepo:    opts.CurrentRepo,
 		SmartFiltering: opts.SmartFiltering,
+		MockHost:       opts.MockHost,
+		InstanceHost:   opts.InstanceHost,
 	}
 	ctx.StartTask = func(t context.Task) tea.Cmd {
 		tasks[t.Id] = t
@@ -202,6 +222,11 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 	// Build only the starting view's sections; the other slice stays nil until
 	// the first switch (lazy build). setCurrentViewSections wires the tab bar.
 	m.setCurrentViewSections(buildSections(view, ctx))
+	// Compute an initial layout (even at the zero ScreenWidth/Height a
+	// fresh Model starts with) so m.layout is never the Layout zero value —
+	// View() branches on m.layout.TooSmall before the first WindowSizeMsg
+	// ever arrives in some tests.
+	m.syncMainContentDimensions()
 	return m
 }
 
@@ -626,74 +651,281 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateCurrentSectionWithPreview(msg)
 }
 
-// View composes the same shell as before: title, (tab bar), section body,
-// status line, help.
+// View renders the framed full-space shell (spec §1): a one-row header
+// embedded in the top border, the list/preview panels as bordered boxes
+// with their tabs embedded in their own top borders, and a one-row status
+// bar embedded in the bottom border. Below the 40x10 floor it renders a
+// centered "too small" notice instead (see layout.Compute).
 func (m Model) View() tea.View {
-	subtitle := "  my pull requests"
-	switch m.ctx.View {
-	case context.IssuesView:
-		subtitle = "  my issues"
-	case context.NotificationsView:
-		subtitle = "  notifications"
-	case context.ActionsView:
-		subtitle = "  actions"
-	case context.BranchesView:
-		subtitle = "  local branches"
+	l := m.layout
+	var content string
+	if l.TooSmall {
+		content = tooSmallNotice(l.Full, m.ctx.Styles)
+	} else {
+		content = m.renderShell(l)
 	}
-	title := m.ctx.Styles.Title.Render("tea-dash") + m.ctx.Styles.DimText.Render(subtitle)
-
-	parts := []string{title}
-	if tv := m.tabs.View(); tv != "" {
-		parts = append(parts, tv)
-	}
-	status := m.statusLine()
-	if m.actionPrompt.Active() {
-		status = m.actionPrompt.View(m.ctx.ScreenWidth - 4)
-	} else if m.notice != "" {
-		status = m.ctx.Styles.ErrorText.Render(m.notice)
-	} else if !m.actionFeedback.Empty() {
-		status = m.actionFeedback.View(m.ctx.ScreenWidth - 4)
-	}
-	body := ""
-	if s := m.getCurrSection(); s != nil {
-		body = s.View()
-	}
-	if m.ctx.PreviewOpen {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.sidebar.View())
-	}
-	parts = append(parts, body)
-	if bar := m.actionBarView(); bar != "" {
-		parts = append(parts, bar)
-	}
-	parts = append(parts, status, m.ctx.Styles.HelpText.Render(m.helpLine()))
-
-	content := appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	return tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
 }
 
+// renderShell builds every row of the non-TooSmall shell. It guarantees
+// exactly l.Full.H rows of exactly l.Full.W cells each: every interior
+// block (section body, sidebar, help/prompt overlay) is passed through
+// fitBlock, and header/statusbar guarantee their own exact width.
+func (m Model) renderShell(l layout.Layout) string {
+	styles := m.ctx.Styles
+
+	host := m.ctx.MockHost
+	if host == "" {
+		host = m.ctx.InstanceHost
+	}
+	headerRow := header.View(l.Header.W, m.ctx.View, host, m.ctx.User, styles)
+
+	listStyle := styles.BorderBlurred
+	if !m.previewFocused {
+		listStyle = styles.BorderFocused
+	}
+	previewStyle := styles.BorderBlurred
+	if m.previewFocused {
+		previewStyle = styles.BorderFocused
+	}
+
+	rows := make([]string, 0, l.ListPanel.H+2)
+	rows = append(rows, headerRow)
+
+	showPreview := l.PreviewPanel.W > 0 && l.PreviewPanel.H > 0
+
+	// An action prompt or the expanded help text replaces the list+preview
+	// area with one full-width panel (Task 5 replaces this with a proper
+	// centered overlay). Using the combined width — instead of squeezing
+	// into the narrower list-only interior — avoids word-wrap breaking a
+	// short multi-word phrase (e.g. "R refresh all") across two lines.
+	if overlay, ok := m.overlayContent(); ok {
+		fullPanel := layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
+		interior := layout.Rect{X: fullPanel.X + 1, Y: fullPanel.Y + 1, W: fullPanel.W - 2, H: fullPanel.H - 2}
+		body := fitBlock(overlay, interior.W, interior.H)
+		rows = append(rows, renderPanel(fullPanel, interior, m.tabs.View(), body, listStyle, listBorders(false))...)
+	} else {
+		listBody := fitBlock(m.listInteriorContent(), l.ListInterior.W, l.ListInterior.H)
+		listRows := renderPanel(l.ListPanel, l.ListInterior, m.tabs.View(), listBody, listStyle, listBorders(showPreview))
+		if showPreview {
+			previewBody := fitBlock(m.sidebar.View(), l.PreviewInterior.W, l.PreviewInterior.H)
+			previewRows := renderPanel(l.PreviewPanel, l.PreviewInterior, m.sidebar.TabsBorderSegment(), previewBody, previewStyle, previewBorders())
+			for i := range listRows {
+				rows = append(rows, listRows[i]+previewRows[i])
+			}
+		} else {
+			rows = append(rows, listRows...)
+		}
+	}
+
+	rows = append(rows, m.statusBarRow(l))
+	return strings.Join(rows, "\n")
+}
+
+// overlayContent returns the content that should replace the list/preview
+// area — the active action prompt, or the expanded help text — and whether
+// either is currently showing.
+func (m Model) overlayContent() (string, bool) {
+	if m.actionPrompt.Active() {
+		fullWidth := m.layout.ListPanel.W + m.layout.PreviewPanel.W - 2
+		if fullWidth < 0 {
+			fullWidth = 0
+		}
+		return m.actionPrompt.View(fullWidth), true
+	}
+	if m.showHelp {
+		return m.helpLineFull(), true
+	}
+	return "", false
+}
+
+// listInteriorContent is the list panel's normal (non-overlay) body.
+func (m Model) listInteriorContent() string {
+	if s := m.getCurrSection(); s != nil {
+		return s.View()
+	}
+	return ""
+}
+
+// statusBarRow renders the bottom border/status row: left is transient
+// action feedback, middle is section status counts, right is a short
+// key-hint line ending in "? help · q quit" (spec §1). helpLine()'s
+// existing compact/expanded forms are both too long for a single status-bar
+// segment shared with the other two — the expanded form renders as the
+// list-panel overlay instead (see overlayContent); statusHints is a
+// separate, deliberately short line just for this row.
+func (m Model) statusBarRow(l layout.Layout) string {
+	return statusbar.View(l.StatusBar.W, m.statusLeftSegment(), m.statusLine(), m.statusHints(), m.ctx.Styles)
+}
+
+// statusHints is the status bar's right segment: short, global, and always
+// ends in the help/quit hint (spec §1's mockup: "? help · : palette ·
+// q quit" — ":" palette lands in Task 7).
+func (m Model) statusHints() string {
+	hints := []string{"p preview"}
+	if m.ctx.CurrentRepo != "" {
+		hints = append(hints, "t current repo")
+	}
+	hints = append(hints, fmt.Sprintf("%s help", keyHelp(m.keys.Help, "?")))
+	hints = append(hints, fmt.Sprintf("%s quit", keyHelp(m.keys.Quit, "q")))
+	return strings.Join(hints, " · ")
+}
+
+func (m Model) statusLeftSegment() string {
+	if m.notice != "" {
+		return m.notice
+	}
+	if !m.actionFeedback.Empty() {
+		return m.actionFeedback.View(60)
+	}
+	return ""
+}
+
+// tooSmallNotice centers a "terminal too small" message in the full
+// terminal rect, used below the 40x10 floor instead of the framed shell.
+func tooSmallNotice(full layout.Rect, styles context.Styles) string {
+	if full.H <= 0 {
+		return ""
+	}
+	w := full.W
+	if w < 0 {
+		w = 0
+	}
+	if w == 0 {
+		return strings.Repeat("\n", full.H-1)
+	}
+	msg := styles.ErrorText.Render(fmt.Sprintf("terminal too small (%dx%d, need 40x10)", full.W, full.H))
+	return lipgloss.Place(w, full.H, lipgloss.Center, lipgloss.Center, msg)
+}
+
+// panelBorders is the four corner runes a bordered panel draws, which
+// depend only on whether a panel to the right is also shown (this shell
+// never has more than list+preview side by side).
+type panelBorders struct {
+	topLeft, topRight, bottomLeft, bottomRight string
+}
+
+// listBorders is the list panel's corners: "├"/"├" on the left (it always
+// starts at column 0, directly below the header's left run), and "┬"/"┴" on
+// the right when a preview panel follows, else "┤"/"┤" (closing the frame).
+func listBorders(previewShown bool) panelBorders {
+	right := "┤"
+	if previewShown {
+		right = "┬"
+	}
+	bottomRight := "┤"
+	if previewShown {
+		bottomRight = "┴"
+	}
+	return panelBorders{topLeft: "├", topRight: right, bottomLeft: "├", bottomRight: bottomRight}
+}
+
+// previewBorders is the preview panel's corners: always follows a list
+// panel to its left ("┬"/"┴") and always closes the frame on the right
+// ("┤"/"┤").
+func previewBorders() panelBorders {
+	return panelBorders{topLeft: "┬", topRight: "┤", bottomLeft: "┴", bottomRight: "┤"}
+}
+
+// renderPanel draws one full bordered panel — its own top border (carrying
+// tabsSegment, embedded per spec §1), bordered interior rows, and its own
+// bottom border — as exactly panel.H rows of exactly panel.W cells each.
+// body must already be fitBlock'd to interior.W x interior.H.
+func renderPanel(panel, interior layout.Rect, tabsSegment, body string, style lipgloss.Style, b panelBorders) []string {
+	rows := make([]string, 0, panel.H)
+	rows = append(rows, style.Render(b.topLeft)+embedInBorderRow(tabsSegment, interior.W, style)+style.Render(b.topRight))
+	for _, line := range strings.Split(body, "\n") {
+		rows = append(rows, style.Render("│")+line+style.Render("│"))
+	}
+	rows = append(rows, style.Render(b.bottomLeft)+embedInBorderRow("", interior.W, style)+style.Render(b.bottomRight))
+	return rows
+}
+
+// embedInBorderRow renders a w-cell border row: a plain dash rule when
+// segment is "" (no tabs to embed), otherwise segment (already styled —
+// e.g. components/tabs or sidebar.TabsBorderSegment's embedding format)
+// followed by dash fill out to w.
+func embedInBorderRow(segment string, w int, style lipgloss.Style) string {
+	if w <= 0 {
+		return ""
+	}
+	if segment == "" {
+		return style.Render(strings.Repeat("─", w))
+	}
+	segW := lipgloss.Width(segment)
+	if segW >= w {
+		return lipgloss.NewStyle().MaxWidth(w).Render(segment)
+	}
+	return segment + style.Render(strings.Repeat("─", w-segW))
+}
+
+// fitBlock pads or truncates content to exactly w columns by h rows, so
+// every panel interior contributes a fixed number of same-width rows to
+// the frame regardless of what it renders (a loading spinner, an error
+// block, a handful of table rows, or wrapped overlay text) — the shell's
+// exact total row/column count depends on it.
+func fitBlock(content string, w, h int) string {
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	wrapped := lipgloss.NewStyle().Width(w).Render(content)
+	lines := strings.Split(wrapped, "\n")
+	out := make([]string, h)
+	for i := 0; i < h; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		out[i] = padOrTruncateLine(line, w)
+	}
+	return strings.Join(out, "\n")
+}
+
+func padOrTruncateLine(s string, w int) string {
+	if lipgloss.Width(s) > w {
+		s = lipgloss.NewStyle().MaxWidth(w).Render(s)
+	}
+	if lw := lipgloss.Width(s); lw < w {
+		s += strings.Repeat(" ", w-lw)
+	}
+	return s
+}
+
+// helpLine is the current view's key-hint text: the expanded form while
+// showHelp is toggled on (rendered as the list-panel overlay, see
+// overlayContent), otherwise the compact form (fed into the status bar's
+// right segment).
 func (m Model) helpLine() string {
 	if m.showHelp {
-		text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
+		return m.helpLineFull()
+	}
+	return m.helpLineShort()
+}
+
+func (m Model) helpLineFull() string {
+	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · R refresh all · o/enter open · y copy number · Y copy URL"
+	if m.ctx.CurrentRepo != "" {
+		text += " · t current repo"
+	}
+	switch m.ctx.View {
+	case context.ActionsView:
+		text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
 		if m.ctx.CurrentRepo != "" {
 			text += " · t current repo"
 		}
-		switch m.ctx.View {
-		case context.ActionsView:
-			text = "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · e expand · [/]/ctrl+u/d preview · r refresh · ctrl+r refresh all · R rerun · ! cancel run · o/enter open · y copy number · Y copy URL"
-			if m.ctx.CurrentRepo != "" {
-				text += " · t current repo"
-			}
-		case context.NotificationsView:
-			text += " · m mark read · u mark unread · M mark all read · b pin/unpin · B unpin"
-		case context.BranchesView:
-			text += " · C/space switch · P push · f fast-forward · F force-push · d/backspace delete"
-		case context.IssuesView:
-			text += " · c comment · a/A assign/unassign · L/U labels · M milestone · b/B subscribe/unsubscribe · x/X close/reopen"
-		default:
-			text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · w checks · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
-		}
-		return text + " · q quit"
+	case context.NotificationsView:
+		text += " · m mark read · u mark unread · M mark all read · b pin/unpin · B unpin"
+	case context.BranchesView:
+		text += " · C/space switch · P push · f fast-forward · F force-push · d/backspace delete"
+	case context.IssuesView:
+		text += " · c comment · a/A assign/unassign · L/U labels · M milestone · b/B subscribe/unsubscribe · x/X close/reopen"
+	default:
+		text += " · c comment · a/A assign/unassign · L/U labels · m merge · u update · W ready · w checks · x/X close/reopen · v review · d/ctrl+t diff · C/space checkout"
 	}
+	return text + " · q quit"
+}
+
+func (m Model) helpLineShort() string {
 	text := "↑/↓/j/k move · g/G first/last · h/l section · s view · / search · p preview · [/] tabs · r/R refresh"
 	if m.ctx.CurrentRepo != "" {
 		text += " · t current repo"
@@ -727,13 +959,16 @@ func keyHelp(binding key.Binding, fallback string) string {
 	return fallback
 }
 
-func (m Model) actionButtons() []actionButton {
+// availableActions lists the builtin actions valid for view/row — the same
+// per-view/state logic the deleted action-bar row used to render as
+// clickable buttons. Extracted (rather than deleted with the action bar) so
+// Task 7's command palette can reuse it as its item source.
+func availableActions(view context.ViewType, row data.RowData) []actionButton {
 	buttons := []actionButton{
 		{Label: "Open", Builtin: "open"},
 		{Label: "Refresh", Builtin: "refresh"},
 	}
-	row := m.getCurrRowData()
-	switch m.ctx.View {
+	switch view {
 	case context.NotificationsView:
 		if n, ok := row.(data.Notification); ok {
 			if n.Unread {
@@ -816,54 +1051,6 @@ func rowState(row data.RowData) string {
 	default:
 		return ""
 	}
-}
-
-func (m Model) actionBarView() string {
-	if m.actionPrompt.Active() {
-		return ""
-	}
-	buttons := m.actionButtons()
-	if len(buttons) == 0 {
-		return ""
-	}
-	rendered := make([]string, 0, len(buttons)*2-1)
-	for i, b := range buttons {
-		if i > 0 {
-			rendered = append(rendered, " ")
-		}
-		rendered = append(rendered, m.renderActionButton(b))
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Left, rendered...)
-}
-
-func (m Model) renderActionButton(b actionButton) string {
-	return m.ctx.Styles.ActionButton.Render("[" + b.Label + "]")
-}
-
-func (m Model) actionBarY() int {
-	y := 1 // appStyle top padding
-	y++    // title
-	if len(m.currentViewSections()) > 1 {
-		y++ // tabs
-	}
-	y += m.ctx.MainContentHeight
-	return y
-}
-
-func (m Model) actionButtonAt(x int) (actionButton, bool) {
-	rel := x - 2 // appStyle left padding
-	if rel < 0 || m.actionPrompt.Active() {
-		return actionButton{}, false
-	}
-	pos := 0
-	for _, b := range m.actionButtons() {
-		w := lipgloss.Width(m.renderActionButton(b))
-		if rel >= pos && rel < pos+w {
-			return b, true
-		}
-		pos += w + 1
-	}
-	return actionButton{}, false
 }
 
 // currentViewSections returns the section slice for the active view.
@@ -1240,24 +1427,27 @@ func (m *Model) switchToView(view context.ViewType) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// tableDataStartY is the screen row the first data row renders on — the
+// list panel's ListRows.Y, which already accounts for the panel border, the
+// table header row, and (when open) the search bar row (layout.Compute).
 func (m Model) tableDataStartY() int {
-	y := 1 // appStyle top padding
-	y++    // title
-	if len(m.currentViewSections()) > 1 {
-		y++ // tabs
-	}
-	if s := m.getCurrSection(); s != nil && s.IsSearchFocused() {
-		y++ // search bar
-	}
-	y++ // table header
-	return y
+	return m.layout.ListRows.Y
 }
 
+// tabBarY is the list panel's top border row (where section tabs embed), or
+// -1 when the tab bar is hidden (fewer than two sections) — mirroring
+// components/tabs.View()'s own hidden-bar contract.
 func (m Model) tabBarY() int {
 	if len(m.currentViewSections()) < 2 {
 		return -1
 	}
-	return 2 // appStyle top padding + title line
+	return m.layout.SectionTabsRow
+}
+
+// sectionTabsOriginX is the screen column the embedded tab segment's own
+// left edge (components/tabs.View()'s leading "─", offset 0) renders at.
+func (m Model) sectionTabsOriginX() int {
+	return m.layout.ListPanel.X + 1
 }
 
 func (m Model) switchSectionTo(id int) (Model, tea.Cmd) {
@@ -1274,14 +1464,11 @@ func (m Model) switchSectionTo(id int) (Model, tea.Cmd) {
 }
 
 func (m Model) inMainListPane(x, y int) bool {
-	if x < 2 || y < m.tableDataStartY() {
+	r := m.layout.ListInterior
+	if r.W <= 0 || r.H <= 0 {
 		return false
 	}
-	width := m.ctx.MainContentWidth
-	if width <= 0 {
-		width = m.ctx.ScreenWidth - 4
-	}
-	return x < 2+width
+	return x >= r.X && x < r.X+r.W && y >= m.tableDataStartY() && y < r.Y+r.H
 }
 
 func (m Model) rowIndexAtY(y int) (int, bool) {
@@ -1330,25 +1517,11 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Y == m.tabBarY() {
-		if id, ok := m.tabs.TabAt(msg.X - 2); ok {
+		if id, ok := m.tabs.TabAt(msg.X - m.sectionTabsOriginX()); ok {
 			return m.switchSectionTo(id)
 		}
 	}
-	if msg.Y == m.actionBarY() {
-		if button, ok := m.actionButtonAt(msg.X); ok {
-			return m.handleActionButton(button)
-		}
-	}
 	return m.selectRowFromMouse(msg.X, msg.Y)
-}
-
-func (m Model) handleActionButton(button actionButton) (Model, tea.Cmd) {
-	next, cmd, ok := m.handleBuiltinKeybinding(config.Keybinding{Builtin: button.Builtin})
-	if ok {
-		return next, cmd
-	}
-	m.notice = fmt.Sprintf("Action button %q is not wired.", button.Label)
-	return m, nil
 }
 
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
@@ -2596,64 +2769,44 @@ func (m *Model) syncProgramContext() {
 	m.sidebar.UpdateProgramContext(m.ctx)
 }
 
-// syncMainContentDimensions splits the content area between the section table
-// and the preview pane. When the preview is open it uses defaults.preview.width
-// when configured, otherwise an automatic near-50/50 split. When closed, the
-// table gets the full width.
+// syncMainContentDimensions recomputes the shell's layout.Layout from the
+// current screen size and preview/search toggles and stores it on the
+// model (m.layout). MainContentWidth/Height and PreviewWidth/Height keep
+// feeding sections and the sidebar exactly as before — now sourced from the
+// computed layout's interior rects instead of hand-rolled arithmetic.
 func (m *Model) syncMainContentDimensions() {
-	h := m.ctx.ScreenHeight - 7
-	if h < 3 {
-		h = 3
-	}
-	m.ctx.MainContentHeight = h
-
-	if m.ctx.PreviewOpen {
-		pw := m.configuredPreviewWidth()
-		m.ctx.PreviewWidth = pw
-		mw := m.ctx.ScreenWidth - 4 - pw - 2
-		if mw < 0 {
-			mw = 0
-		}
-		m.ctx.MainContentWidth = mw
-		m.ctx.PreviewHeight = m.ctx.MainContentHeight
-		return
-	}
-	m.ctx.PreviewWidth = 0
-	m.ctx.PreviewHeight = 0
-	m.ctx.MainContentWidth = m.ctx.ScreenWidth - 4
-}
-
-func (m *Model) configuredPreviewWidth() int {
-	available := m.ctx.ScreenWidth - 4
-	if available < 0 {
-		available = 0
-	}
-	if available == 0 {
-		return 0
+	searchOpen := false
+	if s := m.getCurrSection(); s != nil {
+		searchOpen = s.IsSearchFocused()
 	}
 
-	configured := 0
+	// defaults.preview.width configures the preview's CONTENT width;
+	// layout.Input.PreviewWidth wants the panel's TOTAL width including its
+	// own two border columns.
+	previewWidthTotal := 0
 	if m.ctx.Config != nil {
-		configured = m.ctx.Config.Defaults.Preview.PreviewWidth()
-	}
-	pw := available / 2
-	if configured > 0 {
-		pw = configured
+		if configured := m.ctx.Config.Defaults.Preview.PreviewWidth(); configured > 0 {
+			previewWidthTotal = configured + 2
+		}
 	}
 
-	maxPreview := available - 2 // reserve the gutter; the table may shrink to zero.
-	if maxPreview < 0 {
-		maxPreview = 0
-	}
-	if pw > maxPreview {
-		pw = maxPreview
-	}
-	if pw < 0 {
-		pw = 0
-	}
-	return pw
+	m.layout = layout.Compute(layout.Input{
+		Width:        m.ctx.ScreenWidth,
+		Height:       m.ctx.ScreenHeight,
+		PreviewOpen:  m.ctx.PreviewOpen,
+		PreviewWidth: previewWidthTotal,
+		SectionCount: len(m.currentViewSections()),
+		SearchOpen:   searchOpen,
+	})
+
+	m.ctx.MainContentWidth = m.layout.ListInterior.W
+	m.ctx.MainContentHeight = m.layout.ListInterior.H
+	m.ctx.PreviewWidth = m.layout.PreviewInterior.W
+	m.ctx.PreviewHeight = m.layout.PreviewInterior.H
 }
 
+// statusLine is the status bar's middle segment: plain (unstyled) text —
+// statusbar.View applies styles.StatusBar once over the whole assembled row.
 func (m Model) statusLine() string {
 	s := m.getCurrSection()
 	if s == nil || s.GetError() != nil {
@@ -2664,17 +2817,17 @@ func (m Model) statusLine() string {
 		if title == "" {
 			title = strings.TrimSpace(s.GetItemPlural())
 		}
-		return m.ctx.Styles.DimText.Render("Loading " + title + "…")
+		return "Loading " + title + "…"
 	}
 	total := s.GetTotalCount()
 	shown := s.NumRows()
 	if total > shown {
-		return m.ctx.Styles.DimText.Render(fmt.Sprintf("showing %d of %d %s", shown, total, s.GetItemPlural()))
+		return fmt.Sprintf("showing %d of %d %s", shown, total, s.GetItemPlural())
 	}
 	if total == 1 {
-		return m.ctx.Styles.DimText.Render(fmt.Sprintf("1 %s", s.GetItemSingular()))
+		return fmt.Sprintf("1 %s", s.GetItemSingular())
 	}
-	return m.ctx.Styles.DimText.Render(fmt.Sprintf("%d %s", total, s.GetItemPlural()))
+	return fmt.Sprintf("%d %s", total, s.GetItemPlural())
 }
 
 // toSectioners adapts sections to the tab bar's minimal interface.

@@ -67,6 +67,13 @@ type ProgramContext struct {
 	Error  error
 	Styles Styles
 
+	// MockHost and InstanceHost feed the header's right-side host label
+	// (spec §5). MockHost wins when set ("demo.gitea.local" in --mock runs);
+	// otherwise InstanceHost (the host part of the real instance URL) is
+	// shown. Both empty renders no host segment.
+	MockHost     string
+	InstanceHost string
+
 	// CurrentRepo is the owner/repo detected from the cwd git remote when it
 	// matches the selected Gitea instance. SmartFiltering scopes blank PR/issue
 	// sections to CurrentRepo; explicit section repo config still wins.

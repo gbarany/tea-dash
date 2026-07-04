@@ -83,15 +83,22 @@ func TestTabsSwitchContent(t *testing.T) {
 	})
 
 	view := m.View()
-	for _, want := range []string{"Overview", "Checks", "overview-token"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("initial tab view missing %q:\n%s", want, view)
+	if !strings.Contains(view, "overview-token") {
+		t.Fatalf("initial tab view missing content:\n%s", view)
+	}
+	segment := m.TabsBorderSegment()
+	for _, want := range []string{"Overview", "Checks"} {
+		if !strings.Contains(segment, want) {
+			t.Fatalf("tabs border segment missing %q:\n%s", want, segment)
 		}
 	}
 
 	m.NextTab()
 	if got := m.CurrentTabTitle(); got != "Checks" {
 		t.Fatalf("CurrentTabTitle after NextTab = %q, want Checks", got)
+	}
+	if want := ctx.Styles.ActiveTab.Render("Checks"); !strings.Contains(m.TabsBorderSegment(), want) {
+		t.Fatalf("tabs border segment should highlight the active tab:\n%s", m.TabsBorderSegment())
 	}
 	view = m.View()
 	if !strings.Contains(view, "checks-token") || strings.Contains(view, "overview-token") {
