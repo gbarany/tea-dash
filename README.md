@@ -1,5 +1,8 @@
 # tea-dash
 
+[![ci](https://github.com/gbarany/tea-dash/actions/workflows/ci.yml/badge.svg)](https://github.com/gbarany/tea-dash/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/gbarany/tea-dash/badge)](https://scorecard.dev/viewer/?uri=github.com/gbarany/tea-dash)
+
 A terminal dashboard for [Gitea](https://about.gitea.com/) (and Forgejo /
 Codeberg), in the spirit of [`gh-dash`](https://github.com/dlvhdr/gh-dash) — but
 for Gitea instead of GitHub.
@@ -469,6 +472,14 @@ unread/pinned-only threads. The branches view shells out to local `git` for
 configured `localRepos` (falling back to the current working directory when
 none are configured) and supports checkout, push, force-push, fast-forward,
 and delete.
+
+## Security
+
+Every PR and a weekly schedule run CodeQL, govulncheck, gosec, and OpenSSF
+Scorecard (see the badge above for the public report). Release archives carry
+GitHub build provenance attestations. Vulnerability reports go through
+[GitHub Private Vulnerability Reporting](SECURITY.md) — see
+[`SECURITY.md`](SECURITY.md) for the policy and how to verify a release.
 
 ## Development
 

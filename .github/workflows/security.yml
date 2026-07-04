@@ -1,0 +1,41 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "43 7 * * 1" # weekly, Monday 07:43 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  # govulncheck reports only vulnerabilities in code paths this module
+  # actually reaches, so a finding here is actionable, not noise.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1
+        with:
+          go-version-input: stable
+          go-package: ./...
+
+  gosec:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: securego/gosec@11023e51e1f46c4ea63315bdb7670f073442168f # v2.27.1
+        with:
+          # -no-fail: findings surface in the Security tab via SARIF rather
+          # than breaking builds; promote to blocking once triaged.
+          args: "-no-fail -fmt sarif -out gosec.sarif ./..."
+
+      - uses: github/codeql-action/upload-sarif@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3
+        with:
+          sarif_file: gosec.sarif
+          category: gosec
