@@ -16,3 +16,5 @@ go.work.sum
 .idea/
 .vscode/
 *.swp
+docs/demo.mp4
+.mcp.json

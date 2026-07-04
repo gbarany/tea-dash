@@ -8,6 +8,13 @@ tea-dash is a keyboard-driven TUI for triaging pull requests, issues,
 notifications, and local branches across one or more Gitea instances, without
 leaving the terminal.
 
+![tea-dash demo: browsing PRs with live preview, jumping views with 1-5, merging a PR from the command palette, and the built-in help overlay — all on built-in demo data via --mock](docs/demo.gif)
+
+<sub>Real recording of `tea-dash --mock` ([MP4](https://github.com/gbarany/tea-dash/releases/download/v0.3.0/demo.mp4) ·
+regenerate with [`docs/vhs/demo.tape`](docs/vhs/demo.tape)). Mouse works too —
+click rows/tabs, scroll either panel, right-click a row for its action
+palette — it just can't be scripted into this recording.</sub>
+
 > **Status: early — v1.** A full-screen, framed dashboard over five views —
 > pull requests, issues, notifications, Actions runs, and local branches
 > (fetched via the Gitea API (Go SDK + REST) and local `git`) — with
