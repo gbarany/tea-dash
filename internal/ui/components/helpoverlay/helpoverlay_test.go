@@ -78,22 +78,18 @@ func TestSetGroups_ReboundKeyRenders(t *testing.T) {
 }
 
 // TestSetGroups_IncludesMouseCheatsheet confirms the static mouse section
-// is always appended, honestly limited to gestures that exist today
-// (click, wheel) — no double-click/right-click, which land in Task 6.
+// is always appended and lists every gesture that actually works, now
+// including Task 6's double-click/wheel-over-preview and Task 7's
+// right-click (command palette).
 func TestSetGroups_IncludesMouseCheatsheet(t *testing.T) {
 	m := New(&context.ProgramContext{Styles: context.DefaultStyles()})
 	m.SetSize(80, 40)
 	m.SetGroups(sampleGroups())
 
 	content := m.View()
-	for _, want := range []string{"Mouse", "click", "wheel"} {
+	for _, want := range []string{"Mouse", "click", "double-click", "right-click", "wheel"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("mouse cheatsheet missing %q:\n%s", want, content)
-		}
-	}
-	for _, notYet := range []string{"double-click", "right-click"} {
-		if strings.Contains(content, notYet) {
-			t.Fatalf("mouse cheatsheet should not advertise a Task 6 gesture %q yet:\n%s", notYet, content)
 		}
 	}
 }

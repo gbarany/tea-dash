@@ -11,6 +11,7 @@ import (
 
 	"github.com/gbarany/tea-dash/internal/actionrunner"
 	"github.com/gbarany/tea-dash/internal/auth"
+	"github.com/gbarany/tea-dash/internal/data"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/mockgitea"
 	"github.com/gbarany/tea-dash/internal/ui/context"
@@ -346,5 +347,73 @@ func TestE2EMergeRoundTrip(t *testing.T) {
 	if strings.Contains(view, before.Title) {
 		t.Fatalf("merged PR %q (%s#%d) still rendered in My Pull Requests:\n%s",
 			before.Title, target.Repo, target.Number, view)
+	}
+}
+
+// TestE2EPaletteMarkReadOnInboxRow covers Task 7 Step 3 end to end: open
+// the palette, filter to "read", run "Mark read" on a real (unread) Inbox
+// row, drain the dispatched fetch, and confirm the mock server's store —
+// not just local UI state — actually flipped the notification's Unread
+// flag. This exercises the same real-client dispatch path
+// TestE2EMergeRoundTrip does, but through the palette's dispatchPaletteItem
+// (KindAction -> handleBuiltinKeybinding) instead of a direct key press.
+func TestE2EPaletteMarkReadOnInboxRow(t *testing.T) {
+	m, store := newE2EModel(t)
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: '3', Text: "3"}) // Inbox
+	m = next.(Model)
+	m = drain(t, m, cmd, drainDepth).(Model)
+	if m.ctx.View != context.NotificationsView {
+		t.Fatalf("'3' should jump to NotificationsView, got %v", m.ctx.View)
+	}
+
+	// Find a real, currently-unread seeded notification row to act on —
+	// availableActions only offers "Mark read" for one (see
+	// TestE2ESwitchViewsRendersAllFive's seeded-dataset comments for why
+	// this test doesn't hard-code a row index).
+	s := m.getCurrSection()
+	if s == nil {
+		t.Fatal("no Inbox section")
+	}
+	found := false
+	for i := 0; i < s.NumRows(); i++ {
+		s.SelectRow(i)
+		if n, ok := s.GetCurrRow().(data.Notification); ok && n.Unread {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no unread notification found in the seeded Inbox to mark read")
+	}
+	target, ok := m.getCurrRowData().(data.Notification)
+	if !ok {
+		t.Fatal("selected Inbox row is not a notification")
+	}
+	if before := store.NotificationByID(target.ID); before == nil || !before.Unread {
+		t.Fatalf("selected notification %d should be unread in the store before marking read: %+v", target.ID, before)
+	}
+
+	next, cmd = m.Update(tea.KeyPressMsg{Code: ':', Text: ":"})
+	m = next.(Model)
+	m = drain(t, m, cmd, drainDepth).(Model)
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("':' should open the command palette")
+	}
+
+	m = pressRunes(t, m, "read")
+	if view := m.View().Content; !strings.Contains(view, "Mark read") {
+		t.Fatalf("filtering by 'read' should keep 'Mark read':\n%s", view)
+	}
+
+	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	m = drain(t, m, cmd, drainDepth).(Model)
+
+	if m.activeOverlay != overlayNone {
+		t.Fatal("running 'Mark read' should close the palette")
+	}
+	if after := store.NotificationByID(target.ID); after == nil || after.Unread {
+		t.Fatalf("notification %d should be read in the store after running 'Mark read' via the palette: %+v", target.ID, after)
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/header"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/palette"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/context"
 	"github.com/gbarany/tea-dash/internal/ui/layout"
@@ -1012,9 +1013,9 @@ func TestDoubleClickOutsideWindowDoesNotFocusPreview(t *testing.T) {
 	}
 }
 
-// TestClickRowThenTabThenSameRowIndexIsNotADoubleClick covers a T6 review
-// carry-forward: a row click, then a section-tab click, then a click on
-// the SAME row INDEX (in the now-different section) within the
+// TestClickRowThenTabThenSameRowIndexIsNotADoubleClick covers Task 7 Step
+// 0 (from the T6 review): a row click, then a section-tab click, then a
+// click on the SAME row INDEX (in the now-different section) within the
 // double-click window must NOT register as a double-click — without
 // resetting lastClickAt on the intervening non-row click, clickListRow
 // would have no way to tell this apart from a genuine double-click on one
@@ -1089,11 +1090,13 @@ func TestDoubleClickListRowInBranchesViewChecksOutInsteadOfFocusing(t *testing.T
 	}
 }
 
-// TestRightClickListRowSelectsAndSetsPendingRowPaletteSeam covers spec §3's
-// "right click list row -> command palette scoped to that row's actions":
-// Task 7's palette isn't built yet, so this only asserts the documented
-// intent seam (pendingRowPalette) plus the row still being selected.
-func TestRightClickListRowSelectsAndSetsPendingRowPaletteSeam(t *testing.T) {
+// TestRightClickListRowOpensRowScopedPalette covers spec §3's "right click
+// list row -> command palette scoped to that row's actions": the row is
+// selected (like a left click), the palette opens, pendingRowPalette (the
+// Task 6 seam) is read-and-cleared back to -1 rather than left dangling,
+// and only action items are present (no "Go to <view>"/"Section: ..."/
+// custom-command items, unlike the ":"/ctrl+p global palette).
+func TestRightClickListRowOpensRowScopedPalette(t *testing.T) {
 	m := New(&config.Config{}, nil)
 	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = update(t, m, fetchedMsg([]data.PullRequest{
@@ -1111,8 +1114,18 @@ func TestRightClickListRowSelectsAndSetsPendingRowPaletteSeam(t *testing.T) {
 	if got := m.getCurrRowData().GetNumber(); got != 2 {
 		t.Fatalf("right click should still select the row: got %d, want 2", got)
 	}
-	if m.pendingRowPalette != 1 {
-		t.Fatalf("pendingRowPalette = %d, want 1 (Task 7's palette seam)", m.pendingRowPalette)
+	if m.pendingRowPalette != -1 {
+		t.Fatalf("pendingRowPalette = %d, want -1 (read and cleared once the palette opens)", m.pendingRowPalette)
+	}
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("right click should open the command palette")
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "Merge") {
+		t.Fatalf("row-scoped palette should list row actions like Merge:\n%s", view)
+	}
+	if strings.Contains(view, "Go to Issues") || strings.Contains(view, "Section:") {
+		t.Fatalf("row-scoped palette should NOT list view/section items:\n%s", view)
 	}
 }
 
@@ -1217,6 +1230,75 @@ func TestClickInsideHelpOverlayDoesNotDismissIt(t *testing.T) {
 	m = update(t, m, tea.MouseClickMsg{X: m.layout.ListInterior.X, Y: m.layout.ListInterior.Y, Button: tea.MouseLeft})
 	if m.activeOverlay == overlayNone {
 		t.Fatal("clicking inside the overlay should not dismiss it")
+	}
+}
+
+// TestClickPaletteItemRunsIt covers Task 7 Step 5's "click on a palette
+// item runs it" — via the ZonePaletteItem zones rebuildZones registers at
+// overlayInterior's origin plus palette.HeaderRows (the same geometry
+// palette.Model.View renders at).
+func TestClickPaletteItemRunsIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	m = pressRunes(t, m, "merge") // narrow to a single, known-position item
+	m = viewed(m)
+
+	interior := overlayInterior(m.layout)
+	click := tea.MouseClickMsg{X: interior.X, Y: interior.Y + palette.HeaderRows, Button: tea.MouseLeft}
+	m = update(t, m, click)
+
+	if m.activeOverlay != overlayNone {
+		t.Fatal("clicking a palette item should close the palette")
+	}
+	if !m.actionPrompt.Active() {
+		t.Fatal("clicking 'Merge' should have opened the merge prompt")
+	}
+}
+
+// TestClickPaletteBackgroundDoesNotDismissIt mirrors
+// TestClickInsideHelpOverlayDoesNotDismissIt for the palette: a click on
+// the input row (no item there) is a no-op, not a dismiss.
+func TestClickPaletteBackgroundDoesNotDismissIt(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	m = viewed(m)
+
+	interior := overlayInterior(m.layout)
+	m = update(t, m, tea.MouseClickMsg{X: interior.X, Y: interior.Y, Button: tea.MouseLeft})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("clicking the palette's input row should not dismiss it")
+	}
+}
+
+// TestMouseWheelOverPaletteScrollsSelection covers Task 7 Step 5's "wheel
+// over open palette scrolls its list" — using palette.Model.MoveSelection
+// directly (see handleMouseWheel's doc comment for why, not the
+// synthetic-key trick the help overlay uses).
+func TestMouseWheelOverPaletteScrollsSelection(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	m = viewed(m)
+
+	before, ok := m.palette.Selected()
+	if !ok {
+		t.Fatal("palette should have a selection once open")
+	}
+
+	interior := overlayInterior(m.layout)
+	m = update(t, m, tea.MouseWheelMsg{X: interior.X, Y: interior.Y + palette.HeaderRows, Button: tea.MouseWheelDown})
+
+	after, ok := m.palette.Selected()
+	if !ok || after == before {
+		t.Fatalf("wheel down over the palette should move the selection: before=%+v after=%+v", before, after)
+	}
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("scrolling should not close the palette")
 	}
 }
 
@@ -3553,6 +3635,241 @@ func TestConfigKeybindingRebindsBuiltin(t *testing.T) {
 	view := m.View().Content
 	if !strings.Contains(view, "H help") || strings.Contains(view, "? help") {
 		t.Fatalf("compact help should show configured help key and hide the old key:\n%s", view)
+	}
+}
+
+// pressRunes feeds s into m one KeyPressMsg per rune, exactly like a user
+// typing into a focused text input.
+func pressRunes(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	for _, r := range s {
+		m = update(t, m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	return m
+}
+
+// TestPaletteColonOpensWithAllItemKinds covers Task 7 Step 2/3's requirement
+// that ':' opens the palette with every item kind present: a builtin action
+// valid for the selected PR row (Merge), a "Go to <view>" entry, and a
+// "Section: <title>" entry for the current view's section.
+func TestPaletteColonOpensWithAllItemKinds(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("':' should open the command palette")
+	}
+	view := m.View().Content
+	for _, want := range []string{"Merge", "Go to Issues", "Go to Inbox", "Section: Open Pull Requests"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("palette missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// TestPaletteCtrlPAlsoOpens covers the second documented open binding.
+func TestPaletteCtrlPAlsoOpens(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("ctrl+p should open the command palette")
+	}
+}
+
+// TestPaletteTypingFilters covers "typing filters" (Step 2): typing "mer"
+// narrows the palette down to just items whose label subsequence-matches
+// it, so unrelated actions like "Refresh" drop out of view.
+func TestPaletteTypingFilters(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+
+	m = pressRunes(t, m, "mer")
+	view := m.View().Content
+	if !strings.Contains(view, "Merge") {
+		t.Fatalf("filtering by 'mer' should keep Merge:\n%s", view)
+	}
+	if strings.Contains(view, "Refresh") || strings.Contains(view, "Go to Issues") {
+		t.Fatalf("filtering by 'mer' should drop non-matching items:\n%s", view)
+	}
+}
+
+// TestPaletteEnterRunsMergeExactlyLikeKey covers Step 2's explicit
+// requirement: running "Merge" through the palette opens the same merge
+// prompt pressing 'm' does — both go through handleBuiltinKeybinding/
+// startAction, so the resulting prompt is byte-for-byte identical.
+func TestPaletteEnterRunsMergeExactlyLikeKey(t *testing.T) {
+	newModelWithPR := func() Model {
+		m := New(&config.Config{}, nil)
+		m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+		m = update(t, m, fetchedMsg([]data.PullRequest{
+			{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+		}))
+		return m
+	}
+
+	viaKey := update(t, newModelWithPR(), tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !viaKey.actionPrompt.Active() {
+		t.Fatal("pressing 'm' should open the merge prompt")
+	}
+
+	viaPalette := newModelWithPR()
+	viaPalette = update(t, viaPalette, tea.KeyPressMsg{Code: ':', Text: ":"})
+	viaPalette = pressRunes(t, viaPalette, "merge")
+	viaPalette = update(t, viaPalette, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if !viaPalette.actionPrompt.Active() {
+		t.Fatal("running 'Merge' through the palette should open the merge prompt")
+	}
+	if viaPalette.activeOverlay != overlayNone {
+		t.Fatal("running an item should close the palette")
+	}
+	if viaKey.actionPrompt.View(120) != viaPalette.actionPrompt.View(120) {
+		t.Fatalf("palette-run merge prompt differs from key-run one:\nkey:    %q\npalette: %q",
+			viaKey.actionPrompt.View(120), viaPalette.actionPrompt.View(120))
+	}
+}
+
+// TestPaletteGoToInboxSwitchesView covers Step 2's "Go to Inbox" item.
+func TestPaletteGoToInboxSwitchesView(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+
+	m = pressRunes(t, m, "Go to Inbox")
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if m.ctx.View != context.NotificationsView {
+		t.Fatalf("running 'Go to Inbox' should switch to NotificationsView, got %v", m.ctx.View)
+	}
+	if m.activeOverlay != overlayNone {
+		t.Fatal("running an item should close the palette")
+	}
+}
+
+// TestPaletteEscCloses covers Step 2's "esc closes" cascade-order
+// assertion (both overlays never open at once).
+func TestPaletteEscCloses(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("':' should have opened the palette")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.activeOverlay != overlayNone {
+		t.Fatal("esc should close the palette")
+	}
+}
+
+// TestPaletteOpeningWhileHelpOpenClosesHelp covers Step 2's explicit
+// cascade assertion: opening the palette while help is open closes help
+// (only one overlay open at a time).
+func TestPaletteOpeningWhileHelpOpenClosesHelp(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayHelp {
+		t.Fatal("'?' should have opened help")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("opening the palette while help is open should switch to the palette, not stack both")
+	}
+	if strings.Contains(m.View().Content, "refresh all") {
+		t.Fatal("help content should be gone once the palette takes over")
+	}
+}
+
+// TestPaletteQuestionMarkIsFilterCharNotHelpShortcut guards the asymmetry
+// documented on updateOverlay: since "?" must be typeable as an ordinary
+// filter character, it must NOT jump from an open palette to help.
+func TestPaletteQuestionMarkIsFilterCharNotHelpShortcut(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+
+	m = update(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("'?' while the palette is open should stay in the palette (typed as a filter char)")
+	}
+	if m.palette.Value() != "?" {
+		t.Fatalf("palette query = %q, want \"?\" to have been typed", m.palette.Value())
+	}
+}
+
+// TestRightClickPaletteScopedToRowActionsDispatchesLikeGlobal confirms the
+// row-scoped palette dispatches an action exactly like the global one
+// (regression guard alongside TestRightClickListRowOpensRowScopedPalette,
+// which only checks the item list).
+func TestRightClickPaletteScopedToRowActionsDispatchesLikeGlobal(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{
+		{Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash", Author: "me", State: "open"},
+	}))
+	m = viewed(m)
+	click := tea.MouseClickMsg{X: m.layout.ListRows.X, Y: m.layout.ListRows.Y, Button: tea.MouseRight}
+	m = update(t, m, click)
+	if m.activeOverlay != overlayPalette {
+		t.Fatal("right click should open the row-scoped palette")
+	}
+
+	m = pressRunes(t, m, "merge")
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.actionPrompt.Active() {
+		t.Fatal("running Merge from the row-scoped palette should open the merge prompt")
+	}
+}
+
+// TestPaletteCustomCommandDispatches covers Step 2's custom-command item
+// source: a configured PRs custom command shows up in the palette and,
+// when run, dispatches exactly the same KindCustomCommand intent the key
+// binding itself would.
+func TestPaletteCustomCommandDispatches(t *testing.T) {
+	cfg := &config.Config{
+		RepoPaths: map[string]string{"gbarany/tea-dash": "/src/tea-dash"},
+		Keybindings: config.Keybindings{
+			PRs: []config.Keybinding{{
+				Key:     "g",
+				Name:    "lazygit",
+				Command: "cd {{.RepoPath}} && echo {{.PrNumber}}",
+			}},
+		},
+	}
+	m := New(cfg, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 12, Title: "Custom command row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	var got actions.Intent
+	m.SetActionDispatcher(func(intent actions.Intent) tea.Cmd {
+		got = intent
+		return nil
+	})
+
+	m = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+	if !strings.Contains(m.View().Content, "lazygit") {
+		t.Fatalf("palette should list the custom command by its Name:\n%s", m.View().Content)
+	}
+	m = pressRunes(t, m, "lazygit")
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if got.Kind != actions.KindCustomCommand || got.Command != "cd {{.RepoPath}} && echo {{.PrNumber}}" {
+		t.Fatalf("custom intent = %+v", got)
 	}
 }
 

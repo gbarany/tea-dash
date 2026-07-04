@@ -32,13 +32,15 @@ type Group struct {
 }
 
 // mouseCheatsheet is the static mouse section appended after the keymap
-// groups. It documents only gestures that work TODAY — double-click/
-// right-click/wheel-over-preview are Task 6 additions and are deliberately
-// left out rather than listed as "(soon)", to avoid the overlay describing
-// features that don't exist yet.
+// groups. It documents only gestures that actually work — kept in step
+// with Task 6 (double-click, wheel-over-preview) and Task 7 (right-click
+// opening the row-scoped command palette) rather than listing anything as
+// "(soon)", to avoid the overlay describing features that don't exist yet.
 var mouseCheatsheet = []struct{ gesture, action string }{
 	{"click", "select row / switch section or view"},
-	{"wheel", "scroll the list"},
+	{"double-click", "focus preview (same as enter)"},
+	{"right-click", "row actions (command palette)"},
+	{"wheel", "scroll the list / preview"},
 }
 
 // Model is a scrollable modal listing every keybinding group plus the

@@ -25,6 +25,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/helpoverlay"
 	"github.com/gbarany/tea-dash/internal/ui/components/issuesection"
 	"github.com/gbarany/tea-dash/internal/ui/components/notificationsection"
+	"github.com/gbarany/tea-dash/internal/ui/components/palette"
 	"github.com/gbarany/tea-dash/internal/ui/components/prview"
 	"github.com/gbarany/tea-dash/internal/ui/components/pullsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/section"
@@ -62,12 +63,14 @@ type Model struct {
 	previewFocused bool
 
 	// activeOverlay is which modal (if any) is currently showing —
-	// overlayNone | overlayHelp today; Task 7's command palette adds
-	// overlayPalette alongside. While non-zero, Update routes every
-	// KeyPressMsg to the overlay first (spec §4), ahead of even the action
-	// prompt and search-focus interceptions below.
+	// overlayNone | overlayHelp | overlayPalette. While non-zero, Update
+	// routes every KeyPressMsg to the overlay first (spec §4), ahead of
+	// even the action prompt and search-focus interceptions below. Only
+	// one overlay is ever open at a time — openHelpOverlay/openPalette
+	// both close whichever is open before opening their own.
 	activeOverlay overlayKind
 	helpOverlay   helpoverlay.Model
+	palette       palette.Model
 
 	actionDispatcher func(actions.Intent) tea.Cmd
 	actionPrompt     actionprompt.Model
@@ -113,11 +116,11 @@ type Model struct {
 	nowFn        func() time.Time
 
 	// pendingRowPalette is the Task 6 seam for spec §3's "right-click list
-	// row -> command palette scoped to that row's actions": Task 7's
-	// palette isn't built yet, so a right-click only records the intent
-	// here (the clicked row's index) for it to pick up later. -1 means
-	// none pending. TODO(Task 7): read and clear this when the palette
-	// opens; until then it's a documented no-op beyond selecting the row.
+	// row -> command palette scoped to that row's actions": a right-click
+	// on a list row records the clicked row's index here, and
+	// openRowPaletteFromPending (called from the same handleZoneRightClick
+	// call that sets it) reads and clears it in the same tick — see that
+	// function's doc comment. -1 means none pending.
 	pendingRowPalette int
 }
 
@@ -133,7 +136,19 @@ type overlayKind int
 const (
 	overlayNone overlayKind = iota
 	overlayHelp
-	// overlayPalette (Task 7) slots in here.
+	overlayPalette
+)
+
+// paletteScope narrows which items app.go's paletteItems builds: paletteAll
+// is the full ":"/"ctrl+p" palette (actions + view jumps + sections +
+// custom commands); paletteRowActions is the right-click scope (spec §3:
+// "row -> command palette scoped to that row's actions"), action items
+// only.
+type paletteScope int
+
+const (
+	paletteAll paletteScope = iota
+	paletteRowActions
 )
 
 // openFailedMsg reports that opening a URL in the browser failed, so the UI can
@@ -255,6 +270,7 @@ func NewWithOptions(cfg *config.Config, client *gitea.Client, opts Options) Mode
 		tabs:              tabs.New(ctx),
 		sidebar:           sidebar.New(ctx),
 		helpOverlay:       helpoverlay.New(ctx),
+		palette:           palette.New(ctx),
 		tasks:             tasks,
 		actionPrompt:      actionprompt.New(),
 		actionFeedback:    actionfeedback.New(),
@@ -416,8 +432,8 @@ func (m Model) autoRefreshCmd() tea.Cmd {
 
 // Update routes messages: layout, async results, keys, then generic fallthrough.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// An open overlay (help today; Task 7's palette later) gets first
-	// routing priority — ahead of even the action prompt / search-focus
+	// An open overlay (help or the command palette) gets first routing
+	// priority — ahead of even the action prompt / search-focus
 	// interceptions below (spec §4: "overlay intercepts all keys while
 	// open"). Non-key messages (resize, async fetches, spinner ticks, ...)
 	// still flow through the normal switch beneath this, so the overlay
@@ -686,6 +702,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case !m.scopedBuiltinOverridden("help") && key.Matches(msg, m.keys.Help):
 			m.openHelpOverlay()
 			return m, nil
+		case !m.scopedBuiltinOverridden("palette") && key.Matches(msg, m.keys.Palette):
+			return m, m.openPalette(paletteAll)
 		case !m.scopedBuiltinOverridden("nextSection") && key.Matches(msg, m.keys.NextSection):
 			if last := len(m.currentViewSections()) - 1; m.currSectionId < last {
 				m.currSectionId++
@@ -802,9 +820,9 @@ func (m Model) renderShell(l layout.Layout) string {
 	rows := make([]string, 0, l.ListPanel.H+2)
 	rows = append(rows, headerRow)
 
-	// An action prompt or an open overlay (help today; Task 7's palette
-	// later) replaces the list+preview area with one full-width panel —
-	// the plan's Task 5 explicitly allows this simpler "full interior
+	// An action prompt or an open overlay (help, the command palette)
+	// replaces the list+preview area with one full-width panel — the
+	// plan's Task 5 explicitly allows this simpler "full interior
 	// replacement" over a true lipgloss.Place-centered floating modal, and
 	// it renders cleanly here, so that's the choice made. Using the
 	// combined width — instead of squeezing into the narrower list-only
@@ -812,8 +830,8 @@ func (m Model) renderShell(l layout.Layout) string {
 	// "R refresh all") across two lines, and gives the help overlay's
 	// viewport a reasonably wide column for its two-column key/desc rows.
 	if overlay, ok := m.overlayContent(); ok {
-		fullPanel := layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
-		interior := layout.Rect{X: fullPanel.X + 1, Y: fullPanel.Y + 1, W: fullPanel.W - 2, H: fullPanel.H - 2}
+		fullPanel := overlayFullPanel(l)
+		interior := overlayInterior(l)
 		body := fitBlock(overlay, interior.W, interior.H)
 		rows = append(rows, renderPanel(fullPanel, interior, m.tabs.View(), body, listStyle, listBorders(), true)...)
 	} else {
@@ -864,15 +882,32 @@ func (m Model) rebuildZones(l layout.Layout) {
 
 	// The action prompt swallows all mouse input unconditionally (see
 	// handleMouseClick) — no zones needed for that region. An open overlay
-	// (help today) replaces list+preview with one clickable region so
-	// spec §3's "click outside dismisses" has a single rect to test
-	// against instead of "didn't hit any of several other zones".
+	// (help, the command palette) replaces list+preview with one
+	// clickable region so spec §3's "click outside dismisses" has a
+	// single rect to test against instead of "didn't hit any of several
+	// other zones". The palette additionally layers a ZonePaletteItem zone
+	// per visible row on top of that background region (same Z-order
+	// trick as ZoneListRow over ZoneListBody below), so a click on an item
+	// resolves to it instead of the generic "click inside overlay, no-op"
+	// background — see handleMouseClick.
 	if m.actionPrompt.Active() {
 		return
 	}
 	if m.activeOverlay != overlayNone {
-		fullPanel := layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
+		fullPanel := overlayFullPanel(l)
 		m.zones.Add(layout.ZoneOverlay, fullPanel, 0)
+		if m.activeOverlay == overlayPalette {
+			interior := overlayInterior(l)
+			top := interior.Y + palette.HeaderRows
+			items, _ := m.palette.Visible()
+			for i := range items {
+				y := top + i
+				if y >= interior.Y+interior.H {
+					break
+				}
+				m.zones.Add(layout.ZonePaletteItem, layout.Rect{X: interior.X, Y: y, W: interior.W, H: 1}, i)
+			}
+		}
 		return
 	}
 
@@ -905,9 +940,26 @@ func (m Model) rebuildZones(l layout.Layout) {
 	}
 }
 
+// overlayFullPanel is the single full-width/full-height rect an open
+// overlay (or the action prompt) replaces the list+preview area with —
+// shared by renderShell (which draws it) and rebuildZones (which registers
+// ZoneOverlay over it), so the two never disagree about its bounds.
+func overlayFullPanel(l layout.Layout) layout.Rect {
+	return layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
+}
+
+// overlayInterior strips overlayFullPanel's own border to the content rect
+// an overlay's View() is fitBlock'd into — the same rect rebuildZones
+// anchors the palette's per-item ZonePaletteItem zones to (see there),
+// since the geometry must agree exactly with what's actually drawn.
+func overlayInterior(l layout.Layout) layout.Rect {
+	fp := overlayFullPanel(l)
+	return layout.Rect{X: fp.X + 1, Y: fp.Y + 1, W: fp.W - 2, H: fp.H - 2}
+}
+
 // overlayContent returns the content that should replace the list/preview
-// area — the active action prompt, or the open help overlay — and whether
-// either is currently showing.
+// area — the active action prompt, the open help overlay, or the open
+// command palette — and whether any of those is currently showing.
 func (m Model) overlayContent() (string, bool) {
 	if m.actionPrompt.Active() {
 		fullWidth := m.layout.ListPanel.W + m.layout.PreviewPanel.W - 2
@@ -922,6 +974,10 @@ func (m Model) overlayContent() (string, bool) {
 		// happen on the persisted model in syncMainContentDimensions,
 		// not lazily here).
 		return m.helpOverlay.View(), true
+	}
+	if m.activeOverlay == overlayPalette {
+		// Sized by resizePalette, same reasoning as resizeHelpOverlay.
+		return m.palette.View(), true
 	}
 	return "", false
 }
@@ -946,14 +1002,15 @@ func (m Model) statusBarRow(l layout.Layout) string {
 }
 
 // statusHints is the status bar's right segment: short, global, and always
-// ends in the help/quit hint (spec §1's mockup: "? help · : palette ·
-// q quit" — ":" palette lands in Task 7).
+// ends in the help/palette/quit hint (spec §1's mockup: "? help · : palette
+// · q quit").
 func (m Model) statusHints() string {
 	hints := []string{"p preview"}
 	if m.ctx.CurrentRepo != "" {
 		hints = append(hints, "t current repo")
 	}
 	hints = append(hints, fmt.Sprintf("%s help", keyHelp(m.keys.Help, "?")))
+	hints = append(hints, fmt.Sprintf("%s palette", keyHelp(m.keys.Palette, ":")))
 	hints = append(hints, fmt.Sprintf("%s quit", keyHelp(m.keys.Quit, "q")))
 	return strings.Join(hints, " · ")
 }
@@ -1669,16 +1726,27 @@ func (m Model) clockNow() time.Time {
 
 // handleMouseClick is the single zoneAt(x, y) dispatch every click resolves
 // through (spec §3's table): an open overlay or the action prompt claims
-// all mouse input first (overlay: click inside is a no-op today — Task 7's
-// palette adds item-activation — click outside dismisses; action prompt:
-// unconditionally swallowed, unchanged from its pre-Task-6 behavior);
-// otherwise the hit zone (if any) drives a left- or right-click handler.
+// all mouse input first — action prompt: unconditionally swallowed,
+// unchanged from its pre-Task-6 behavior; overlay: a click on a
+// ZonePaletteItem runs that item (the palette's own click-to-run — see
+// its doc comment on the "compute from the rect" vs. "one zone per item"
+// choice), a click elsewhere inside the overlay's background
+// (ZoneOverlay) is a no-op, and a click outside either dismisses.
+// Otherwise the hit zone (if any) drives a left- or right-click handler.
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if m.actionPrompt.Active() {
 		return m, nil
 	}
 	if m.activeOverlay != overlayNone {
-		if zone, ok := m.zones.Hit(msg.X, msg.Y); ok && zone.Kind == layout.ZoneOverlay {
+		zone, ok := m.zones.Hit(msg.X, msg.Y)
+		if ok && zone.Kind == layout.ZonePaletteItem {
+			if item, itemOk := m.palette.ItemAtVisibleIndex(zone.Payload); itemOk {
+				m.activeOverlay = overlayNone
+				return m.dispatchPaletteItem(item)
+			}
+			return m, nil
+		}
+		if ok && zone.Kind == layout.ZoneOverlay {
 			return m, nil
 		}
 		return m.dismissTop()
@@ -1704,9 +1772,9 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 // no defined click behavior (list/preview body background, status bar) are
 // simply not listed, falling through to the no-op default.
 //
-// Any click that ISN'T on a list row resets lastClickAt first (T6 review
-// carry-forward): without this, clicking a row, then a section tab, then
-// the SAME row index again within doubleClickWindow would read as a
+// Any click that ISN'T on a list row resets lastClickAt first (T7 Step 0,
+// from the T6 review): without this, clicking a row, then a section tab,
+// then the SAME row index again within doubleClickWindow would read as a
 // double-click on that row purely by coincidence of timing and index,
 // even though a tab switch happened in between — clickListRow only ever
 // compares against the most recent click's time/row, so it can't tell the
@@ -1733,17 +1801,19 @@ func (m Model) handleZoneLeftClick(zone layout.Zone) (Model, tea.Cmd) {
 }
 
 // handleZoneRightClick implements spec §3's "right click list row -> command
-// palette scoped to that row's actions". Task 7's palette isn't built yet,
-// so this only selects the row (consistent with a left click) and records
-// the intent in pendingRowPalette for the palette to pick up when it lands
-// — see that field's doc comment.
+// palette scoped to that row's actions": select the row (consistent with a
+// left click), record the intent in pendingRowPalette, and immediately
+// consume it via openRowPaletteFromPending — see that function's and the
+// field's doc comments for why the set-then-immediately-read round trip
+// still goes through the field rather than opening the palette directly.
 func (m Model) handleZoneRightClick(zone layout.Zone) (Model, tea.Cmd) {
 	if zone.Kind != layout.ZoneListRow {
 		return m, nil
 	}
 	next, cmd := m.selectCurrentSectionRow(zone.Payload)
 	next.pendingRowPalette = zone.Payload
-	return next, cmd
+	paletteCmd := next.openRowPaletteFromPending()
+	return next, tea.Batch(cmd, paletteCmd)
 }
 
 // clickListRow selects the clicked row, then checks whether this click and
@@ -1785,9 +1855,14 @@ func (m Model) focusPreviewIfVisible() (Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouseWheel is the wheel half of the zoneAt dispatch: over the
+// handleMouseWheel is the wheel half of the zoneAt dispatch: over the help
 // overlay it scrolls the overlay (reusing updateOverlay, the same routing
 // keyboard j/k use, so overlay-scroll logic lives in exactly one place);
+// over the palette it moves the selection DIRECTLY via
+// palette.Model.MoveSelection rather than that same synthetic-j/k trick —
+// plain "j"/"k" are ordinary filter characters in the palette (see its
+// Update doc comment), so routing a wheel tick through updateOverlay's key
+// path would type letters into the query instead of moving the cursor;
 // over the list it moves the selection (existing behavior, via the same
 // synthetic up/down key messages keyboard nav uses); over the preview it
 // scrolls the preview's own viewport regardless of focus (spec §3) without
@@ -1795,6 +1870,18 @@ func (m Model) focusPreviewIfVisible() (Model, tea.Cmd) {
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 	zone, ok := m.zones.Hit(msg.X, msg.Y)
 	if !ok {
+		return m, nil
+	}
+	if m.activeOverlay == overlayPalette {
+		if zone.Kind != layout.ZoneOverlay && zone.Kind != layout.ZonePaletteItem {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.palette = m.palette.MoveSelection(-1)
+		case tea.MouseWheelDown:
+			m.palette = m.palette.MoveSelection(1)
+		}
 		return m, nil
 	}
 	if m.activeOverlay != overlayNone {
@@ -2161,6 +2248,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "help":
 		m.openHelpOverlay()
 		return m, nil, true
+	case "palette", "commandpalette":
+		return m, m.openPalette(paletteAll), true
 	case "markasread", "markread", "markasdone", "markdone":
 		next, cmd := m.markSelectedNotificationRead()
 		return next, cmd, true
@@ -2470,17 +2559,18 @@ func (m Model) previewVisible() bool {
 // dismissTop implements the universal esc cascade (spec §2's Global "esc"
 // row): the first dismissible layer, most-nested first, closes; esc at the
 // top level (nothing open) does nothing. The cascade order is overlay →
-// action prompt → search → preview focus. Task 5's help overlay is the
-// first REACHABLE step (esc while it's open never even reaches Update's
-// KeyPressMsg switch that calls dismissTop — see updateOverlay — so this
-// entry is for when a future overlay wants to esc-cascade to an outer
-// state instead of just closing, and for documentation). Action prompt and
-// search are listed for the same reason: both already intercept esc
-// themselves, before Update ever reaches this function (see the
-// tea.KeyPressMsg + m.actionPrompt.Active() check at the top of Update,
-// and the tea.KeyPressMsg + IsSearchFocused check right after it, which
-// forward straight to the action prompt's / section's own esc handling).
-// Task 7 prepends the command palette's own dismisser here too.
+// action prompt → search → preview focus. In practice this whole function
+// is UNREACHABLE while any overlay is open (esc while help or the palette
+// is open never even reaches Update's KeyPressMsg switch that calls
+// dismissTop — see updateOverlay, which intercepts and closes both
+// overlays itself) — this entry is kept for when a future overlay wants to
+// esc-cascade to an outer state instead of just closing, and for
+// documentation. Action prompt and search are listed for the same reason:
+// both already intercept esc themselves, before Update ever reaches this
+// function (see the tea.KeyPressMsg + m.actionPrompt.Active() check at the
+// top of Update, and the tea.KeyPressMsg + IsSearchFocused check right
+// after it, which forward straight to the action prompt's / section's own
+// esc handling).
 func (m Model) dismissTop() (Model, tea.Cmd) {
 	if m.activeOverlay != overlayNone {
 		m.activeOverlay = overlayNone
@@ -2504,11 +2594,31 @@ func (m Model) dismissTop() (Model, tea.Cmd) {
 }
 
 // updateOverlay routes every key press to the active overlay while one is
-// open (spec §4: "overlay intercepts all keys while open"): esc/q/? close
-// it; everything else goes to the overlay's own scroll handling
-// (j/k/d/u/g/G) and is swallowed regardless of whether the overlay
-// recognized it — nothing falls through to the normal routing below.
+// open (spec §4: "overlay intercepts all keys while open"). The palette is
+// handled first and separately (updatePaletteOverlay) because — unlike the
+// read-only help overlay — it owns a text input that must receive
+// PRINTABLE keys as filter text, including "?" and "q": help's
+// esc/q/?-closes-anything rule below would otherwise make the palette
+// impossible to type a query into. The one exception is switching overlays
+// directly: pressing the palette's own open key while help is open
+// switches straight to the palette (spec: "only one overlay open at a
+// time") rather than requiring esc first — there's no printable-key
+// conflict for THIS direction since ":"/"ctrl+p" isn't a key help's
+// viewport recognizes either way. The reverse (pressing "?" to jump from
+// an open palette to help) is deliberately NOT wired: "?" must stay a
+// literal filter character while the palette has focus.
 func (m Model) updateOverlay(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.activeOverlay == overlayHelp && key.Matches(msg, m.keys.Palette) {
+		m.activeOverlay = overlayNone
+		return m, m.openPalette(paletteAll)
+	}
+	if m.activeOverlay == overlayPalette {
+		return m.updatePaletteOverlay(msg)
+	}
+	// esc/q/? close the (non-palette) overlay; everything else goes to its
+	// own scroll handling (j/k/d/u/g/G) and is swallowed regardless of
+	// whether it recognized it — nothing falls through to the normal
+	// routing below.
 	if key.Matches(msg, m.keys.Esc) || key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.Help) {
 		m.activeOverlay = overlayNone
 		return m, nil
@@ -2523,6 +2633,27 @@ func (m Model) updateOverlay(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 }
 
+// updatePaletteOverlay forwards a key press to the palette component and
+// reacts to what it reports: EventDismiss closes the overlay (esc);
+// EventRun closes it and dispatches the selected item (enter); anything
+// else (typing, arrow navigation) just persists the palette's own state.
+func (m Model) updatePaletteOverlay(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var ev palette.Event
+	m.palette, cmd, ev = m.palette.Update(msg)
+	switch ev.Kind {
+	case palette.EventDismiss:
+		m.activeOverlay = overlayNone
+		return m, cmd
+	case palette.EventRun:
+		m.activeOverlay = overlayNone
+		next, dispatchCmd := m.dispatchPaletteItem(ev.Item)
+		return next, tea.Batch(cmd, dispatchCmd)
+	default:
+		return m, cmd
+	}
+}
+
 // openHelpOverlay opens the help overlay (spec §4), loading it fresh with
 // the current view's keymap groups every time — so a config rebind or a
 // view switch since the last time it was open is always reflected, per
@@ -2530,6 +2661,8 @@ func (m Model) updateOverlay(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // UX: pressing the help key again while it's already open closes it,
 // same as updateOverlay's own esc/q/? handling (both are reachable —
 // this one from the normal key switch below, before the overlay is open).
+// Opening help while the palette is open closes the palette first (spec:
+// "only one overlay open at a time").
 func (m *Model) openHelpOverlay() {
 	if m.activeOverlay == overlayHelp {
 		m.activeOverlay = overlayNone
@@ -2537,6 +2670,104 @@ func (m *Model) openHelpOverlay() {
 	}
 	m.helpOverlay.SetGroups(toHelpOverlayGroups(m.keys.Groups(m.ctx.View)))
 	m.activeOverlay = overlayHelp
+}
+
+// openPalette (re)opens the command palette scoped by scope, loading it
+// fresh with paletteItems(scope) every time — so it always reflects the
+// current view/row/keymap, same reasoning as openHelpOverlay. Opening the
+// palette while help is open closes help first (spec: "only one overlay
+// open at a time"); a second press of the palette's own open key while
+// it's ALREADY open does not toggle it closed the way help's does — that
+// branch is normally unreachable anyway (updateOverlay routes every key to
+// the palette's own Update first while it's open, so this function is only
+// ever entered from the big key switch below, i.e. with no overlay open or
+// with help open) and toggling here would be surprising UX for a text
+// input (typing ":" again while filtering shouldn't close the box).
+func (m *Model) openPalette(scope paletteScope) tea.Cmd {
+	m.activeOverlay = overlayPalette
+	return m.palette.Open(m.paletteItems(scope))
+}
+
+// openRowPaletteFromPending is the Task 6 seam's consumer: it reads and
+// clears pendingRowPalette (see that field's doc comment) and, if a
+// right-click was actually pending, opens the palette scoped to that row's
+// actions. -1 (nothing pending — e.g. called speculatively) is a no-op.
+func (m *Model) openRowPaletteFromPending() tea.Cmd {
+	if m.pendingRowPalette < 0 {
+		return nil
+	}
+	m.pendingRowPalette = -1
+	return m.openPalette(paletteRowActions)
+}
+
+// paletteItems builds the command palette's item list for the current
+// view/row: every builtin action valid right now (availableActions, the
+// same validity rules the old action-bar row used), reusing each
+// keyMap-derived key hint where one exists; "Go to <view>" for every view;
+// "Section: <title>" per the current view's sections; and the user's
+// custom commands (cfg.Keybindings entries with Command set, scoped to
+// what's actually reachable from here via activeKeybindings). scope ==
+// paletteRowActions (the right-click entry point) stops after the action
+// items, per spec §3.
+func (m Model) paletteItems(scope paletteScope) []palette.Item {
+	row := m.getCurrRowData()
+	items := make([]palette.Item, 0, 16)
+	for _, b := range availableActions(m.ctx.View, row) {
+		hint := ""
+		if binding, ok := m.keys.bindingForBuiltin(b.Builtin); ok {
+			hint = keyHelp(binding, "")
+		}
+		items = append(items, palette.Item{
+			Kind:    palette.KindAction,
+			Label:   b.Label,
+			Builtin: b.Builtin,
+			KeyHint: hint,
+		})
+	}
+	if scope == paletteRowActions {
+		return items
+	}
+	items = append(items,
+		palette.Item{Kind: palette.KindView, Label: "Go to Pulls", Index: int(context.PullsView), KeyHint: keyHelp(m.keys.ViewPulls, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to Issues", Index: int(context.IssuesView), KeyHint: keyHelp(m.keys.ViewIssues, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to Inbox", Index: int(context.NotificationsView), KeyHint: keyHelp(m.keys.ViewNotifications, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to CI", Index: int(context.ActionsView), KeyHint: keyHelp(m.keys.ViewActions, "")},
+		palette.Item{Kind: palette.KindView, Label: "Go to Branches", Index: int(context.BranchesView), KeyHint: keyHelp(m.keys.ViewBranches, "")},
+	)
+	for i, s := range m.currentViewSections() {
+		items = append(items, palette.Item{Kind: palette.KindSection, Label: "Section: " + s.GetTitle(), Index: i})
+	}
+	for _, b := range m.activeKeybindings() {
+		if strings.TrimSpace(b.Command) == "" {
+			continue
+		}
+		items = append(items, palette.Item{Kind: palette.KindCustom, Label: b.Name, Command: b.Command, KeyHint: b.Key})
+	}
+	return items
+}
+
+// dispatchPaletteItem runs item exactly the way its non-palette equivalent
+// would: a KindAction item goes through handleBuiltinKeybinding (same as a
+// keybinding match), so "Merge" in the palette opens the merge picker
+// exactly like pressing "m"; KindView/KindSection go through
+// switchToView/switchSectionTo; KindCustom goes through startCustomCommand.
+// The palette adds no new action plumbing, per the spec.
+func (m Model) dispatchPaletteItem(item palette.Item) (Model, tea.Cmd) {
+	switch item.Kind {
+	case palette.KindAction:
+		if next, cmd, handled := m.handleBuiltinKeybinding(config.Keybinding{Builtin: item.Builtin}); handled {
+			return next, cmd
+		}
+		return m, nil
+	case palette.KindView:
+		return m, m.switchToView(context.ViewType(item.Index))
+	case palette.KindSection:
+		return m.switchSectionTo(item.Index)
+	case palette.KindCustom:
+		return m, m.startCustomCommand(config.Keybinding{Command: item.Command, Name: item.Label})
+	default:
+		return m, nil
+	}
 }
 
 // toHelpOverlayGroups adapts keys.go's []BindingGroup (package ui) to
@@ -3211,6 +3442,7 @@ func (m *Model) syncMainContentDimensions() {
 	m.ctx.PreviewWidth = m.layout.PreviewInterior.W
 	m.ctx.PreviewHeight = m.layout.PreviewInterior.H
 	m.resizeHelpOverlay()
+	m.resizePalette()
 }
 
 // resizeHelpOverlay sizes the help overlay's viewport to the same
@@ -3238,6 +3470,23 @@ func (m *Model) resizeHelpOverlay() {
 		h = 1
 	}
 	m.helpOverlay.SetSize(w, h)
+}
+
+// resizePalette sizes the palette's item list to the same full-width/
+// full-height interior overlayContent() composites it into, for the same
+// pointer-receiver-persistence reason as resizeHelpOverlay: the palette's
+// own scroll bookkeeping (Visible/ensureVisible) reads its OWN height, not
+// anything derived at render time.
+func (m *Model) resizePalette() {
+	w := m.layout.ListPanel.W + m.layout.PreviewPanel.W - 2
+	if w < 0 {
+		w = 0
+	}
+	h := m.layout.ListPanel.H - 2
+	if h < 1 {
+		h = 1
+	}
+	m.palette.SetSize(w, h)
 }
 
 // statusLine is the status bar's middle segment: plain (unstyled) text —

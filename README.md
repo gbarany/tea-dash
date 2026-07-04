@@ -111,13 +111,15 @@ drill into (focus) the preview panel rather than opening a browser.
 | List | `j`/`k`, `↑`/`↓` | move selection |
 | List | `g`/`G` | first / last row |
 | List | `ctrl+d`/`ctrl+u` | half-page down / up in the list |
-| List | mouse click, mouse wheel | select row, move selection |
+| List | mouse click, double-click, mouse wheel | select row, focus preview, move selection |
+| List | right-click | open the command palette scoped to that row's actions |
 | Preview | `enter` or `tab` | focus preview (drill in) |
 | Preview (focused) | `j/k` scroll · `d/u` half-page · `g/G` top/bottom · `[`/`]` preview tabs · `esc`/`tab`/`enter` back |
 | Preview | `p` | toggle pane · `e` expand body |
 | Search | `/` | focus search · `enter` apply · `esc` revert |
 | Global | `esc` | universal dismiss: prompt → search → preview focus |
 | Global | `?` | show / hide full help |
+| Global | `:` / `ctrl+p` | command palette — fuzzy-filter actions, view/section jumps, and custom commands |
 | Global | `o` | open in browser |
 | Global | `r` / `R`† | refresh section / refresh all |
 | Global | `y` / `Y` | copy row number / URL |

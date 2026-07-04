@@ -56,7 +56,8 @@ type keyMap struct {
 	Search key.Binding
 
 	// Overlays.
-	Help key.Binding
+	Help    key.Binding
+	Palette key.Binding
 
 	// Global.
 	Esc         key.Binding
@@ -140,7 +141,7 @@ func (k keyMap) Groups(view context.ViewType) []BindingGroup {
 			k.FocusPreview, k.PreviewHalfUp, k.PreviewHalfDown, k.PrevSidebarTab, k.NextSidebarTab, k.TogglePreview, k.Expand,
 		}},
 		{Title: "Search", Bindings: []key.Binding{k.Search}},
-		{Title: "Overlays", Bindings: []key.Binding{k.Help}},
+		{Title: "Overlays", Bindings: []key.Binding{k.Help, k.Palette}},
 		{Title: "Global", Bindings: suppressShadowed([]key.Binding{
 			k.Esc, k.Open, k.Refresh, k.RefreshAll, k.CopyNumber, k.CopyURL, k.ToggleSmart, k.Quit,
 		}, scoped.Bindings)},
@@ -296,6 +297,10 @@ func defaultKeyMap() keyMap {
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
+		),
+		Palette: key.NewBinding(
+			key.WithKeys(":", "ctrl+p"),
+			key.WithHelp(":/ctrl+p", "command palette"),
 		),
 		Esc: key.NewBinding(
 			key.WithKeys("esc"),
@@ -576,6 +581,8 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.CopyNumber = binding(keyName, "copy number")
 	case "help":
 		k.Help = binding(keyName, "help")
+	case "palette", "commandpalette":
+		k.Palette = binding(keyName, "command palette")
 	case "markasread", "markread":
 		k.MarkRead = binding(keyName, "mark read")
 	case "markasunread", "markunread":
@@ -591,6 +598,77 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 
 func binding(keyName, help string) key.Binding {
 	return key.NewBinding(key.WithKeys(keyName), key.WithHelp(keyName, help))
+}
+
+// bindingForBuiltin returns the keyMap field currently bound to a builtin
+// action name, matched via the same alias grouping rebindBuiltin writes —
+// this is its read-only mirror. Used by the command palette (app.go's
+// paletteItems) to show each action item's current key hint; covers
+// exactly the builtin names availableActions() can produce (open, refresh,
+// and every view/row action — not every builtin rebindBuiltin recognizes,
+// since e.g. "quit"/"redraw"/"search" never appear as palette action
+// items).
+func (k keyMap) bindingForBuiltin(name string) (key.Binding, bool) {
+	switch normalizeBuiltin(name) {
+	case "open", "opengithub", "openbrowser":
+		return k.Open, true
+	case "refresh":
+		return k.Refresh, true
+	case "refreshall":
+		return k.RefreshAll, true
+	case "markread", "markasread", "markasdone", "markdone":
+		return k.MarkRead, true
+	case "markunread", "markasunread":
+		return k.MarkUnread, true
+	case "markallread", "markallasread", "markallasdone", "markalldone":
+		return k.MarkAllRead, true
+	case "pin", "togglepin", "togglepinned", "togglebookmark":
+		return k.Pin, true
+	case "unpin":
+		return k.Unpin, true
+	case "viewlogs", "logs":
+		return k.ViewLogs, true
+	case "rerun", "rerunrun":
+		return k.RerunRun, true
+	case "cancel", "cancelrun":
+		return k.CancelRun, true
+	case "checkout":
+		return k.Checkout, true
+	case "fastforward":
+		return k.FastForwardBranch, true
+	case "push":
+		return k.PushBranch, true
+	case "forcepush":
+		return k.ForcePushBranch, true
+	case "delete":
+		return k.DeleteBranch, true
+	case "comment":
+		return k.Comment, true
+	case "subscribe":
+		return k.Subscribe, true
+	case "unsubscribe":
+		return k.Unsubscribe, true
+	case "setmilestone", "milestone":
+		return k.Milestone, true
+	case "close":
+		return k.Close, true
+	case "reopen":
+		return k.Reopen, true
+	case "ready", "markready":
+		return k.MarkReady, true
+	case "requestreviewers", "requestreview", "requestreviewer":
+		return k.RequestReviewers, true
+	case "removereviewers", "removereview", "removereviewer", "removerequestedreviewers":
+		return k.RemoveReviewers, true
+	case "watchchecks", "watch", "checks":
+		return k.WatchChecks, true
+	case "diff":
+		return k.ExternalDiff, true
+	case "merge":
+		return k.Merge, true
+	default:
+		return key.Binding{}, false
+	}
 }
 
 func normalizeBuiltin(name string) string {

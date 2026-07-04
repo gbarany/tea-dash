@@ -13,13 +13,19 @@ const (
 	ZonePreviewBody
 	ZoneListBody
 	ZoneStatusBar
-	// ZoneOverlay covers a currently open modal (the Task 5 help overlay
-	// today; Task 7's command palette will share it) — registered instead
-	// of the list/preview/tab zones below it while one is open, since spec
-	// §3's "click outside dismisses" rule needs a single rect to test
-	// against rather than "not one of several other zones". Payload unused
-	// (always 0).
+	// ZoneOverlay covers a currently open modal (the Task 5 help overlay,
+	// Task 7's command palette) — registered instead of the list/preview/
+	// tab zones below it while one is open, since spec §3's "click outside
+	// dismisses" rule needs a single rect to test against rather than "not
+	// one of several other zones". Payload unused (always 0).
 	ZoneOverlay
+	// ZonePaletteItem is one visible row of the open command palette,
+	// registered on top of ZoneOverlay (same layering as ZoneListRow over
+	// ZoneListBody) so a click resolves to the specific item instead of
+	// the overlay's generic "click inside, no-op" background. Payload =
+	// index into palette.Model.Visible()'s current window (NOT the
+	// underlying filtered/all-items index, which scrolling changes).
+	ZonePaletteItem
 )
 
 // Zone is one hit-testable region of the shell.
