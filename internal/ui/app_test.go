@@ -153,18 +153,39 @@ func TestFramedShellRendersFullSpaceWithHeaderAndStatusBar(t *testing.T) {
 		t.Fatalf("status bar row missing %q:\n%s", "? help", last)
 	}
 
-	// A border column exists between the list and preview panels (preview
-	// defaults open): an interior row has more than the 2 "│" runes a
-	// single bordered panel would draw on its own.
+	// A single shared border column exists between the list and preview
+	// panels (preview defaults open): the list panel's own right border is
+	// suppressed (blank) in favor of the preview panel's left border, so
+	// an interior row shows exactly 3 "│" runes (list-left, the shared
+	// seam, preview-right) — not 2 (a single bordered panel) or 4 (two
+	// independent, redundant border columns).
 	found := false
 	for _, row := range rows[2 : len(rows)-2] {
-		if strings.Count(row, "│") > 2 {
+		if strings.Count(row, "│") == 3 {
 			found = true
 			break
 		}
+		if n := strings.Count(row, "│"); n == 4 {
+			t.Fatalf("double border seam between panels (want a single shared seam, 3 runes): %q", row)
+		}
 	}
 	if !found {
-		t.Fatalf("expected a border column between the list and preview panels:\n%s", content)
+		t.Fatalf("expected a single shared border column between the list and preview panels:\n%s", content)
+	}
+
+	// The table's own column header ("Title" — a survivor at any width per
+	// SixColumnSpec.Fit) must occupy exactly one row: the column-budget bug
+	// (under-reserving bubbles/table's per-column padding overhead) wrapped
+	// the header onto two rows, stealing a data row and pushing content
+	// past the panel's right border.
+	titleRows := 0
+	for _, row := range rows {
+		if strings.Contains(row, "Title") {
+			titleRows++
+		}
+	}
+	if titleRows != 1 {
+		t.Fatalf("table header spans %d rows, want exactly 1:\n%s", titleRows, content)
 	}
 }
 
@@ -223,6 +244,34 @@ func TestPreviewAutoCollapseOnShrinkPreservesToggleState(t *testing.T) {
 	}
 	if m.layout.PreviewPanel == (layout.Rect{}) {
 		t.Fatal("PreviewPanel should render again once the collapse clears")
+	}
+}
+
+// TestFitBlock_ExpandsTabsSoBorderStaysExact covers the fitBlock tab bug:
+// lipgloss.Width counts a literal tab as exactly 1 cell, but a real
+// terminal expands it to the next tab stop (several columns) — so a
+// tab-carrying line (e.g. prview surfacing a raw CI log line verbatim)
+// measured/padded without first expanding tabs would come up short,
+// leaving the panel's right border rune floating away from the true right
+// edge once the terminal actually renders the tab.
+func TestFitBlock_ExpandsTabsSoBorderStaysExact(t *testing.T) {
+	content := "a\tb"
+	w, h := 20, 3
+	block := fitBlock(content, w, h)
+	rows := strings.Split(block, "\n")
+	if len(rows) != h {
+		t.Fatalf("row count = %d, want %d", len(rows), h)
+	}
+	for i, row := range rows {
+		if got := lipgloss.Width(row); got != w {
+			t.Fatalf("row %d width = %d, want %d (exact, tab-safe):\n%q", i, got, w, row)
+		}
+	}
+	// The tab must have actually been expanded (not just happen to measure
+	// right due to short overall content): the rendered line's plain byte
+	// content should contain the expansion spaces, not a raw tab.
+	if strings.Contains(rows[0], "\t") {
+		t.Fatalf("expected the literal tab to be expanded, still present: %q", rows[0])
 	}
 }
 
@@ -2051,6 +2100,16 @@ func TestActionKeysDispatchExpectedIntents(t *testing.T) {
 			wantPrompt: actions.Prompt{
 				Mode:  actions.PromptText,
 				Value: "alice",
+			},
+		},
+		{
+			name:      "remove reviewers",
+			key:       tea.KeyPressMsg{Code: '#', Text: "#"},
+			kind:      actions.KindRemoveReviewers,
+			textInput: []tea.KeyPressMsg{{Code: 'b', Text: "b"}, {Code: 'o', Text: "o"}, {Code: 'b', Text: "b"}},
+			wantPrompt: actions.Prompt{
+				Mode:  actions.PromptText,
+				Value: "bob",
 			},
 		},
 		{name: "checkout", key: tea.KeyPressMsg{Code: 'C', Text: "C"}, kind: actions.KindCheckout},

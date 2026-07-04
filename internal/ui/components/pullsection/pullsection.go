@@ -27,7 +27,6 @@ type SectionPullRequestsFetchedMsg = section.RowsFetchedMsg[data.PullRequest]
 // NewModel builds a pull-requests section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	programCtx := ctx
-	columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 	return section.New(section.Options[data.PullRequest]{
 		Id:           id,
 		Ctx:          ctx,
@@ -51,6 +50,13 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			return c.SearchPullsPage(fetchCtx, f, limit, page)
 		},
 		BuildRow: func(pr data.PullRequest) table.Row {
+			// Recompute the current column set on every call (not once at
+			// construction): ctx.MainContentWidth changes across resizes,
+			// and the generic section.Model rebuilds rows on
+			// UpdateProgramContext, so a stale/frozen column list here
+			// would leave row cell counts out of sync with SetColumns
+			// (dropped columns responsively per SixColumnSpec.Fit).
+			columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 			return prBuildRowWithColumns(pr, columnNames)
 		},
 		Columns: func(width int) []table.Column {

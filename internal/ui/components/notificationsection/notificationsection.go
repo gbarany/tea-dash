@@ -47,22 +47,49 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			}
 			return c.ListNotifications(fetchCtx, limit, includeRead)
 		},
-		BuildRow: notificationBuildRow,
+		BuildRow: func(n data.Notification) table.Row {
+			// Column-name-driven (not a fixed 6-cell literal): Columns
+			// falls back to the shared section.DefaultColumns, which
+			// responsively drops columns per SixColumnSpec.Fit, so the
+			// row's cell count/order must track whatever that yields for
+			// the CURRENT width, recomputed on every call (not frozen at
+			// construction — see pullsection.NewModel's identical comment).
+			columnNames := section.ColumnNamesFromConfig(nil, section.DefaultColumnDefinitions(ctx.MainContentWidth))
+			return notificationBuildRowWithColumns(n, columnNames)
+		},
 	})
 }
 
-func notificationBuildRow(n data.Notification) table.Row {
-	number := fmt.Sprintf("#%d", n.Number)
-	if n.Number == 0 {
-		number = fmt.Sprintf("n%d", n.ID)
+func notificationBuildRowWithColumns(n data.Notification, columns []string) table.Row {
+	row := make(table.Row, 0, len(columns))
+	for _, column := range columns {
+		row = append(row, notificationColumnValue(n, column))
 	}
-	return table.Row{
-		number,
-		n.SubjectTitle,
-		n.RepoNameWithOwner,
-		strings.ToLower(n.SubjectType),
-		notificationState(n),
-		section.HumanizeTime(n.UpdatedAt),
+	return row
+}
+
+func notificationColumnValue(n data.Notification, column string) string {
+	switch column {
+	case "number":
+		if n.Number == 0 {
+			return fmt.Sprintf("n%d", n.ID)
+		}
+		return fmt.Sprintf("#%d", n.Number)
+	case "title":
+		return n.SubjectTitle
+	case "repo":
+		return n.RepoNameWithOwner
+	case "author":
+		// Pre-existing choice (kept as-is): this section shows the
+		// notification's subject type (pull/issue) under the shared
+		// "Author"-named column slot rather than an actual author.
+		return strings.ToLower(n.SubjectType)
+	case "state":
+		return notificationState(n)
+	case "updated":
+		return section.HumanizeTime(n.UpdatedAt)
+	default:
+		return ""
 	}
 }
 

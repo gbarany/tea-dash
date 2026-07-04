@@ -70,7 +70,14 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 				Limit:   limit,
 			})
 		},
-		BuildRow: actionBuildRow,
+		BuildRow: func(run data.ActionRun) table.Row {
+			// Recomputed per call, not frozen at construction: ctx.MainContentWidth
+			// changes across resizes, and UpdateProgramContext rebuilds rows after
+			// re-fitting columns, so a stale column list here would leave row cell
+			// counts out of sync with SetColumns (columns responsively drop per
+			// SixColumnSpec.Fit).
+			return actionBuildRowWithColumns(run, actionColumnNames(ctx.MainContentWidth))
+		},
 	})
 	m := &Model{Model: base}
 	m.setActionColumns(ctx.MainContentWidth)
@@ -87,15 +94,21 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 	return m, cmd
 }
 
-// UpdateProgramContext resizes the table and reapplies the Actions columns.
+// UpdateProgramContext resizes the table, then reapplies the Actions
+// columns (instead of the generic model's PR/issue-shaped default). It
+// calls BaseModel.UpdateProgramContext directly — bypassing the embedded
+// section.Model[data.ActionRun]'s own UpdateProgramContext override, which
+// would otherwise do the same column+row work twice, once against the
+// wrong (generic default) column shape.
 func (m *Model) UpdateProgramContext(ctx *appctx.ProgramContext) {
-	m.Model.UpdateProgramContext(ctx)
+	m.Model.BaseModel.UpdateProgramContext(ctx)
 	m.setActionColumns(ctx.MainContentWidth)
 }
 
+// setActionColumns applies the Actions column layout, safely rebuilding
+// rows to match — see BaseModel.SafelySetColumnsAndRows.
 func (m *Model) setActionColumns(mainWidth int) {
-	m.Columns = actionColumns(mainWidth)
-	m.Table.SetColumns(m.Columns)
+	m.SafelySetColumnsAndRows(actionColumns(mainWidth), m.BuildRows)
 }
 
 func actionEmptyText(cfg config.SectionConfig) string {
@@ -112,36 +125,58 @@ func actionEmptyHint(cfg config.SectionConfig) string {
 	return "This board shows repo-scoped Gitea Actions workflow runs when the server exposes the Actions API."
 }
 
-func actionColumns(mainWidth int) []table.Column {
-	const (
-		numW     = 8
-		repoW    = 22
-		actorW   = 18
-		stateW   = 18
-		updatedW = 10
-	)
-	titleW := mainWidth - (numW + repoW + actorW + stateW + updatedW) - 6
-	if titleW < 20 {
-		titleW = 20
-	}
-	return []table.Column{
-		{Title: "#", Width: numW},
-		{Title: "Title", Width: titleW},
-		{Title: "Repo", Width: repoW},
-		{Title: "Actor/Event", Width: actorW},
-		{Title: "Status", Width: stateW},
-		{Title: "Updated", Width: updatedW},
+// actionColumnSpec is the Actions section's 6-column layout: wider state
+// and actor columns than the PR/issue default (status/conclusion strings
+// and "@actor event" pairs run longer), sharing the same
+// section.SixColumnSpec responsive-drop behavior (Actor/Event dropped
+// first, then Updated, then Repo — #/Title/Status always survive).
+func actionColumnSpec() section.SixColumnSpec {
+	return section.SixColumnSpec{
+		Index:   section.ColumnDefinition{Name: "number", Title: "#", Width: 8},
+		Grow:    section.ColumnDefinition{Name: "title", Title: "Title", Width: 20},
+		Repo:    section.ColumnDefinition{Name: "repo", Title: "Repo", Width: 22},
+		Fourth:  section.ColumnDefinition{Name: "actor", Title: "Actor/Event", Width: 18},
+		State:   section.ColumnDefinition{Name: "state", Title: "Status", Width: 18},
+		Updated: section.ColumnDefinition{Name: "updated", Title: "Updated", Width: 10},
 	}
 }
 
-func actionBuildRow(run data.ActionRun) table.Row {
-	return table.Row{
-		fmt.Sprintf("#%d", run.GetNumber()),
-		run.GetTitle(),
-		run.RepoNameWithOwner,
-		actionActorEvent(run),
-		actionStatus(run),
-		section.HumanizeTime(run.GetUpdatedAt()),
+func actionColumnDefinitions(mainWidth int) []section.ColumnDefinition {
+	return actionColumnSpec().Fit(mainWidth)
+}
+
+func actionColumns(mainWidth int) []table.Column {
+	return section.ColumnsFromDefinitions(actionColumnDefinitions(mainWidth))
+}
+
+func actionColumnNames(mainWidth int) []string {
+	return section.ColumnNamesFromDefinitions(actionColumnDefinitions(mainWidth))
+}
+
+func actionBuildRowWithColumns(run data.ActionRun, columns []string) table.Row {
+	row := make(table.Row, 0, len(columns))
+	for _, column := range columns {
+		row = append(row, actionColumnValue(run, column))
+	}
+	return row
+}
+
+func actionColumnValue(run data.ActionRun, column string) string {
+	switch column {
+	case "number":
+		return fmt.Sprintf("#%d", run.GetNumber())
+	case "title":
+		return run.GetTitle()
+	case "repo":
+		return run.RepoNameWithOwner
+	case "actor":
+		return actionActorEvent(run)
+	case "state":
+		return actionStatus(run)
+	case "updated":
+		return section.HumanizeTime(run.GetUpdatedAt())
+	default:
+		return ""
 	}
 }
 

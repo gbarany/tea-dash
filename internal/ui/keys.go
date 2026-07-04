@@ -44,6 +44,7 @@ type keyMap struct {
 	Reopen            key.Binding
 	Review            key.Binding
 	RequestReviewers  key.Binding
+	RemoveReviewers   key.Binding
 	ExternalDiff      key.Binding
 	Checkout          key.Binding
 	PushBranch        key.Binding
@@ -196,6 +197,14 @@ func defaultKeyMap() keyMap {
 		RequestReviewers: key.NewBinding(
 			key.WithKeys("@"),
 			key.WithHelp("@", "request review"),
+		),
+		// "#" pairs with "@" (spec §2's PR row: "@/# request/remove
+		// reviewers") — availableActions has offered "Remove reviewers"
+		// since the action bar existed, but it had no reachable default key
+		// until now (only reachable via a custom config keybinding).
+		RemoveReviewers: key.NewBinding(
+			key.WithKeys("#"),
+			key.WithHelp("#", "remove reviewer"),
 		),
 		ExternalDiff: key.NewBinding(
 			key.WithKeys("d", "ctrl+t"),
@@ -352,6 +361,8 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.Review = binding(keyName, "review")
 	case "requestreview", "requestreviewer", "requestreviewers":
 		k.RequestReviewers = binding(keyName, "request review")
+	case "removereview", "removereviewer", "removereviewers", "removerequestedreviewers":
+		k.RemoveReviewers = binding(keyName, "remove reviewer")
 	case "diff":
 		k.ExternalDiff = binding(keyName, "external diff")
 	case "checkout":

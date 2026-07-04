@@ -548,6 +548,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case !m.scopedBuiltinOverridden("requestReview") && !m.scopedBuiltinOverridden("requestReviewer") &&
 			!m.scopedBuiltinOverridden("requestReviewers") && key.Matches(msg, m.keys.RequestReviewers):
 			return m, m.startAction(actions.KindRequestReviewers)
+		case !m.scopedBuiltinOverridden("removeReview") && !m.scopedBuiltinOverridden("removeReviewer") &&
+			!m.scopedBuiltinOverridden("removeReviewers") && !m.scopedBuiltinOverridden("removeRequestedReviewers") &&
+			key.Matches(msg, m.keys.RemoveReviewers):
+			return m, m.startAction(actions.KindRemoveReviewers)
 		case !m.scopedBuiltinOverridden("push") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.PushBranch):
 			return m, m.startAction(actions.KindPushBranch)
 		case !m.scopedBuiltinOverridden("forcePush") && m.ctx.View == context.BranchesView && key.Matches(msg, m.keys.ForcePushBranch):
@@ -703,13 +707,15 @@ func (m Model) renderShell(l layout.Layout) string {
 		fullPanel := layout.Rect{X: 0, Y: l.ListPanel.Y, W: l.ListPanel.W + l.PreviewPanel.W, H: l.ListPanel.H}
 		interior := layout.Rect{X: fullPanel.X + 1, Y: fullPanel.Y + 1, W: fullPanel.W - 2, H: fullPanel.H - 2}
 		body := fitBlock(overlay, interior.W, interior.H)
-		rows = append(rows, renderPanel(fullPanel, interior, m.tabs.View(), body, listStyle, listBorders(false))...)
+		rows = append(rows, renderPanel(fullPanel, interior, m.tabs.View(), body, listStyle, listBorders(), true)...)
 	} else {
 		listBody := fitBlock(m.listInteriorContent(), l.ListInterior.W, l.ListInterior.H)
-		listRows := renderPanel(l.ListPanel, l.ListInterior, m.tabs.View(), listBody, listStyle, listBorders(showPreview))
+		// drawRightBorder=!showPreview: when the preview follows, its own
+		// left border is the shared seam (see renderPanel's doc comment).
+		listRows := renderPanel(l.ListPanel, l.ListInterior, m.tabs.View(), listBody, listStyle, listBorders(), !showPreview)
 		if showPreview {
 			previewBody := fitBlock(m.sidebar.View(), l.PreviewInterior.W, l.PreviewInterior.H)
-			previewRows := renderPanel(l.PreviewPanel, l.PreviewInterior, m.sidebar.TabsBorderSegment(), previewBody, previewStyle, previewBorders())
+			previewRows := renderPanel(l.PreviewPanel, l.PreviewInterior, m.sidebar.TabsBorderSegment(), previewBody, previewStyle, previewBorders(), true)
 			for i := range listRows {
 				rows = append(rows, listRows[i]+previewRows[i])
 			}
@@ -805,19 +811,14 @@ type panelBorders struct {
 	topLeft, topRight, bottomLeft, bottomRight string
 }
 
-// listBorders is the list panel's corners: "├"/"├" on the left (it always
-// starts at column 0, directly below the header's left run), and "┬"/"┴" on
-// the right when a preview panel follows, else "┤"/"┤" (closing the frame).
-func listBorders(previewShown bool) panelBorders {
-	right := "┤"
-	if previewShown {
-		right = "┬"
-	}
-	bottomRight := "┤"
-	if previewShown {
-		bottomRight = "┴"
-	}
-	return panelBorders{topLeft: "├", topRight: right, bottomLeft: "├", bottomRight: bottomRight}
+// listBorders is the list panel's corners: "├" on the left always (it
+// always starts at column 0, directly below the header's left run), "┤" on
+// the right — only actually drawn when the list panel is alone (no
+// preview): see renderPanel's drawRightBorder. When a preview follows,
+// the seam between them is the preview's own left border (previewBorders'
+// "┬"/"┴"/"│") instead of a second, redundant border column.
+func listBorders() panelBorders {
+	return panelBorders{topLeft: "├", topRight: "┤", bottomLeft: "├", bottomRight: "┤"}
 }
 
 // previewBorders is the preview panel's corners: always follows a list
@@ -831,13 +832,29 @@ func previewBorders() panelBorders {
 // tabsSegment, embedded per spec §1), bordered interior rows, and its own
 // bottom border — as exactly panel.H rows of exactly panel.W cells each.
 // body must already be fitBlock'd to interior.W x interior.H.
-func renderPanel(panel, interior layout.Rect, tabsSegment, body string, style lipgloss.Style, b panelBorders) []string {
-	rows := make([]string, 0, panel.H)
-	rows = append(rows, style.Render(b.topLeft)+embedInBorderRow(tabsSegment, interior.W, style)+style.Render(b.topRight))
-	for _, line := range strings.Split(body, "\n") {
-		rows = append(rows, style.Render("│")+line+style.Render("│"))
+//
+// drawRightBorder controls the panel's own right edge (top/mid/bottom):
+// when false, it's left as plain blank space instead of a border rune —
+// used for the list panel when a preview panel follows immediately to its
+// right, so the two panels share a SINGLE visible seam (the preview's own
+// left border) rather than two adjacent border columns. layout.Compute's
+// ListPanel/PreviewPanel rects are non-overlapping by contract (their own
+// golden tests assert ListPanel.W+PreviewPanel.W==W with no shared
+// column), so this reclaimed column is real width the list panel owns but
+// doesn't use for content — ListInterior stays exactly what layout says,
+// and the column renders as a 1-cell blank gap rather than extra content
+// (avoiding a mismatch with MainContentWidth, which the table is sized to).
+func renderPanel(panel, interior layout.Rect, tabsSegment, body string, style lipgloss.Style, b panelBorders, drawRightBorder bool) []string {
+	rightTop, rightMid, rightBottom := style.Render(b.topRight), style.Render("│"), style.Render(b.bottomRight)
+	if !drawRightBorder {
+		rightTop, rightMid, rightBottom = " ", " ", " "
 	}
-	rows = append(rows, style.Render(b.bottomLeft)+embedInBorderRow("", interior.W, style)+style.Render(b.bottomRight))
+	rows := make([]string, 0, panel.H)
+	rows = append(rows, style.Render(b.topLeft)+embedInBorderRow(tabsSegment, interior.W, style)+rightTop)
+	for _, line := range strings.Split(body, "\n") {
+		rows = append(rows, style.Render("│")+line+rightMid)
+	}
+	rows = append(rows, style.Render(b.bottomLeft)+embedInBorderRow("", interior.W, style)+rightBottom)
 	return rows
 }
 
@@ -859,6 +876,26 @@ func embedInBorderRow(segment string, w int, style lipgloss.Style) string {
 	return segment + style.Render(strings.Repeat("─", w-segW))
 }
 
+// tabWidth is how many spaces fitBlock expands a literal tab character
+// into before measuring/padding. A fixed expansion (rather than aligning to
+// real tab stops, which would need to know the tab's starting column) is
+// simple, deterministic, and enough to keep the interior's right border
+// from floating.
+const tabWidth = 4
+
+// expandTabs replaces literal tabs with spaces before any width
+// measurement: lipgloss.Width counts a tab as exactly 1 cell, but a real
+// terminal expands it to the next tab stop — typically several columns —
+// so a tab-carrying line's measured width undercounts its actual rendered
+// width. Content that reaches fitBlock with raw tabs still in it (e.g.
+// prview surfacing CI log lines verbatim, like
+// "ok  \tgithub.com/x\t0.211s") would otherwise get padded short, leaving
+// the panel's right border rune shifted left of where the terminal
+// actually draws it once tabs expand.
+func expandTabs(s string) string {
+	return strings.ReplaceAll(s, "\t", strings.Repeat(" ", tabWidth))
+}
+
 // fitBlock pads or truncates content to exactly w columns by h rows, so
 // every panel interior contributes a fixed number of same-width rows to
 // the frame regardless of what it renders (a loading spinner, an error
@@ -868,6 +905,7 @@ func fitBlock(content string, w, h int) string {
 	if w <= 0 || h <= 0 {
 		return ""
 	}
+	content = expandTabs(content)
 	wrapped := lipgloss.NewStyle().Width(w).Render(content)
 	lines := strings.Split(wrapped, "\n")
 	out := make([]string, h)

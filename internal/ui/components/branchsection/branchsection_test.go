@@ -52,6 +52,59 @@ func TestFetchedMsgBuildsRows(t *testing.T) {
 	}
 }
 
+// TestBranchColumnsNeverExceedWidth guards the same budget-arithmetic bug
+// fixed for the shared PR/issue SixColumnSpec: branchColumns had its own
+// under-reserved "-6" overhead (needed -2 per surviving column, since
+// bubbles/table pads every header/cell by 1 column on each side), which
+// wrapped the table header onto a second row at realistic widths.
+//
+// The loop starts at this section's own irreducible floor, not the shared
+// package's 20: branches' essential (never-dropped) #+Status columns alone
+// are wider than the PR/issue defaults (Status especially, to fit
+// ahead/behind-shaped values), so — even with the grow column (branch name)
+// squeezed to invisible — there's a real width below which no column
+// dropping can help.
+func TestBranchColumnsNeverExceedWidth(t *testing.T) {
+	spec := branchColumnSpec()
+	minViable := spec.Index.Width + spec.State.Width + 2*3 // #, zero-width branch name, Status, each padded
+	for w := minViable; w <= 200; w++ {
+		defs := branchColumnDefinitions(w)
+		total := 0
+		for _, d := range defs {
+			total += d.Width + 2
+		}
+		if total > w {
+			t.Fatalf("width %d: columns consume %d, exceeds available width\ndefs=%+v", w, total, defs)
+		}
+	}
+}
+
+// TestBranchColumnsDropUpstreamFirst confirms the branches section reuses
+// SixColumnSpec's priority order (Upstream dropped first).
+func TestBranchColumnsDropUpstreamFirst(t *testing.T) {
+	wide := branchColumnNames(200)
+	if len(wide) != 6 {
+		t.Fatalf("wide names = %v, want all six", wide)
+	}
+	narrow := branchColumnNames(50)
+	for _, n := range narrow {
+		if n == "upstream" {
+			t.Fatalf("upstream should have been dropped at width 50: %v", narrow)
+		}
+	}
+	for _, essential := range []string{"mark", "branch", "state"} {
+		found := false
+		for _, n := range narrow {
+			if n == essential {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("essential column %q missing at width 50: %v", essential, narrow)
+		}
+	}
+}
+
 func TestRepositoriesFromConfigUsesConfiguredLocalRepos(t *testing.T) {
 	cfg := &config.Config{LocalRepos: []config.LocalRepoConfig{
 		{Name: "tea-dash", Path: "/tmp/tea-dash"},

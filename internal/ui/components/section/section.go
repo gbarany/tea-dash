@@ -162,6 +162,39 @@ func (m *BaseModel) SetRows(rows []table.Row) {
 	m.numRows = len(rows)
 }
 
+// SafelySetColumnsAndRows applies newColumns and (if there are any rows)
+// rebuilds them via buildRows, without ever exposing bubbles/table to a
+// mismatched intermediate state.
+//
+// bubbles/table's SetRows and SetColumns each immediately re-render
+// (UpdateViewport -> renderRow) using whatever the OTHER of the pair
+// currently is, and renderRow indexes each row's cells by column position —
+// so calling them in either order across a column-count CHANGE (e.g. a
+// resize responsively dropping a column per SixColumnSpec.Fit) risks a
+// moment where old (wider) rows are rendered against new (narrower)
+// columns, or vice versa, and panics with an index-out-of-range.
+//
+// The fix: clear rows first (always column-count-safe — an empty table
+// renders nothing per-row), apply the new columns, then refill with
+// freshly-built rows. The cursor is saved and restored around this,
+// because SetRows only clamps a cursor DOWN when it now exceeds the row
+// count — it never clamps a negative cursor back up, so a naive clear
+// would otherwise strand it at -1 (GetCurrRow would then nil-deref
+// forever, even once real rows are refilled).
+func (m *BaseModel) SafelySetColumnsAndRows(newColumns []table.Column, buildRows func() []table.Row) {
+	if m.numRows == 0 {
+		m.Columns = newColumns
+		m.Table.SetColumns(m.Columns)
+		return
+	}
+	cursor := m.Table.Cursor()
+	m.Table.SetRows(nil)
+	m.Columns = newColumns
+	m.Table.SetColumns(m.Columns)
+	m.SetRows(buildRows())
+	m.Table.SetCursor(cursor)
+}
+
 // UpdateProgramContext recaches the context and resizes the table to the main
 // content area. Concrete sections may override to also refresh columns.
 func (m *BaseModel) UpdateProgramContext(ctx *context.ProgramContext) {
@@ -286,28 +319,140 @@ func columnsFromDefinitions(defs []ColumnDefinition) []table.Column {
 	return cols
 }
 
+// ColumnsFromDefinitions converts defs (already fitted to a width, e.g. via
+// SixColumnSpec.Fit) into table.Columns, in order. Exported for sections
+// with their own SixColumnSpec (actionsection, branchsection) that aren't
+// PR/issue-shaped.
+func ColumnsFromDefinitions(defs []ColumnDefinition) []table.Column {
+	return columnsFromDefinitions(defs)
+}
+
+// ColumnNamesFromDefinitions returns defs' names, in order — the column set
+// a matching row builder must emit cells for, in the same order.
+func ColumnNamesFromDefinitions(defs []ColumnDefinition) []string {
+	return columnNamesFromDefinitions(defs)
+}
+
+// SixColumnSpec describes one section's default 6-column table layout: a
+// leading index/mark column, a "grow" column that absorbs whatever width is
+// left over (title/branch — its Width doubles as the PREFERRED minimum: it
+// grows past that freely when there's room, exactly like the historical
+// unbounded title-width formula), and three further fixed-width columns in
+// drop priority order (Fourth dropped first, Updated second, Repo third)
+// for when the interior can't fit all six even with Grow at its preferred
+// minimum. Index, Grow, and State never drop — gh-dash's own convention
+// keeps #/Title/State visible at any width.
+type SixColumnSpec struct {
+	Index   ColumnDefinition // e.g. "#" — never dropped
+	Grow    ColumnDefinition // e.g. Title, Branch — never dropped; Width is its preferred minimum
+	Repo    ColumnDefinition // dropped third (last)
+	Fourth  ColumnDefinition // e.g. Author, Actor/Event, Upstream — dropped first
+	State   ColumnDefinition // e.g. State, Status — never dropped
+	Updated ColumnDefinition // e.g. Updated, Commit — dropped second
+}
+
+// minGrowWidth is the hard floor for the grow column: 0, not 1. At
+// layout.Compute's own minListInterior floor (20 columns), the PR/issue
+// spec's Index+State columns alone already consume the entire budget
+// (6+8 content + 2*3 padding for all three surviving essential columns ==
+// 20), leaving no room for Grow at all. Rather than force it up to some
+// positive minimum and overflow the panel border by that amount, Grow is
+// allowed to bottom out at 0 (bubbles/table skips rendering a col.Width<=0
+// column entirely, so it simply disappears) — the same "keep #/Title/State"
+// promise is honored in the row/column-name sense (a row builder can still
+// ask for the "title" column's value), just not the visual one, in this
+// one truly pathological corner.
+const minGrowWidth = 0
+
+// Fit lays out spec's six columns for mainWidth, accounting for the real
+// per-column rendering overhead: bubbles/table's DefaultStyles pads every
+// header/cell by 1 column on each side (Padding(0,1)), so each surviving
+// column costs mainWidth-budget = its own Width + 2, not just its Width.
+// When even Grow at its preferred Width doesn't fit alongside the other
+// five, columns are dropped by priority — Fourth, then Updated, then Repo —
+// until it does; Index/Grow/State always survive. Grow's actual width is
+// whatever's left after the surviving fixed columns and their padding
+// overhead: when that's at least the preferred Width, Grow absorbs all of
+// it (unbounded — the same "let the title fill the rest" behavior the
+// original per-section formulas had); otherwise it's floored at
+// minGrowWidth rather than clamped up to the (now unaffordable) preferred
+// Width — a too-narrow (or, at the hard floor, invisible) title beats a
+// table header that overflows the panel border.
+func (spec SixColumnSpec) Fit(mainWidth int) []ColumnDefinition {
+	order := []ColumnDefinition{spec.Index, spec.Grow, spec.Repo, spec.Fourth, spec.State, spec.Updated}
+	kept := make(map[string]bool, len(order))
+	for _, def := range order {
+		kept[def.Name] = true
+	}
+	dropOrder := []string{spec.Fourth.Name, spec.Updated.Name, spec.Repo.Name}
+
+	fixedWidthExceptGrow := func() int {
+		w := 0
+		for _, def := range order {
+			if def.Name == spec.Grow.Name || !kept[def.Name] {
+				continue
+			}
+			w += def.Width
+		}
+		return w
+	}
+	countKept := func() int {
+		n := 0
+		for _, ok := range kept {
+			if ok {
+				n++
+			}
+		}
+		return n
+	}
+	fitsWithPreferredGrow := func() bool {
+		return fixedWidthExceptGrow()+spec.Grow.Width+2*countKept() <= mainWidth
+	}
+
+	for _, name := range dropOrder {
+		if fitsWithPreferredGrow() {
+			break
+		}
+		kept[name] = false
+	}
+
+	overhead := 2 * countKept()
+	growW := mainWidth - fixedWidthExceptGrow() - overhead // unbounded: absorbs all remaining width when there's room
+	if growW < minGrowWidth {
+		growW = minGrowWidth
+	}
+
+	out := make([]ColumnDefinition, 0, len(order))
+	for _, def := range order {
+		if !kept[def.Name] {
+			continue
+		}
+		if def.Name == spec.Grow.Name {
+			def.Width = growW
+		}
+		out = append(out, def)
+	}
+	return out
+}
+
 // DefaultColumnDefinitions defines the shared column widths and title-grow
 // formula for every PR/issue-like section (# / Title / Repo / Author / State /
-// Updated).
+// Updated), responsively dropping Author, then Updated, then Repo when
+// mainWidth can't fit them all (see SixColumnSpec.Fit).
 func DefaultColumnDefinitions(mainWidth int) []ColumnDefinition {
-	const (
-		numW     = 6
-		repoW    = 22
-		authorW  = 16
-		stateW   = 8
-		updatedW = 10
-	)
-	titleW := mainWidth - (numW + repoW + authorW + stateW + updatedW) - 6
-	if titleW < 20 {
-		titleW = 20
-	}
-	return []ColumnDefinition{
-		{Name: "number", Title: "#", Width: numW},
-		{Name: "title", Title: "Title", Width: titleW},
-		{Name: "repo", Title: "Repo", Width: repoW},
-		{Name: "author", Title: "Author", Width: authorW},
-		{Name: "state", Title: "State", Width: stateW},
-		{Name: "updated", Title: "Updated", Width: updatedW},
+	return DefaultColumnSpec().Fit(mainWidth)
+}
+
+// DefaultColumnSpec is the PR/issue-like SixColumnSpec, exposed so sections
+// that need the raw spec (rather than an already-fitted slice) can share it.
+func DefaultColumnSpec() SixColumnSpec {
+	return SixColumnSpec{
+		Index:   ColumnDefinition{Name: "number", Title: "#", Width: 6},
+		Grow:    ColumnDefinition{Name: "title", Title: "Title", Width: 20},
+		Repo:    ColumnDefinition{Name: "repo", Title: "Repo", Width: 22},
+		Fourth:  ColumnDefinition{Name: "author", Title: "Author", Width: 16},
+		State:   ColumnDefinition{Name: "state", Title: "State", Width: 8},
+		Updated: ColumnDefinition{Name: "updated", Title: "Updated", Width: 10},
 	}
 }
 

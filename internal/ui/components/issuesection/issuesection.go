@@ -27,7 +27,6 @@ type SectionIssuesFetchedMsg = section.RowsFetchedMsg[data.Issue]
 // NewModel builds an issues section.
 func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Model {
 	programCtx := ctx
-	columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 	return section.New(section.Options[data.Issue]{
 		Id:           id,
 		Ctx:          ctx,
@@ -51,6 +50,9 @@ func NewModel(id int, ctx *appctx.ProgramContext, cfg config.SectionConfig) *Mod
 			return c.SearchIssuesPage(fetchCtx, f, limit, page)
 		},
 		BuildRow: func(issue data.Issue) table.Row {
+			// Recomputed per call, not frozen at construction — see
+			// pullsection.NewModel's identical comment.
+			columnNames := section.ColumnNamesFromConfig(cfg.Columns, section.DefaultColumnDefinitions(ctx.MainContentWidth))
 			return issueBuildRowWithColumns(issue, columnNames)
 		},
 		Columns: func(width int) []table.Column {
