@@ -18,6 +18,7 @@ import (
 	localgit "github.com/gbarany/tea-dash/internal/git"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/ui/actions"
+	"github.com/gbarany/tea-dash/internal/ui/components/actionfeedback"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionprompt"
 	"github.com/gbarany/tea-dash/internal/ui/components/actionsection"
 	"github.com/gbarany/tea-dash/internal/ui/components/branchsection"
@@ -567,21 +568,32 @@ func TestToggleSmartFilteringRefreshesCurrentView(t *testing.T) {
 	if s := m.getCurrSection(); s == nil || !s.GetIsLoading() {
 		t.Fatal("toggle should mark the rebuilt current section loading")
 	}
-	if !strings.Contains(m.notice, "all repositories") {
-		t.Fatalf("notice = %q, want all-repositories status", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "all repositories") {
+		t.Fatalf("notice = %q, want all-repositories status", m.statusLeftSegment())
 	}
 }
 
 func TestToggleSmartFilteringWithoutDetectedRepoShowsNotice(t *testing.T) {
 	m := New(&config.Config{}, nil)
+	// Keep the toast's own expiry tick fast (see actionfeedback.WithExpiry's
+	// doc comment) — this test executes cmd() below to confirm it's just
+	// that tick and not a refetch, and shouldn't block ~4 real seconds to do
+	// so.
+	m.actionFeedback = m.actionFeedback.WithExpiry(time.Millisecond)
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: 't', Text: "t"})
 	m = next.(Model)
+	// cmd is no longer necessarily nil here: it's now the Info toast's own
+	// auto-expiry tick (Task 8), not a refetch — draining it must not
+	// produce a fetch-shaped message.
 	if cmd != nil {
-		t.Fatalf("toggle without a detected repo should not refetch, got %v", cmd)
+		msg := cmd()
+		if _, ok := msg.(actionfeedback.ExpireMsg); !ok {
+			t.Fatalf("toggle without a detected repo should not refetch, cmd produced %T", msg)
+		}
 	}
-	if !strings.Contains(m.notice, "No matching git remote") {
-		t.Fatalf("notice = %q, want missing-remote message", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "No matching git remote") {
+		t.Fatalf("notice = %q, want missing-remote message", m.statusLeftSegment())
 	}
 }
 
@@ -1931,8 +1943,8 @@ func TestMarkSelectedNotificationReadRefreshesNotifications(t *testing.T) {
 	if refresh == nil {
 		t.Fatal("successful mark-read should refresh the notifications section")
 	}
-	if !strings.Contains(m.notice, "Marked notification read") {
-		t.Fatalf("notice = %q, want mark-read confirmation", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Marked notification read") {
+		t.Fatalf("notice = %q, want mark-read confirmation", m.statusLeftSegment())
 	}
 }
 
@@ -1977,8 +1989,8 @@ func TestMarkSelectedNotificationUnreadRefreshesNotifications(t *testing.T) {
 	if refresh == nil {
 		t.Fatal("successful mark-unread should refresh the notifications section")
 	}
-	if !strings.Contains(m.notice, "Marked notification unread") {
-		t.Fatalf("notice = %q, want mark-unread confirmation", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Marked notification unread") {
+		t.Fatalf("notice = %q, want mark-unread confirmation", m.statusLeftSegment())
 	}
 }
 
@@ -2051,8 +2063,8 @@ func TestToggleNotificationPinRefreshesNotifications(t *testing.T) {
 			if refresh == nil {
 				t.Fatal("successful pin action should refresh the notifications section")
 			}
-			if !strings.Contains(m.notice, tt.wantNotice) {
-				t.Fatalf("notice = %q, want %q", m.notice, tt.wantNotice)
+			if !strings.Contains(m.statusLeftSegment(), tt.wantNotice) {
+				t.Fatalf("notice = %q, want %q", m.statusLeftSegment(), tt.wantNotice)
 			}
 		})
 	}
@@ -2130,8 +2142,8 @@ func TestMarkAllNotificationsReadRefreshesNotifications(t *testing.T) {
 	if refresh == nil {
 		t.Fatal("successful mark-all-read should refresh the notifications section")
 	}
-	if !strings.Contains(m.notice, "Marked all notifications read") {
-		t.Fatalf("notice = %q, want mark-all confirmation", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Marked all notifications read") {
+		t.Fatalf("notice = %q, want mark-all confirmation", m.statusLeftSegment())
 	}
 }
 
@@ -3605,8 +3617,8 @@ func TestBranchSwitchCurrentBranchShowsNotice(t *testing.T) {
 	if m.actionPrompt.Active() {
 		t.Fatal("current branch switch must not open a prompt")
 	}
-	if !strings.Contains(m.notice, "already current") {
-		t.Fatalf("current branch notice = %q", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "already current") {
+		t.Fatalf("current branch notice = %q", m.statusLeftSegment())
 	}
 	if view := m.View().Content; !strings.Contains(view, "already current") {
 		t.Fatalf("current branch notice should render in the view:\n%s", view)
@@ -4016,8 +4028,8 @@ func TestRedrawBuiltinClearsScreen(t *testing.T) {
 	if got, want := fmt.Sprintf("%T", msg), fmt.Sprintf("%T", tea.ClearScreen()); got != want {
 		t.Fatalf("redraw command returned %T, want %T", msg, tea.ClearScreen())
 	}
-	if next.notice != "" {
-		t.Fatalf("redraw should not set a notice, got %q", next.notice)
+	if next.statusLeftSegment() != "" {
+		t.Fatalf("redraw should not set a notice, got %q", next.statusLeftSegment())
 	}
 }
 
@@ -4465,8 +4477,8 @@ func TestInvalidActionOnIssueShowsNotice(t *testing.T) {
 	if m.actionPrompt.Active() {
 		t.Fatal("merge on an issue must not open a prompt")
 	}
-	if !strings.Contains(m.notice, "pull requests") {
-		t.Fatalf("invalid action notice = %q, want pull requests message", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "pull requests") {
+		t.Fatalf("invalid action notice = %q, want pull requests message", m.statusLeftSegment())
 	}
 	if view := m.View().Content; !strings.Contains(view, "pull requests") {
 		t.Fatalf("invalid action notice should render in the view:\n%s", view)
@@ -4489,8 +4501,8 @@ func TestNilActionDispatcherShowsNoticeOnSubmit(t *testing.T) {
 	if m.actionPrompt.Active() {
 		t.Fatal("submitted prompt should close")
 	}
-	if !strings.Contains(m.notice, "Action not wired yet") {
-		t.Fatalf("nil dispatcher notice = %q, want action-not-wired message", m.notice)
+	if !strings.Contains(m.statusLeftSegment(), "Action not wired yet") {
+		t.Fatalf("nil dispatcher notice = %q, want action-not-wired message", m.statusLeftSegment())
 	}
 	if view := m.View().Content; !strings.Contains(view, "Action not wired yet") {
 		t.Fatalf("nil dispatcher notice should render in the view:\n%s", view)
@@ -4531,6 +4543,53 @@ func TestSuccessfulActionRefreshesRowsAndClearsPreviewCache(t *testing.T) {
 	view := m.View().Content
 	if strings.Contains(view, "staledetailtoken") || !strings.Contains(view, "Loading") {
 		t.Fatalf("successful action should replace stale preview with loading state:\n%s", view)
+	}
+}
+
+// TestSuccessToastExpiresAfterTickThroughUpdate covers Task 8 Step 4's
+// explicit ask: a Set() call whose expiry tea.Cmd is dropped never expires.
+// This drives the real cmd actions.ResultMsg's handler returns all the way
+// through Update (not a synthetic ExpireMsg constructed by the test), so a
+// regression that drops the cmd on this path — the easiest one to get
+// wrong, since the case also conditionally batches a refetch — would show
+// up here as a toast that never clears. WithExpiry keeps the real timer
+// short so the test doesn't block ~4 real seconds (see its doc comment).
+func TestSuccessToastExpiresAfterTickThroughUpdate(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 42, Title: "Action row", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+	m.actionFeedback = m.actionFeedback.WithExpiry(time.Millisecond)
+
+	// SectionID 999 doesn't match the current section (0), so the handler
+	// takes its "no matching section" branch and returns just the toast's
+	// own cmd — no fetch to drain alongside it.
+	next, cmd := m.Update(actions.ResultMsg{
+		Intent: actions.Intent{Kind: actions.KindClose, Target: actions.Target{
+			SectionID: 999, SectionType: pullsection.SectionType, RowKind: actions.RowKindPullRequest,
+			Repo: "gbarany/tea-dash", Number: 42,
+		}},
+		Status:  actions.ResultSucceeded,
+		Message: "Closed gbarany/tea-dash#42.",
+	})
+	m = next.(Model)
+	if !strings.Contains(m.statusLeftSegment(), "Closed gbarany/tea-dash#42.") {
+		t.Fatalf("toast = %q, want the success message", m.statusLeftSegment())
+	}
+	if cmd == nil {
+		t.Fatal("a Success Set() should return a non-nil expiry cmd")
+	}
+
+	msg := cmd()
+	if _, ok := msg.(actionfeedback.ExpireMsg); !ok {
+		t.Fatalf("cmd produced %T, want actionfeedback.ExpireMsg", msg)
+	}
+	next2, _ := m.Update(msg)
+	m = next2.(Model)
+	if got := m.statusLeftSegment(); got != "" {
+		t.Fatalf("success toast should be empty once its expiry tick flows through Update, got %q", got)
 	}
 }
 

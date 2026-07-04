@@ -2,6 +2,7 @@ package ui
 
 import (
 	stdctx "context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/data"
 	"github.com/gbarany/tea-dash/internal/gitea"
 	"github.com/gbarany/tea-dash/internal/mockgitea"
+	"github.com/gbarany/tea-dash/internal/ui/actions"
 	"github.com/gbarany/tea-dash/internal/ui/context"
 )
 
@@ -60,6 +62,50 @@ func drain(t *testing.T, m tea.Model, cmd tea.Cmd, depth int) tea.Model {
 // Cmd executions, and an in-process mock server makes every round trip fast
 // regardless.
 const drainDepth = 30
+
+// drainUntilResult is drain's sibling for TestE2EMergeRoundTrip's Task 8
+// assertion: it settles a real dispatch chain exactly like drain, but stops
+// as soon as it sees the actions.ResultMsg the dispatched action's Cmd
+// eventually produces, returning the model right after Update's
+// actions.ResultMsg case has run (so its Task 8 toast — set in that same
+// case — is on the model) plus whatever Cmd that case returned, unexecuted.
+// Plain drain can't be used for this: it would keep going and execute that
+// Cmd's own sub-commands too, including the toast's tea.Tick-driven expiry
+// — racing straight past the "toast is showing" state this test wants to
+// observe, to its already-expired end state, in one recursive sweep with no
+// externally observable checkpoint in between.
+//
+// found is false if cmd's chain ran to completion (or hit depth) without
+// ever producing an actions.ResultMsg — the caller should treat that as a
+// test failure, not silently proceed.
+func drainUntilResult(t *testing.T, m tea.Model, cmd tea.Cmd, depth int) (next tea.Model, resultCmd tea.Cmd, found bool) {
+	t.Helper()
+	if cmd == nil || depth <= 0 {
+		return m, nil, false
+	}
+	msg := cmd()
+	switch v := msg.(type) {
+	case nil:
+		return m, nil, false
+	case tea.BatchMsg:
+		for _, sub := range v {
+			var ok bool
+			m, resultCmd, ok = drainUntilResult(t, m, sub, depth-1)
+			if ok {
+				return m, resultCmd, true
+			}
+		}
+		return m, nil, false
+	case spinner.TickMsg:
+		return m, nil, false
+	case actions.ResultMsg:
+		next, resultCmd = m.Update(v)
+		return next, resultCmd, true
+	default:
+		next, nextCmd := m.Update(v)
+		return drainUntilResult(t, next, nextCmd, depth-1)
+	}
+}
 
 // newE2EModel builds a real root Model wired to a real gitea.Client talking
 // to an in-process mock Gitea server seeded with the teahouse demo dataset —
@@ -325,22 +371,53 @@ func TestE2EMergeRoundTrip(t *testing.T) {
 	m = next.(Model)
 	m = drain(t, m, cmd, drainDepth).(Model)
 	if !m.actionPrompt.Active() {
-		t.Fatalf("merge picker did not open; notice=%q", m.notice)
+		t.Fatalf("merge picker did not open; notice=%q", m.statusLeftSegment())
 	}
+
+	// Keep the success toast's own auto-expiry tick fast (see
+	// actionfeedback.WithExpiry's doc comment) — this test fires it for
+	// real below and shouldn't block ~4 real seconds to do so.
+	m.actionFeedback = m.actionFeedback.WithExpiry(time.Millisecond)
 
 	// The picker opens with option 0 selected (Focus resets the cursor), and
 	// mergePromptOptions always lists the plain style first — "Merge" here,
 	// since kettle (every gabor-authored open PR lives there) allows every
-	// merge style. Enter submits it with no navigation needed, dispatches
-	// the real merge, and — per the actions.ResultMsg handler — triggers a
-	// real refetch of the current section; drain settles all of it.
+	// merge style. Enter submits it with no navigation needed and dispatches
+	// the real merge. drainUntilResult (not plain drain — see its doc
+	// comment) settles everything up through Update's actions.ResultMsg
+	// case, which is where the Task 8 success toast is Set — stopping there
+	// instead of also draining that case's own returned Cmd (a refetch of
+	// the current section batched with the toast's expiry tick) lets this
+	// test observe the toast before it expires.
 	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(Model)
-	m = drain(t, m, cmd, drainDepth).(Model)
+	nextModel, resultCmd, foundResult := drainUntilResult(t, m, cmd, drainDepth)
+	if !foundResult {
+		t.Fatal("merge dispatch never produced an actions.ResultMsg")
+	}
+	m = nextModel.(Model)
 
 	merged := store.Pull(target.Repo, target.Number)
 	if merged == nil || !merged.Merged {
 		t.Fatalf("pull %s#%d not merged in store: %+v", target.Repo, target.Number, merged)
+	}
+
+	// Task 8: the merge's success toast is on the model right after
+	// Update's actions.ResultMsg case ran — before its own refetch/expiry
+	// Cmd (still held in resultCmd, not yet drained) gets a chance to run.
+	wantToast := fmt.Sprintf("Merged %s#%d.", target.Repo, target.Number)
+	if got := m.statusLeftSegment(); !strings.Contains(got, wantToast) {
+		t.Fatalf("status bar left segment = %q, want it to contain the success toast %q", got, wantToast)
+	}
+	if got := m.View().Content; !strings.Contains(got, wantToast) {
+		t.Fatalf("rendered status bar missing the success toast %q:\n%s", wantToast, got)
+	}
+
+	// Now settle the rest (the refetch, dropping the merged PR out of "My
+	// Pull Requests", plus the toast's own now-fast expiry tick).
+	m = drain(t, m, resultCmd, drainDepth).(Model)
+	if got := m.statusLeftSegment(); got != "" {
+		t.Fatalf("success toast should be empty once its expiry tick has drained, got %q", got)
 	}
 
 	view := m.View().Content

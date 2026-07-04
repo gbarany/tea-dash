@@ -33,6 +33,7 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/components/statusbar"
 	"github.com/gbarany/tea-dash/internal/ui/components/tabs"
 	"github.com/gbarany/tea-dash/internal/ui/context"
+	"github.com/gbarany/tea-dash/internal/ui/icons"
 	"github.com/gbarany/tea-dash/internal/ui/layout"
 )
 
@@ -51,7 +52,6 @@ type Model struct {
 	notifications []section.Section
 	actions       []section.Section
 	branches      []section.Section
-	notice        string // transient status message (e.g. browser-open failure)
 
 	// layout is every rectangle of the framed shell, recomputed by
 	// syncMainContentDimensions on every resize/toggle that can change it.
@@ -470,26 +470,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case openFailedMsg:
-		m.notice = fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url)
-		return m, nil
+		return m, m.setError(fmt.Sprintf("Couldn't open browser: %v — copy: %s", msg.err, msg.url))
 
 	case copyResultMsg:
 		if msg.err != nil {
-			m.notice = fmt.Sprintf("Couldn't copy: %v", msg.err)
-		} else {
-			m.notice = fmt.Sprintf("Copied %s.", msg.value)
+			return m, m.setError(fmt.Sprintf("Couldn't copy: %v", msg.err))
 		}
-		return m, nil
+		return m, m.setSuccess(fmt.Sprintf("Copied %s.", msg.value))
 
 	case reviewersLoadedMsg:
-		return m.handleReviewersLoaded(msg), nil
+		return m.handleReviewersLoaded(msg)
 
 	case mergeCapabilitiesLoadedMsg:
-		return m.handleMergeCapabilitiesLoaded(msg), nil
+		return m.handleMergeCapabilitiesLoaded(msg)
 
 	case actions.ResultMsg:
-		m.notice = ""
-		m.actionFeedback = m.actionFeedback.Set(feedbackFromActionResult(msg))
+		var feedbackCmd tea.Cmd
+		m.actionFeedback, feedbackCmd = m.actionFeedback.Set(feedbackFromActionResult(msg))
 		if msg.Status == actions.ResultSucceeded {
 			m.clearPreviewCacheForAction(msg.Intent.Target)
 			if s := m.getCurrSection(); s != nil &&
@@ -498,10 +495,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.ctx.PreviewOpen {
 					m.syncSidebar()
 				}
-				return m, tea.Batch(s.FetchRows(), m.enrichCurrRow())
+				return m, tea.Batch(feedbackCmd, s.FetchRows(), m.enrichCurrRow())
 			}
 		}
-		return m, nil
+		return m, feedbackCmd
 
 	case enrichedMsg:
 		// Cache the fetched detail (keyed by the row it was requested for) and
@@ -534,10 +531,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case watchChecksMsg:
 		if msg.err != nil {
-			m.notice = fmt.Sprintf("Couldn't load PR checks: %v", msg.err)
-			return m, nil
+			return m, m.setError(fmt.Sprintf("Couldn't load PR checks: %v", msg.err))
 		}
 		return m.switchToPullChecks(msg.row, msg.detail.HeadRef, msg.detail.HeadSHA)
+
+	case actionfeedback.ExpireMsg:
+		// Delivered by the tea.Cmd a Success/Info/Cancel Set() returned;
+		// Expire ignores it if a newer Set has since superseded that
+		// generation (see actionfeedback.Model.Expire's doc comment).
+		m.actionFeedback = m.actionFeedback.Expire(msg.Gen)
+		return m, nil
 
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
@@ -558,7 +561,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case tea.KeyPressMsg:
-		m.notice = "" // any key dismisses a transient notice
+		// Any key dismisses an Error toast (spec §6); Success/Info/Cancel
+		// dismiss themselves via their own expiry tick instead — see
+		// actionfeedback.Model.DismissError's doc comment.
+		m.actionFeedback = m.actionFeedback.DismissError()
 		if b, ok := m.matchCustomKeybinding(msg); ok {
 			return m, m.startCustomCommand(b)
 		}
@@ -1015,14 +1021,18 @@ func (m Model) statusHints() string {
 	return strings.Join(hints, " · ")
 }
 
+// statusLeftSegment renders the toast (Task 8's actionfeedback, which
+// merged in the old separate `notice` field) pre-styled — statusbar.View
+// renders it as-is rather than re-wrapping it in the status bar's base
+// style, so its StatusToast*+icon coloring survives. icons.Unicode is
+// hardcoded pending Task 9, which threads the configured theme.icons set
+// through ProgramContext; every other icon call site in the codebase is
+// equally unwired until then.
 func (m Model) statusLeftSegment() string {
-	if m.notice != "" {
-		return m.notice
+	if m.actionFeedback.Empty() {
+		return ""
 	}
-	if !m.actionFeedback.Empty() {
-		return m.actionFeedback.View(60)
-	}
-	return ""
+	return m.actionFeedback.View(60, m.ctx.Styles, icons.Unicode)
 }
 
 // tooSmallNotice centers a "terminal too small" message in the full
@@ -1567,8 +1577,7 @@ func (m *Model) clearPreviewCacheForAction(target actions.Target) {
 func (m Model) watchSelectedPullChecks() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.PullRequest)
 	if !ok {
-		m.notice = "Select a pull request to watch checks."
-		return m, nil
+		return m, m.setInfo("Select a pull request to watch checks.")
 	}
 	branch, sha := pullCheckHead(row, m.pullDetails[m.selKey()])
 	if branch != "" || sha != "" {
@@ -1579,8 +1588,7 @@ func (m Model) watchSelectedPullChecks() (Model, tea.Cmd) {
 	}
 	owner, repo, ok := data.SplitOwnerRepo(row.RepoNameWithOwner)
 	if !ok {
-		m.notice = fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner)
-		return m, nil
+		return m, m.setError(fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner))
 	}
 	return m, func() tea.Msg {
 		detail, err := m.ctx.Client.GetPullDetail(owner, repo, row.Number)
@@ -1604,8 +1612,7 @@ func pullCheckHead(row data.PullRequest, detail *data.PullDetail) (branch, sha s
 
 func (m Model) switchToPullChecks(row data.PullRequest, branch, sha string) (Model, tea.Cmd) {
 	if _, _, ok := data.SplitOwnerRepo(row.RepoNameWithOwner); !ok {
-		m.notice = fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner)
-		return m, nil
+		return m, m.setError(fmt.Sprintf("Can't watch checks for invalid repo %q.", row.RepoNameWithOwner))
 	}
 	m.ctx.View = context.ActionsView
 	m.currSectionId = 0
@@ -1623,18 +1630,19 @@ func (m Model) switchToPullChecks(row data.PullRequest, branch, sha string) (Mod
 	m.setCurrentViewSections([]section.Section{actionsection.NewModel(0, m.ctx, cfg)})
 	m.tabs.SetCurrSectionId(0)
 	m.syncProgramContext()
+	var feedbackCmd tea.Cmd
 	if branch == "" && sha == "" {
-		m.notice = fmt.Sprintf("Showing Actions for %s; PR head was not available to narrow checks.", row.RepoNameWithOwner)
+		feedbackCmd = m.setInfo(fmt.Sprintf("Showing Actions for %s; PR head was not available to narrow checks.", row.RepoNameWithOwner))
 	} else {
-		m.notice = fmt.Sprintf("Watching checks for %s#%d.", row.RepoNameWithOwner, row.Number)
+		feedbackCmd = m.setInfo(fmt.Sprintf("Watching checks for %s#%d.", row.RepoNameWithOwner, row.Number))
 	}
 	if m.ctx.PreviewOpen {
 		m.syncSidebar()
 	}
 	if s := m.getCurrSection(); s != nil {
-		return m, s.FetchRows()
+		return m, tea.Batch(feedbackCmd, s.FetchRows())
 	}
-	return m, nil
+	return m, feedbackCmd
 }
 
 // switchView cycles pulls -> issues -> notifications -> actions -> branches, lazily
@@ -2015,14 +2023,14 @@ func (m *Model) refreshAllSections() tea.Cmd {
 
 func (m Model) toggleSmartFiltering() (Model, tea.Cmd) {
 	if m.ctx.CurrentRepo == "" {
-		m.notice = "No matching git remote detected for this Gitea instance."
-		return m, nil
+		return m, m.setInfo("No matching git remote detected for this Gitea instance.")
 	}
 	m.ctx.SmartFiltering = !m.ctx.SmartFiltering
+	var feedbackCmd tea.Cmd
 	if m.ctx.SmartFiltering {
-		m.notice = fmt.Sprintf("Showing current repository: %s.", m.ctx.CurrentRepo)
+		feedbackCmd = m.setInfo(fmt.Sprintf("Showing current repository: %s.", m.ctx.CurrentRepo))
 	} else {
-		m.notice = "Showing all repositories."
+		feedbackCmd = m.setInfo("Showing all repositories.")
 	}
 	m.pullDetails = map[string]*data.PullDetail{}
 	m.pullEnrichErr = map[string]error{}
@@ -2039,10 +2047,10 @@ func (m Model) toggleSmartFiltering() (Model, tea.Cmd) {
 		if m.ctx.PreviewOpen {
 			m.syncSidebar()
 		}
-		return m, m.refreshAllSections()
+		return m, tea.Batch(feedbackCmd, m.refreshAllSections())
 	default:
 		m.syncProgramContext()
-		return m, nil
+		return m, feedbackCmd
 	}
 }
 
@@ -2064,33 +2072,27 @@ func (m Model) handleAutoRefresh() (Model, tea.Cmd) {
 func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 	target, ok := m.selectedActionTarget()
 	if !ok {
-		m.notice = "Select a row before running an action."
-		return nil
+		return m.setInfo("Select a row before running an action.")
 	}
 	if err := validateActionTarget(kind, target); err != nil {
-		m.notice = err.Error()
-		return nil
+		return m.setError(err.Error())
 	}
 	if kind == actions.KindSwitchBranch {
 		branch, ok := m.getCurrRowData().(localgit.Branch)
 		if !ok || target.RowKind != actions.RowKindBranch {
-			m.notice = "Switch branch is only available for local branches."
-			return nil
+			return m.setInfo("Switch branch is only available for local branches.")
 		}
 		if branch.Current {
-			m.notice = fmt.Sprintf("%s is already current in %s.", branch.Name, branch.Repository)
-			return nil
+			return m.setInfo(fmt.Sprintf("%s is already current in %s.", branch.Name, branch.Repository))
 		}
 	}
 	if kind == actions.KindDeleteBranch {
 		branch, ok := m.getCurrRowData().(localgit.Branch)
 		if !ok || target.RowKind != actions.RowKindBranch {
-			m.notice = "Delete branch is only available for local branches."
-			return nil
+			return m.setInfo("Delete branch is only available for local branches.")
 		}
 		if branch.Current {
-			m.notice = fmt.Sprintf("%s is current in %s; switch away before deleting it.", branch.Name, branch.Repository)
-			return nil
+			return m.setInfo(fmt.Sprintf("%s is current in %s; switch away before deleting it.", branch.Name, branch.Repository))
 		}
 	}
 	intent := actions.Intent{
@@ -2103,12 +2105,10 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 	}
 	m.pendingAction = intent
 	if reviewerPickerAction(kind) && m.ctx.Client != nil {
-		m.notice = "Loading reviewers..."
-		return loadReviewersCmd(m.ctx.Client, intent)
+		return tea.Batch(m.setStart("Loading reviewers..."), loadReviewersCmd(m.ctx.Client, intent))
 	}
 	if kind == actions.KindMerge && m.ctx.Client != nil {
-		m.notice = "Loading merge options..."
-		return loadMergeCapabilitiesCmd(m.ctx.Client, intent)
+		return tea.Batch(m.setStart("Loading merge options..."), loadMergeCapabilitiesCmd(m.ctx.Client, intent))
 	}
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(kind, target))
 	return nil
@@ -2117,8 +2117,7 @@ func (m *Model) startAction(kind actions.Kind) tea.Cmd {
 func (m *Model) startCustomCommand(binding config.Keybinding) tea.Cmd {
 	target, ok := m.selectedActionTarget()
 	if !ok {
-		m.notice = "Select a row before running a custom command."
-		return nil
+		return m.setInfo("Select a row before running a custom command.")
 	}
 	intent := actions.Intent{
 		Kind:    actions.KindCustomCommand,
@@ -2335,8 +2334,7 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 	case "logs", "viewlogs":
 		return m, m.startAction(actions.KindViewLogs), true
 	default:
-		m.notice = fmt.Sprintf("Unknown builtin keybinding %q.", binding.Builtin)
-		return m, nil, true
+		return m, m.setError(fmt.Sprintf("Unknown builtin keybinding %q.", binding.Builtin)), true
 	}
 }
 
@@ -2360,8 +2358,9 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	}
 	if result.Canceled {
 		m.pendingAction = actions.Intent{}
-		m.actionFeedback = m.actionFeedback.Set(actionfeedback.Cancel("Action cancelled."))
-		return cmd
+		var feedbackCmd tea.Cmd
+		m.actionFeedback, feedbackCmd = m.actionFeedback.Set(actionfeedback.Cancel("Action cancelled."))
+		return tea.Batch(cmd, feedbackCmd)
 	}
 	if !result.Submitted {
 		return cmd
@@ -2395,8 +2394,7 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	}
 	m.pendingAction = actions.Intent{}
 	if m.actionDispatcher == nil {
-		m.notice = "Action not wired yet."
-		return cmd
+		return tea.Batch(cmd, m.setError("Action not wired yet."))
 	}
 	dispatchCmd := m.dispatchActionIntent(intent)
 	if cmd == nil {
@@ -2408,53 +2406,58 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmd, dispatchCmd)
 }
 
-func (m *Model) handleReviewersLoaded(msg reviewersLoadedMsg) Model {
+func (m *Model) handleReviewersLoaded(msg reviewersLoadedMsg) (Model, tea.Cmd) {
 	if !reviewerPickerAction(msg.intent.Kind) {
-		return *m
+		return *m, nil
 	}
 	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
-		return *m
+		return *m, nil
 	}
 	m.pendingAction = msg.intent
 	if msg.err != nil {
-		m.notice = fmt.Sprintf("Couldn't load reviewers: %v. Enter usernames manually.", msg.err)
+		cmd := m.setError(fmt.Sprintf("Couldn't load reviewers: %v. Enter usernames manually.", msg.err))
 		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
-		return *m
+		return *m, cmd
 	}
 	if len(msg.reviewers) == 0 {
-		m.notice = "No requestable reviewers found. Enter usernames manually."
+		cmd := m.setInfo("No requestable reviewers found. Enter usernames manually.")
 		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
-		return *m
+		return *m, cmd
 	}
 	cfg := reviewerPickerPromptConfig(msg.intent.Kind, msg.intent.Target, msg.reviewers)
 	if len(cfg.Options) == 0 {
-		m.notice = "No requestable reviewers found. Enter usernames manually."
+		cmd := m.setInfo("No requestable reviewers found. Enter usernames manually.")
 		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
-		return *m
+		return *m, cmd
 	}
-	m.notice = ""
+	// The "Loading reviewers…" in-flight toast (started in startAction) is
+	// superseded by the picker opening, not by a new toast — Clear, not Set.
+	m.clearFeedback()
 	m.pendingAction.Prompt.Mode = actions.PromptMultiPicker
 	m.actionPrompt = m.actionPrompt.Focus(cfg)
-	return *m
+	return *m, nil
 }
 
-func (m *Model) handleMergeCapabilitiesLoaded(msg mergeCapabilitiesLoadedMsg) Model {
+func (m *Model) handleMergeCapabilitiesLoaded(msg mergeCapabilitiesLoadedMsg) (Model, tea.Cmd) {
 	if msg.intent.Kind != actions.KindMerge {
-		return *m
+		return *m, nil
 	}
 	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
-		return *m
+		return *m, nil
 	}
 	m.pendingAction = msg.intent
 	caps := msg.capabilities
+	var cmd tea.Cmd
 	if msg.err != nil {
-		m.notice = fmt.Sprintf("Couldn't load merge settings: %v. Showing default merge options.", msg.err)
+		cmd = m.setError(fmt.Sprintf("Couldn't load merge settings: %v. Showing default merge options.", msg.err))
 		caps = data.DefaultMergeCapabilities()
 	} else {
-		m.notice = ""
+		// The "Loading merge options…" in-flight toast is superseded by the
+		// picker opening, not by a new toast — Clear, not Set.
+		m.clearFeedback()
 	}
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForActionWithMergeCapabilities(msg.intent.Kind, msg.intent.Target, caps))
-	return *m
+	return *m, cmd
 }
 
 func reviewerPickerAction(kind actions.Kind) bool {
@@ -2809,11 +2812,10 @@ func (m Model) quitOrConfirm() (Model, tea.Cmd) {
 
 func (m *Model) dispatchActionIntent(intent actions.Intent) tea.Cmd {
 	if m.actionDispatcher == nil {
-		m.notice = "Action not wired yet."
-		return nil
+		return m.setError("Action not wired yet.")
 	}
-	m.actionFeedback = m.actionFeedback.Set(actionfeedback.Start(actionStartText(intent)))
-	return m.actionDispatcher(intent)
+	startCmd := m.setStart(actionStartText(intent))
+	return tea.Batch(startCmd, m.actionDispatcher(intent))
 }
 
 func (m Model) selectedActionTarget() (actions.Target, bool) {
@@ -3150,6 +3152,56 @@ func actionStartText(intent actions.Intent) string {
 	return fmt.Sprintf("Starting %s for %s#%d.", actionLabel(intent.Kind), intent.Target.Repo, intent.Target.Number)
 }
 
+// setInfo/setError/setSuccess/setStart are the only way app.go should ever
+// touch m.actionFeedback for a plain status message (feedbackFromActionResult
+// is the other path, for actions.ResultMsg specifically) — they exist so no
+// call site can forget to propagate the tea.Cmd Set returns for
+// auto-expiring kinds (Task 8: a dropped cmd means a toast that never
+// expires). Pointer receiver so they can be called as `m.setInfo(...)` from
+// both *Model and (addressable) Model-valued call sites alike; every one
+// returns the tea.Cmd the caller MUST return or tea.Batch into whatever it
+// already returns.
+//
+// notice->toast Kind mapping (this sweep replaced the old `notice` string
+// field entirely): validation/guidance ("select a row first", "X is only
+// available for Y") and state-description ("showing current repository")
+// messages are Info; genuine failures (an error value, "couldn't ...",
+// "no client available", "invalid repo") are Error; a completed
+// notification action (mark/pin/unpin) is Success; a long-running step
+// before a prompt opens ("loading reviewers…") is Start. See the Task 8
+// report for the handful of genuinely ambiguous calls.
+func (m *Model) setInfo(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Info(text))
+	return cmd
+}
+
+func (m *Model) setError(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Error(text))
+	return cmd
+}
+
+func (m *Model) setSuccess(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Success(text))
+	return cmd
+}
+
+func (m *Model) setStart(text string) tea.Cmd {
+	var cmd tea.Cmd
+	m.actionFeedback, cmd = m.actionFeedback.Set(actionfeedback.Start(text))
+	return cmd
+}
+
+// clearFeedback silently drops the current toast (no generation bump — see
+// actionfeedback.Model.Clear) — used where a preceding "loading…"/Start
+// toast is being superseded by a state change that isn't itself a new
+// toast (e.g. a picker opening), not a real dismissal.
+func (m *Model) clearFeedback() {
+	m.actionFeedback = m.actionFeedback.Clear()
+}
+
 func feedbackFromActionResult(msg actions.ResultMsg) actionfeedback.Message {
 	text := msg.Message
 	if text == "" && msg.Err != nil {
@@ -3173,16 +3225,13 @@ func feedbackFromActionResult(msg actions.ResultMsg) actionfeedback.Message {
 func (m Model) markSelectedNotificationRead() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to mark read."
-		return m, nil
+		return m, m.setInfo("Select a notification to mark read.")
 	}
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to mark notifications read."
-		return m, nil
+		return m, m.setError("No Gitea client available to mark notifications read.")
 	}
 	return m, markNotificationReadCmd(m.ctx.Client, m.currSectionId, row.ID)
 }
@@ -3190,16 +3239,13 @@ func (m Model) markSelectedNotificationRead() (Model, tea.Cmd) {
 func (m Model) markSelectedNotificationUnread() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to mark unread."
-		return m, nil
+		return m, m.setInfo("Select a notification to mark unread.")
 	}
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to mark notifications unread."
-		return m, nil
+		return m, m.setError("No Gitea client available to mark notifications unread.")
 	}
 	return m, markNotificationUnreadCmd(m.ctx.Client, m.currSectionId, row.ID)
 }
@@ -3207,8 +3253,7 @@ func (m Model) markSelectedNotificationUnread() (Model, tea.Cmd) {
 func (m Model) toggleSelectedNotificationPin() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to pin."
-		return m, nil
+		return m, m.setInfo("Select a notification to pin.")
 	}
 	if row.Pinned {
 		return m.unpinNotification(row)
@@ -3219,44 +3264,37 @@ func (m Model) toggleSelectedNotificationPin() (Model, tea.Cmd) {
 func (m Model) unpinSelectedNotification() (Model, tea.Cmd) {
 	row, ok := m.getCurrRowData().(data.Notification)
 	if !ok {
-		m.notice = "Select a notification to unpin."
-		return m, nil
+		return m, m.setInfo("Select a notification to unpin.")
 	}
 	return m.unpinNotification(row)
 }
 
 func (m Model) pinNotification(row data.Notification) (Model, tea.Cmd) {
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to pin notifications."
-		return m, nil
+		return m, m.setError("No Gitea client available to pin notifications.")
 	}
 	return m, markNotificationPinnedCmd(m.ctx.Client, m.currSectionId, row.ID)
 }
 
 func (m Model) unpinNotification(row data.Notification) (Model, tea.Cmd) {
 	if row.ID == 0 {
-		m.notice = "Selected notification has no thread id."
-		return m, nil
+		return m, m.setError("Selected notification has no thread id.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to unpin notifications."
-		return m, nil
+		return m, m.setError("No Gitea client available to unpin notifications.")
 	}
 	return m, markNotificationUnpinnedCmd(m.ctx.Client, m.currSectionId, row.ID, row.Unread)
 }
 
 func (m Model) markAllNotificationsRead() (Model, tea.Cmd) {
 	if m.ctx.View != context.NotificationsView {
-		m.notice = "Switch to notifications to mark all read."
-		return m, nil
+		return m, m.setInfo("Switch to notifications to mark all read.")
 	}
 	if m.ctx.Client == nil {
-		m.notice = "No Gitea client available to mark notifications read."
-		return m, nil
+		return m, m.setError("No Gitea client available to mark notifications read.")
 	}
 	return m, markAllNotificationsReadCmd(m.ctx.Client, m.currSectionId)
 }
@@ -3323,34 +3361,38 @@ func markAllNotificationsReadCmd(client *gitea.Client, sectionID int) tea.Cmd {
 
 func (m Model) handleNotificationAction(msg notificationActionMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
-		if msg.all {
-			m.notice = fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err)
-		} else if msg.pinned {
-			m.notice = fmt.Sprintf("Couldn't pin notification: %v", msg.err)
-		} else if msg.unpinned {
-			m.notice = fmt.Sprintf("Couldn't unpin notification: %v", msg.err)
-		} else if msg.unread {
-			m.notice = fmt.Sprintf("Couldn't mark notification unread: %v", msg.err)
-		} else {
-			m.notice = fmt.Sprintf("Couldn't mark notification read: %v", msg.err)
+		var feedbackCmd tea.Cmd
+		switch {
+		case msg.all:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't mark all notifications read: %v", msg.err))
+		case msg.pinned:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't pin notification: %v", msg.err))
+		case msg.unpinned:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't unpin notification: %v", msg.err))
+		case msg.unread:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't mark notification unread: %v", msg.err))
+		default:
+			feedbackCmd = m.setError(fmt.Sprintf("Couldn't mark notification read: %v", msg.err))
 		}
-		return m, nil
+		return m, feedbackCmd
 	}
-	if msg.all {
-		m.notice = "Marked all notifications read."
-	} else if msg.pinned {
-		m.notice = "Pinned notification."
-	} else if msg.unpinned {
-		m.notice = "Unpinned notification."
-	} else if msg.unread {
-		m.notice = "Marked notification unread."
-	} else {
-		m.notice = "Marked notification read."
+	var feedbackCmd tea.Cmd
+	switch {
+	case msg.all:
+		feedbackCmd = m.setSuccess("Marked all notifications read.")
+	case msg.pinned:
+		feedbackCmd = m.setSuccess("Pinned notification.")
+	case msg.unpinned:
+		feedbackCmd = m.setSuccess("Unpinned notification.")
+	case msg.unread:
+		feedbackCmd = m.setSuccess("Marked notification unread.")
+	default:
+		feedbackCmd = m.setSuccess("Marked notification read.")
 	}
 	if msg.sectionID < 0 || msg.sectionID >= len(m.notifications) {
-		return m, nil
+		return m, feedbackCmd
 	}
-	return m, m.notifications[msg.sectionID].FetchRows()
+	return m, tea.Batch(feedbackCmd, m.notifications[msg.sectionID].FetchRows())
 }
 
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) tea.Cmd {

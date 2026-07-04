@@ -4,6 +4,15 @@
 // Like header, it hand-draws the box-art corners/fill and colors them via
 // context.Styles.BorderBlurred (border styles are foreground-only by
 // design — see context/styles.go).
+//
+// left is the odd one out among the three segments: it's the toast (Task
+// 8's actionfeedback component), which renders itself already styled by
+// outcome (StatusToastSuccess/Error/Info + an icon) — View renders it
+// as-is rather than re-wrapping it in styles.StatusBar the way it does for
+// middle/right, so the toast keeps its own color instead of being flattened
+// to the status bar's base dim color. Passing plain unstyled text as left
+// still works (it just renders unstyled), which is all the empty-toast case
+// and this package's own tests need.
 package statusbar
 
 import (
@@ -14,9 +23,12 @@ import (
 	"github.com/gbarany/tea-dash/internal/ui/context"
 )
 
-// View renders the status row into exactly w cells. left, middle, and right
-// are plain (unstyled) text; the assembled content is styled once with
-// styles.StatusBar. Narrow widths drop middle first, then left; right is
+// View renders the status row into exactly w cells. middle and right are
+// plain (unstyled) text, each styled with styles.StatusBar individually;
+// left is rendered as given — the caller pre-styles it (the toast's own
+// StatusToast*+icon rendering) so it isn't flattened to the status bar's
+// base color, but plain unstyled text works too (an empty toast, or a
+// direct test call). Narrow widths drop middle first, then left; right is
 // never dropped (it ends in the help/quit hint) and is only hard-truncated,
 // from the front so its tail survives, as an absolute last resort.
 func View(w int, left, middle, right string, styles context.Styles) string {
@@ -51,13 +63,29 @@ func View(w int, left, middle, right string, styles context.Styles) string {
 		r = truncateHead(r, budget)
 	}
 
-	content := strings.Join(nonEmpty(l, mid, r), " ─ ")
-	styled := styles.StatusBar.Render(content)
+	// l (the toast) renders as given — it's already styled by the caller
+	// (or empty); only mid/right get the status bar's base style, so the
+	// toast's own color survives instead of being overwritten by a single
+	// Render() over the whole joined string.
+	mid = styleIfNonEmpty(mid, styles.StatusBar)
+	r = styleIfNonEmpty(r, styles.StatusBar)
+	sep := styles.StatusBar.Render(" ─ ")
+	content := strings.Join(nonEmpty(l, mid, r), sep)
 	pad := inner - 2 - lipgloss.Width(content)
 	if pad < 0 {
 		pad = 0
 	}
-	return leftCorner + " " + styled + strings.Repeat(" ", pad) + " " + rightCorner
+	return leftCorner + " " + content + strings.Repeat(" ", pad) + " " + rightCorner
+}
+
+// styleIfNonEmpty avoids rendering (and thus emitting SGR codes for) an
+// empty segment — an empty styled string can still carry an implicit
+// width-0-but-non-empty distinction that would confuse nonEmpty's filter.
+func styleIfNonEmpty(s string, style lipgloss.Style) string {
+	if s == "" {
+		return ""
+	}
+	return style.Render(s)
 }
 
 // contentWidth is the cell width of l/mid/r joined with " ─ " separators
