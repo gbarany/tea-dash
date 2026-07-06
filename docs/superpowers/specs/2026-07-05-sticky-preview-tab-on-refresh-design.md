@@ -45,6 +45,23 @@ A single `r` press resets the tab **up to three times**:
 Consequence: a fix that only patches the `r` key handler is insufficient — the async
 completions re-snap the tab. The fix must live at the reset point (`SetTabs`).
 
+### The transient-collapse complication
+
+`clearSelectedPreviewCache()` runs **before** the re-render, and `RenderPullTabs` /
+`RenderIssueTabs` / `RenderActionTabs` return **only** `[{Title: "Overview"}]` when their
+detail is `nil` (`internal/ui/components/prview/prview.go:79`). So during a refresh the tab set
+**transiently collapses to Overview-only**, and the full set (Overview / Checks / Reviews /
+Comments) only returns once the re-fetched detail lands (reset #3).
+
+This rules out the naive "preserve the currently-selected tab's title across `SetTabs`": the
+collapse (resets #1/#2) rewrites the selected title to "Overview", so when the full set returns
+there is nothing left pointing at "Checks". The preserved value must be a **persistent sticky
+intent** that survives the collapse — see Implementation.
+
+We must keep clearing the cache: it is what forces `enrichCurrRow()` to actually re-fetch the
+detail (it early-returns when the detail is already cached), so `r` genuinely refreshes the
+preview's comments/checks. The collapse is therefore inherent to refresh; the fix tolerates it.
+
 The same latent snap exists on `R` (refresh-all), action completions
 (`actions.ResultMsg` → `syncSidebar`), and the optional background auto-refresh — all funnel
 through `SetTabs`, so fixing `SetTabs` cures them together.
@@ -72,16 +89,30 @@ more predictable sticky behavior.
 
 ## Implementation
 
-Single change in `internal/ui/components/sidebar/sidebar.go`:
+All in `internal/ui/components/sidebar/sidebar.go`. Add a persistent `sticky` field holding the
+title of the tab the user last **explicitly** selected. `SetTabs` consults it; only explicit
+tab actions (`NextTab` / `PrevTab` / `SelectTab`, and the `[`/`]` keys, which route through
+those) write to it. Crucially, `SetTabs`'s fallback-to-index-0 does **not** overwrite `sticky`,
+so a transient collapse to Overview-only doesn't erase the intent.
 
 ```go
-// SetTabs replaces the preview tabs, preserving the selected tab by title when
-// the new set still contains it (else selecting the first tab), and scrolls to
-// the top. Empty tabs clear the viewport.
+type Model struct {
+    vp      viewport.Model
+    ctx     *context.ProgramContext
+    tabs    []Tab
+    tab     int
+    sticky  string // title of the last explicitly-selected tab; preserved across
+                   // SetTabs re-renders even when transiently absent from the set
+    content string
+}
+
+// SetTabs replaces the preview tabs, re-selecting the sticky tab by title when the
+// new set contains it (else the first tab), and scrolls to the top. It never
+// changes the sticky intent, so a tab that is transiently absent (e.g. while a
+// refresh reloads detail) is restored once it reappears. Empty tabs clear the viewport.
 func (m *Model) SetTabs(tabs []Tab) {
-    prevTitle := m.CurrentTabTitle() // "" when there were no tabs
     m.tabs = compactTabs(tabs)
-    m.tab = indexOfTitle(m.tabs, prevTitle) // 0 when not found or prevTitle == ""
+    m.tab = indexOfTitle(m.tabs, m.sticky) // 0 when not found or sticky == ""
     m.resize()
     m.syncViewport()
     m.vp.GotoTop()
@@ -102,11 +133,37 @@ func indexOfTitle(tabs []Tab, title string) int {
 }
 ```
 
+`NextTab` / `PrevTab` record the new selection as sticky (after moving `m.tab`):
+
+```go
+m.sticky = m.tabs[m.tab].Title
+```
+
+`SelectTab` records sticky for any in-range index — even the redundant "already on it" case —
+so a click during the refresh flash is honored, while keeping the existing no-op scroll guard:
+
+```go
+func (m *Model) SelectTab(i int) {
+    if i < 0 || i >= len(m.tabs) {
+        return
+    }
+    m.sticky = m.tabs[i].Title
+    if i == m.tab {
+        return // already showing: don't reset scroll
+    }
+    m.tab = i
+    m.syncViewport()
+    m.vp.GotoTop()
+}
+```
+
 - Title matching runs against the **compacted** tab set (`compactTabs` may drop empty tabs),
   so the restored index is always valid.
-- No caller changes. No new `Model` state.
-- `SetContent()` (single "Overview" tab) is unaffected in practice: a previous non-Overview
-  title won't be found, so it collapses to 0 — the only tab present.
+- No caller changes outside `sidebar.go`. The one added field is package-internal.
+- `SetContent()` (single "Overview" tab) is unaffected in practice: a non-Overview `sticky`
+  title won't be found, so it collapses to 0 — the only tab present — but `sticky` is retained.
+- Default `sticky == ""` reproduces today's behavior for users who never switch tabs (always
+  Overview).
 
 ### Scroll behavior — unchanged (`GotoTop()` kept)
 
@@ -120,10 +177,14 @@ tracking item identity — extra state for a marginal gain, out of scope.
 ## Testing
 
 **Unit — `internal/ui/components/sidebar/sidebar_test.go`:**
-- `SetTabs([Overview, Comments, Checks])` → `NextTab()` (→ Comments) → `SetTabs(...)` again
-  with the same titles ⇒ `CurrentTabTitle() == "Comments"` (pre-fix: "Overview").
-- Re-`SetTabs` with a set lacking "Comments" ⇒ falls back to `"Overview"`.
-- First-ever `SetTabs` (no prior tab) ⇒ index 0.
+- Preserve-by-title: `SetTabs([Overview, Checks])` → `NextTab()` (→ Checks) → `SetTabs(...)`
+  again with the same titles ⇒ `CurrentTabTitle() == "Checks"` (pre-fix: "Overview").
+- Transient collapse & restore (the refresh shape): `SetTabs([Overview, Checks])` →
+  `NextTab()` (→ Checks) → `SetTabs([Overview])` ⇒ shows `"Overview"` (only tab present) →
+  `SetTabs([Overview, Checks])` again ⇒ back on `"Checks"`. This is the case the naive
+  approach fails.
+- First-ever `SetTabs` with no explicit selection (`sticky == ""`) ⇒ index 0 (Overview),
+  and re-render keeps Overview.
 
 **Regression — `internal/ui/app_test.go`:**
 - Reproduce the real bug end-to-end: preview open on a pull with detail loaded (so the
