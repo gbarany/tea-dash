@@ -21,11 +21,14 @@ type Model struct {
 	ctx  *context.ProgramContext
 	tabs []Tab
 	tab  int
-	// sticky is the title of the tab the user last explicitly selected. SetTabs
-	// re-selects it whenever the new tab set contains it, so re-renders (refresh,
-	// enrich, resize) keep the user's tab. It is written only by explicit tab
-	// changes — never by SetTabs's fall-back — so a tab that is transiently absent
-	// (while a refresh reloads detail) is restored once it reappears.
+	// sticky is the title of the tab the user last explicitly selected (via
+	// NextTab/PrevTab/SelectTab). SetTabs re-selects it whenever the new tab set
+	// contains it, so the selection persists across every preview re-render that
+	// funnels through SetTabs: a refresh or enrich of the same row, and navigation
+	// to a different row, section, or view (each rebuilds the tabs). It is written
+	// only by those explicit tab changes — never by SetTabs's fall-back to the
+	// first tab — so a tab that is transiently absent (e.g. while a refresh reloads
+	// detail, or on a row that lacks it) is re-selected once it reappears.
 	sticky  string
 	content string
 }

@@ -379,3 +379,52 @@ func TestSetTabsDefaultsToFirstWithoutExplicitSelection(t *testing.T) {
 		t.Fatalf("no explicit selection should stay on Overview, got %q", got)
 	}
 }
+
+// TestSelectTabRecordsSticky guards the sticky write in SelectTab — the click
+// path, which the NextTab-based preservation tests never exercise. Part A checks
+// a tab reached via SelectTab survives a transient collapse; Part B checks
+// SelectTab records intent even when the clicked tab is already the current one
+// (the refresh-flash case), which is exactly the line-ordering this change adds.
+func TestSelectTabRecordsSticky(t *testing.T) {
+	ctx := &context.ProgramContext{
+		Styles:        context.DefaultStyles(),
+		PreviewOpen:   true,
+		PreviewWidth:  40,
+		PreviewHeight: 8,
+	}
+
+	// A: a SelectTab-selected tab is restored after a transient collapse.
+	m := New(ctx)
+	full := []Tab{
+		{Title: "Overview", Content: "o"},
+		{Title: "Checks", Content: "c"},
+		{Title: "Reviews", Content: "r"},
+	}
+	m.SetTabs(full)
+	m.SelectTab(2) // Reviews, via the click path
+	if got := m.CurrentTabTitle(); got != "Reviews" {
+		t.Fatalf("setup: SelectTab(2) should show Reviews, got %q", got)
+	}
+	m.SetTabs([]Tab{{Title: "Overview", Content: "o"}}) // collapse to Overview-only
+	m.SetTabs(full)                                     // full set returns
+	if got := m.CurrentTabTitle(); got != "Reviews" {
+		t.Fatalf("SelectTab-recorded sticky should restore after collapse, got %q, want Reviews", got)
+	}
+
+	// B: SelectTab records intent even when i == current tab. Selecting the
+	// already-shown Overview must record "Overview" so a later reordered set
+	// re-selects it by title (not fall back to whatever lands at index 0).
+	m2 := New(ctx)
+	m2.SetTabs([]Tab{
+		{Title: "Overview", Content: "o"},
+		{Title: "Checks", Content: "c"},
+	})
+	m2.SelectTab(0) // redundant (already on Overview) — must still record sticky
+	m2.SetTabs([]Tab{
+		{Title: "Checks", Content: "c"},   // Checks now at index 0
+		{Title: "Overview", Content: "o"}, // Overview now at index 1
+	})
+	if got := m2.CurrentTabTitle(); got != "Overview" {
+		t.Fatalf("redundant SelectTab should record sticky, got %q, want Overview", got)
+	}
+}

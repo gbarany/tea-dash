@@ -4932,13 +4932,63 @@ func TestRefreshPreservesSelectedPreviewTab(t *testing.T) {
 		t.Fatalf("setup: expected to be on Checks, got %q", got)
 	}
 
-	// Refresh, then drive the async results the returned command would produce:
-	// the list re-fetch (TaskFinishedMsg) and the re-enrich (enrichedMsg).
+	// Refresh clears the cached detail, so the very next render collapses the tab
+	// set to Overview-only. Assert that here so the test provably exercises the
+	// hard collapse->restore path (not just a no-op where Checks never left).
 	m = update(t, m, tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if got := m.sidebar.CurrentTabTitle(); got != "Overview" {
+		t.Fatalf("refresh should collapse to Overview-only while detail reloads, got %q", got)
+	}
+
+	// Drive the async results the returned command would produce: the list
+	// re-fetch (TaskFinishedMsg) and the re-enrich (enrichedMsg). The full tab set
+	// returns and the selection must snap back to Checks.
 	m = update(t, m, fetchedMsg([]data.PullRequest{pr}))
 	m = update(t, m, enrichedMsg{key: m.selKey(), pull: detail})
 
 	if got := m.sidebar.CurrentTabTitle(); got != "Checks" {
 		t.Fatalf("refresh should keep the Checks tab selected, got %q, want Checks", got)
+	}
+}
+
+// TestSelectedPreviewTabPersistsAcrossRowNavigation covers the headline design
+// choice: the selected tab is sticky across items. Selecting "Checks" on one PR
+// and moving the cursor to another PR must open the new PR on "Checks" (once its
+// detail loads), not reset to Overview.
+func TestSelectedPreviewTabPersistsAcrossRowNavigation(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	pr1 := data.PullRequest{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}
+	pr2 := data.PullRequest{
+		Number: 2, Title: "Second", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}
+	m = update(t, m, fetchedMsg([]data.PullRequest{pr1, pr2}))
+	detail1 := &data.PullDetail{Body: "one", BaseRef: "main", HeadRef: "first"}
+	m = update(t, m, enrichedMsg{key: m.selKey(), pull: detail1})
+
+	// Select "Checks" on the first PR via a real click.
+	m = viewed(m)
+	ranges := m.sidebar.TabRanges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 preview tab ranges, got %+v", ranges)
+	}
+	x := m.layout.PreviewPanel.X + 1 + ranges[1].Start
+	m = update(t, m, tea.MouseClickMsg{X: x, Y: m.layout.PreviewTabsRow, Button: tea.MouseLeft})
+	if got := m.sidebar.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("setup: expected to be on Checks, got %q", got)
+	}
+
+	// Move the cursor to the second PR (preview open but unfocused, so 'j' moves
+	// the list selection). The new row has no detail yet, then its enrich lands.
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	detail2 := &data.PullDetail{Body: "two", BaseRef: "main", HeadRef: "second"}
+	m = update(t, m, enrichedMsg{key: m.selKey(), pull: detail2})
+
+	if got := m.sidebar.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("selected tab should carry across rows, got %q, want Checks", got)
 	}
 }
