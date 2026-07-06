@@ -4904,3 +4904,41 @@ func newNotificationActionClient(
 	}
 	return client
 }
+
+// TestRefreshPreservesSelectedPreviewTab is the end-to-end guard for the sticky
+// preview tab. Pressing `r` clears the row's cached detail (collapsing the tab set
+// to Overview only), refetches the list, then re-enriches — three chances to snap
+// the selection back to Overview. The user's Checks tab must survive all of them.
+func TestRefreshPreservesSelectedPreviewTab(t *testing.T) {
+	m := New(&config.Config{}, nil)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	pr := data.PullRequest{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}
+	detail := &data.PullDetail{Body: "body", BaseRef: "main", HeadRef: "first"}
+	m = update(t, m, fetchedMsg([]data.PullRequest{pr}))
+	m = update(t, m, enrichedMsg{key: m.selKey(), pull: detail})
+
+	// Select the "Checks" tab via a real click (mirrors TestClickPreviewTabSwitchesTab).
+	m = viewed(m)
+	ranges := m.sidebar.TabRanges()
+	if len(ranges) < 2 {
+		t.Fatalf("expected at least 2 preview tab ranges, got %+v", ranges)
+	}
+	x := m.layout.PreviewPanel.X + 1 + ranges[1].Start
+	m = update(t, m, tea.MouseClickMsg{X: x, Y: m.layout.PreviewTabsRow, Button: tea.MouseLeft})
+	if got := m.sidebar.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("setup: expected to be on Checks, got %q", got)
+	}
+
+	// Refresh, then drive the async results the returned command would produce:
+	// the list re-fetch (TaskFinishedMsg) and the re-enrich (enrichedMsg).
+	m = update(t, m, tea.KeyPressMsg{Code: 'r', Text: "r"})
+	m = update(t, m, fetchedMsg([]data.PullRequest{pr}))
+	m = update(t, m, enrichedMsg{key: m.selKey(), pull: detail})
+
+	if got := m.sidebar.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("refresh should keep the Checks tab selected, got %q, want Checks", got)
+	}
+}
