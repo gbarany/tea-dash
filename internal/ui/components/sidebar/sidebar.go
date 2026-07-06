@@ -17,10 +17,19 @@ import (
 
 // Model wraps a viewport bound to the shared program context.
 type Model struct {
-	vp      viewport.Model
-	ctx     *context.ProgramContext
-	tabs    []Tab
-	tab     int
+	vp   viewport.Model
+	ctx  *context.ProgramContext
+	tabs []Tab
+	tab  int
+	// sticky is the title of the tab the user last explicitly selected (via
+	// NextTab/PrevTab/SelectTab). SetTabs re-selects it whenever the new tab set
+	// contains it, so the selection persists across every preview re-render that
+	// funnels through SetTabs: a refresh or enrich of the same row, and navigation
+	// to a different row, section, or view (each rebuilds the tabs). It is written
+	// only by those explicit tab changes — never by SetTabs's fall-back to the
+	// first tab — so a tab that is transiently absent (e.g. while a refresh reloads
+	// detail, or on a row that lacks it) is re-selected once it reappears.
+	sticky  string
 	content string
 }
 
@@ -43,14 +52,31 @@ func (m *Model) SetContent(s string) {
 	m.SetTabs([]Tab{{Title: "Overview", Content: s}})
 }
 
-// SetTabs replaces the preview tabs and scrolls back to the top. Empty tabs
-// clear the viewport.
+// SetTabs replaces the preview tabs, re-selecting the sticky tab by title when
+// the new set contains it (else the first tab), and scrolls to the top. It never
+// changes the sticky intent, so a tab that is transiently absent (e.g. while a
+// refresh reloads detail) is restored once it reappears. Empty tabs clear the
+// viewport.
 func (m *Model) SetTabs(tabs []Tab) {
 	m.tabs = compactTabs(tabs)
-	m.tab = 0
+	m.tab = indexOfTitle(m.tabs, m.sticky)
 	m.resize()
 	m.syncViewport()
 	m.vp.GotoTop()
+}
+
+// indexOfTitle returns the index of the first tab whose Title equals title, or 0
+// when there is no match (including title == "").
+func indexOfTitle(tabs []Tab, title string) int {
+	if title == "" {
+		return 0
+	}
+	for i, t := range tabs {
+		if t.Title == title {
+			return i
+		}
+	}
+	return 0
 }
 
 // ScrollToTop resets the viewport to the first line.
@@ -70,6 +96,7 @@ func (m *Model) NextTab() {
 		return
 	}
 	m.tab = (m.tab + 1) % len(m.tabs)
+	m.sticky = m.tabs[m.tab].Title
 	m.syncViewport()
 	m.vp.GotoTop()
 }
@@ -80,16 +107,23 @@ func (m *Model) PrevTab() {
 		return
 	}
 	m.tab = (m.tab - 1 + len(m.tabs)) % len(m.tabs)
+	m.sticky = m.tabs[m.tab].Title
 	m.syncViewport()
 	m.vp.GotoTop()
 }
 
 // SelectTab jumps directly to tab i (Task 6's ZonePreviewTab click
 // handler; NextTab/PrevTab are relative, for the keyboard's "["/"]"). Out
-// of range or already-selected is a no-op — clicking the tab you're
-// already on shouldn't reset its scroll position back to the top.
+// of range is a no-op. It records the target as the sticky selection even when i
+// is already the current tab, so a click made during a refresh flash is honored —
+// while still skipping the scroll reset for the already-selected case (clicking
+// the tab you're already on shouldn't reset its scroll position back to the top).
 func (m *Model) SelectTab(i int) {
-	if i < 0 || i >= len(m.tabs) || i == m.tab {
+	if i < 0 || i >= len(m.tabs) {
+		return
+	}
+	m.sticky = m.tabs[i].Title
+	if i == m.tab {
 		return
 	}
 	m.tab = i

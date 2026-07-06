@@ -295,3 +295,136 @@ func TestTabsBorderSegmentEllipsizesAndDropsTrailingTabs(t *testing.T) {
 		t.Fatalf("rendered width = %d, want to end exactly at the truncated tab's End %d", lipgloss.Width(segment), ranges[1].End)
 	}
 }
+
+// TestSetTabsPreservesSelectedTabByTitle: re-rendering the preview (e.g. on a
+// refresh) must keep the user's selected tab, not snap back to Overview.
+func TestSetTabsPreservesSelectedTabByTitle(t *testing.T) {
+	ctx := &context.ProgramContext{
+		Styles:        context.DefaultStyles(),
+		PreviewOpen:   true,
+		PreviewWidth:  40,
+		PreviewHeight: 8,
+	}
+	m := New(ctx)
+	m.SetTabs([]Tab{
+		{Title: "Overview", Content: "overview-token"},
+		{Title: "Checks", Content: "checks-token"},
+	})
+	m.NextTab() // user selects Checks
+
+	// Re-render with the same titles (what a refresh does once detail reloads).
+	m.SetTabs([]Tab{
+		{Title: "Overview", Content: "overview-token-2"},
+		{Title: "Checks", Content: "checks-token-2"},
+	})
+	if got := m.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("SetTabs should preserve the selected tab by title, got %q, want Checks", got)
+	}
+}
+
+// TestSetTabsRestoresTabAfterTransientCollapse reproduces the refresh shape: the
+// row's detail is cleared first (so only the Overview tab renders), then the full
+// set returns when the re-fetch lands. The selection must survive the round trip.
+// This is the case a naive "preserve the current title" approach fails, because
+// the collapse rewrites the current title to Overview.
+func TestSetTabsRestoresTabAfterTransientCollapse(t *testing.T) {
+	ctx := &context.ProgramContext{
+		Styles:        context.DefaultStyles(),
+		PreviewOpen:   true,
+		PreviewWidth:  40,
+		PreviewHeight: 8,
+	}
+	m := New(ctx)
+	m.SetTabs([]Tab{
+		{Title: "Overview", Content: "overview-token"},
+		{Title: "Checks", Content: "checks-token"},
+	})
+	m.NextTab() // user selects Checks
+
+	// Detail cleared: only Overview renders. Must show Overview (Checks is gone).
+	m.SetTabs([]Tab{{Title: "Overview", Content: "overview-only"}})
+	if got := m.CurrentTabTitle(); got != "Overview" {
+		t.Fatalf("with only Overview present, want Overview, got %q", got)
+	}
+
+	// Detail re-lands: full set returns. Must snap back to Checks.
+	m.SetTabs([]Tab{
+		{Title: "Overview", Content: "overview-token"},
+		{Title: "Checks", Content: "checks-token"},
+	})
+	if got := m.CurrentTabTitle(); got != "Checks" {
+		t.Fatalf("selected tab should be restored after the set returns, got %q, want Checks", got)
+	}
+}
+
+// TestSetTabsDefaultsToFirstWithoutExplicitSelection: a user who never switches
+// tabs stays on Overview across re-renders (today's behavior, preserved).
+func TestSetTabsDefaultsToFirstWithoutExplicitSelection(t *testing.T) {
+	ctx := &context.ProgramContext{
+		Styles:        context.DefaultStyles(),
+		PreviewOpen:   true,
+		PreviewWidth:  40,
+		PreviewHeight: 8,
+	}
+	m := New(ctx)
+	m.SetTabs([]Tab{
+		{Title: "Overview", Content: "a"},
+		{Title: "Checks", Content: "b"},
+	})
+	m.SetTabs([]Tab{
+		{Title: "Overview", Content: "c"},
+		{Title: "Checks", Content: "d"},
+	})
+	if got := m.CurrentTabTitle(); got != "Overview" {
+		t.Fatalf("no explicit selection should stay on Overview, got %q", got)
+	}
+}
+
+// TestSelectTabRecordsSticky guards the sticky write in SelectTab — the click
+// path, which the NextTab-based preservation tests never exercise. Part A checks
+// a tab reached via SelectTab survives a transient collapse; Part B checks
+// SelectTab records intent even when the clicked tab is already the current one
+// (the refresh-flash case), which is exactly the line-ordering this change adds.
+func TestSelectTabRecordsSticky(t *testing.T) {
+	ctx := &context.ProgramContext{
+		Styles:        context.DefaultStyles(),
+		PreviewOpen:   true,
+		PreviewWidth:  40,
+		PreviewHeight: 8,
+	}
+
+	// A: a SelectTab-selected tab is restored after a transient collapse.
+	m := New(ctx)
+	full := []Tab{
+		{Title: "Overview", Content: "o"},
+		{Title: "Checks", Content: "c"},
+		{Title: "Reviews", Content: "r"},
+	}
+	m.SetTabs(full)
+	m.SelectTab(2) // Reviews, via the click path
+	if got := m.CurrentTabTitle(); got != "Reviews" {
+		t.Fatalf("setup: SelectTab(2) should show Reviews, got %q", got)
+	}
+	m.SetTabs([]Tab{{Title: "Overview", Content: "o"}}) // collapse to Overview-only
+	m.SetTabs(full)                                     // full set returns
+	if got := m.CurrentTabTitle(); got != "Reviews" {
+		t.Fatalf("SelectTab-recorded sticky should restore after collapse, got %q, want Reviews", got)
+	}
+
+	// B: SelectTab records intent even when i == current tab. Selecting the
+	// already-shown Overview must record "Overview" so a later reordered set
+	// re-selects it by title (not fall back to whatever lands at index 0).
+	m2 := New(ctx)
+	m2.SetTabs([]Tab{
+		{Title: "Overview", Content: "o"},
+		{Title: "Checks", Content: "c"},
+	})
+	m2.SelectTab(0) // redundant (already on Overview) — must still record sticky
+	m2.SetTabs([]Tab{
+		{Title: "Checks", Content: "c"},   // Checks now at index 0
+		{Title: "Overview", Content: "o"}, // Overview now at index 1
+	})
+	if got := m2.CurrentTabTitle(); got != "Overview" {
+		t.Fatalf("redundant SelectTab should record sticky, got %q, want Overview", got)
+	}
+}
