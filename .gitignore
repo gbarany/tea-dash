@@ -18,3 +18,9 @@ go.work.sum
 *.swp
 docs/demo.mp4
 .mcp.json
+
+# Local, potentially token-bearing config — never commit (config lives in
+# ~/.config/tea-dash/; these guard against an accidental in-repo copy).
+config.yml
+*.local.yml
+.env
