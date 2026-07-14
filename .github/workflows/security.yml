@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: securego/gosec@11023e51e1f46c4ea63315bdb7670f073442168f # v2.27.1
+      - uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.27.1
         with:
           # -no-fail: findings surface in the Security tab via SARIF rather
           # than breaking builds; promote to blocking once triaged.
