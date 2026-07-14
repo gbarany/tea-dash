@@ -14,3 +14,11 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # Raised above the default of 5 so a sibling bump (e.g. codeql-action/init)
+    # can't be silently suppressed by the open-PR limit.
+    open-pull-requests-limit: 10
+    groups:
+      # codeql-action init/analyze/upload-sarif MUST move in lockstep — a split
+      # bump leaves init and analyze on mismatched versions and breaks the scan.
+      codeql-action:
+        patterns: ["github/codeql-action*"]
