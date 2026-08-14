@@ -1,6 +1,7 @@
 package gitea
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -570,6 +571,44 @@ func (c *Client) rawPost(ctx context.Context, path string) error {
 		}
 	}
 	return nil
+}
+
+// rawPostJSON POSTs an authenticated JSON body to {baseURL}/api/v1{path}.
+// It returns the HTTP status for 2xx responses so callers can distinguish
+// 200 from 201. Non-2xx responses become an HTTPError that includes the body.
+func (c *Client) rawPostJSON(ctx context.Context, path string, payload any) (int, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1"+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "token "+c.token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, &HTTPError{
+			Method:     http.MethodPost,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       truncate(respBody, 500),
+		}
+	}
+	return resp.StatusCode, nil
 }
 
 // truncate returns b as a string, clipped to max bytes with an ellipsis marker

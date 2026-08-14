@@ -2,6 +2,8 @@ package mockgitea
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -220,9 +222,8 @@ func hasWIPPrefix(title string) bool {
 	return strings.HasPrefix(trimmed, "wip:") || strings.HasPrefix(trimmed, "[wip]")
 }
 
-// handleMergePull serves POST .../pulls/{index}/merge. MergePullRequest
-// (the real client) determines success purely from the HTTP status code —
-// 200 or 201 — and never inspects the response body, so no body is written.
+// handleMergePull serves POST .../pulls/{index}/merge. 200 means merged,
+// 201 means auto-merge scheduled, 405 means not mergeable (reason in body).
 func (s *Server) handleMergePull(w http.ResponseWriter, r *http.Request) {
 	full := r.PathValue("owner") + "/" + r.PathValue("repo")
 	idx, ok := parsePathInt64(r.PathValue("index"))
@@ -233,14 +234,26 @@ func (s *Server) handleMergePull(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Do                     string `json:"Do"`
 		DeleteBranchAfterMerge *bool  `json:"delete_branch_after_merge"`
+		MergeWhenChecksSucceed bool   `json:"merge_when_checks_succeed"`
 	}
 	if err := decodeJSONBody(r, &body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	deleteBranch := body.DeleteBranchAfterMerge != nil && *body.DeleteBranchAfterMerge
-	if err := s.store.MergePull(full, idx, body.Do, deleteBranch); err != nil {
+	scheduled, err := s.store.MergePull(full, idx, body.Do, deleteBranch, body.MergeWhenChecksSucceed)
+	if err != nil {
+		if errors.Is(err, errMergeNotAllowed) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprint(w, `{"message":"pull request is not mergeable"}`)
+			return
+		}
 		notFound(w, r)
+		return
+	}
+	if scheduled {
+		w.WriteHeader(http.StatusCreated)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

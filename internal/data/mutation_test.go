@@ -9,6 +9,9 @@ func TestMutationDomainConstants(t *testing.T) {
 	if ItemStateOpen != "open" || ItemStateClosed != "closed" {
 		t.Fatalf("item states = %q/%q, want open/closed", ItemStateOpen, ItemStateClosed)
 	}
+	if MergeCompleted == MergeScheduled {
+		t.Fatal("MergeCompleted and MergeScheduled must be distinct")
+	}
 	if MergeStyleMerge != "merge" ||
 		MergeStyleRebase != "rebase" ||
 		MergeStyleRebaseMerge != "rebase-merge" ||

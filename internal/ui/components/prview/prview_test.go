@@ -46,6 +46,7 @@ func TestRenderPullWithDetail(t *testing.T) {
 		Body:         "This body has a **unique-token-xyz** phrase.",
 		BaseRef:      "main",
 		HeadRef:      "feature",
+		Mergeable:    true,
 		Additions:    10,
 		Deletions:    3,
 		ChangedFiles: 2,
@@ -76,6 +77,27 @@ func TestRenderPullFoldVsExpanded(t *testing.T) {
 	}
 	if strings.Contains(expanded, "read more") {
 		t.Fatalf("expanded body should not show read-more hint:\n%s", expanded)
+	}
+}
+
+func TestRenderPullNotMergeablePill(t *testing.T) {
+	detail := &data.PullDetail{Mergeable: false, BaseRef: "main", HeadRef: "feat"}
+	out := RenderPull(samplePull(), detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
+	if !strings.Contains(out, "NOT MERGEABLE") {
+		t.Fatalf("unmergeable preview missing NOT MERGEABLE pill:\n%s", out)
+	}
+
+	draft := samplePull()
+	draft.Draft = true
+	draftOut := RenderPull(draft, detail, 60, false, appctx.DefaultStyles(), icons.Unicode)
+	if strings.Contains(draftOut, "NOT MERGEABLE") {
+		t.Fatalf("draft preview should not add NOT MERGEABLE:\n%s", draftOut)
+	}
+
+	merged := &data.PullDetail{Mergeable: false, Merged: true, BaseRef: "main", HeadRef: "feat"}
+	mergedOut := RenderPull(samplePull(), merged, 60, false, appctx.DefaultStyles(), icons.Unicode)
+	if strings.Contains(mergedOut, "NOT MERGEABLE") {
+		t.Fatalf("merged preview should not add NOT MERGEABLE:\n%s", mergedOut)
 	}
 }
 

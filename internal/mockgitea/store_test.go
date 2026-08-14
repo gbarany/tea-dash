@@ -9,8 +9,8 @@ import (
 func TestMergePullFlipsState(t *testing.T) {
 	s := NewStore()
 	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
-	s.AddPull(&Pull{Number: 1, RepoFullName: "teahouse/kettle", Title: "fix", State: "open"})
-	if err := s.MergePull("teahouse/kettle", 1, "merge", false); err != nil {
+	s.AddPull(&Pull{Number: 1, RepoFullName: "teahouse/kettle", Title: "fix", State: "open", Mergeable: true})
+	if _, err := s.MergePull("teahouse/kettle", 1, "merge", false, false); err != nil {
 		t.Fatalf("MergePull: %v", err)
 	}
 	p := s.Pull("teahouse/kettle", 1)
@@ -95,8 +95,38 @@ func TestNotificationReadPin(t *testing.T) {
 func TestMergePullUnknownPullErrors(t *testing.T) {
 	s := NewStore()
 	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
-	if err := s.MergePull("teahouse/kettle", 404, "merge", false); err == nil {
+	if _, err := s.MergePull("teahouse/kettle", 404, "merge", false, false); err == nil {
 		t.Fatal("want error merging unknown pull, got nil")
+	}
+}
+
+func TestMergePullRejectsUnmergeable(t *testing.T) {
+	s := NewStore()
+	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
+	s.AddPull(&Pull{Number: 6, RepoFullName: "teahouse/kettle", Title: "conflict", State: "open", Mergeable: false})
+	if _, err := s.MergePull("teahouse/kettle", 6, "merge", false, false); err == nil {
+		t.Fatal("want error merging an unmergeable pull")
+	}
+	p := s.Pull("teahouse/kettle", 6)
+	if p == nil || p.Merged || p.State != "open" {
+		t.Fatalf("unmergeable pull should stay open, got %+v", p)
+	}
+}
+
+func TestMergePullSchedulesWhenChecksFail(t *testing.T) {
+	s := NewStore()
+	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
+	s.AddPull(&Pull{
+		Number: 2, RepoFullName: "teahouse/kettle", Title: "ci", State: "open", Mergeable: true,
+		Statuses: []*CommitStatus{{Status: "failure", Context: "ci/build"}},
+	})
+	scheduled, err := s.MergePull("teahouse/kettle", 2, "merge", false, true)
+	if err != nil || !scheduled {
+		t.Fatalf("scheduled=%v err=%v, want scheduled auto-merge", scheduled, err)
+	}
+	p := s.Pull("teahouse/kettle", 2)
+	if p == nil || p.Merged || p.State != "open" {
+		t.Fatalf("auto-merge should leave the PR open, got %+v", p)
 	}
 }
 
@@ -156,7 +186,7 @@ func TestAllPullsAndAllIssuesSortedByID(t *testing.T) {
 func TestConcurrentMarshalWithLock(t *testing.T) {
 	s := NewStore()
 	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
-	s.AddPull(&Pull{Number: 1, RepoFullName: "teahouse/kettle", Title: "fix", State: "open"})
+	s.AddPull(&Pull{Number: 1, RepoFullName: "teahouse/kettle", Title: "fix", State: "open", Mergeable: true})
 
 	const iterations = 300
 	var wg sync.WaitGroup
@@ -166,7 +196,7 @@ func TestConcurrentMarshalWithLock(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
 			_ = s.SetPullState("teahouse/kettle", 1, "open")
-			_ = s.MergePull("teahouse/kettle", 1, "merge", false)
+			_, _ = s.MergePull("teahouse/kettle", 1, "merge", false, false)
 		}
 	}()
 
