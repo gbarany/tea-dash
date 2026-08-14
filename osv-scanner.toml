@@ -1,0 +1,9 @@
+# Scorecard's Vulnerabilities check uses OSV-Scanner. GO-2026-5932 flags the
+# entire golang.org/x/crypto module because the unmaintained openpgp subtree
+# has no patched release. tea-dash does not import that subtree; x/crypto is
+# an indirect dependency for ssh/httpsig via the Gitea SDK. govulncheck
+# (reachability-aware, run in CI) reports the advisory as unused.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "Not reachable: no import of golang.org/x/crypto/openpgp. x/crypto is pulled in for ssh/httpsig only; there is no patched module version."
