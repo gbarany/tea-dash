@@ -288,7 +288,7 @@ issuesSections:
     filter:
       state: open
       assignedBy: "@me"
-      labels: [bug, urgent]  # OR-ed by Gitea/Forgejo (any of these labels)
+      labels: [bug, urgent]  # global repos: makes this repo-scoped, so both labels are required
       milestone: v2
 
 notificationsSections:
@@ -413,7 +413,7 @@ are loaded first; later includes override earlier includes; the current file
 overrides all included values. Nested maps merge recursively, while arrays and
 scalars replace the previous value.
 
-`filter` fields: `state`, `labels` (OR-ed by the Gitea/Forgejo API; `f` opens a live picker), `milestone`, `createdBy`,
+`filter` fields: `state`, `labels` (all required for repo-scoped sections; any match for instance-wide search; `f` opens a live picker), `milestone`, `createdBy`,
 `assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),
 `sort`. PR and issue sections fetch one page at a time; reaching the loaded
 bottom automatically requests the next page until the server total is loaded.

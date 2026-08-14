@@ -71,7 +71,7 @@ func TestFilterPullsStableTiesByID(t *testing.T) {
 		{ID: 101, Number: 1, Title: "a", State: "open", Author: me, Updated: now},
 		{ID: 102, Number: 2, Title: "b", State: "open", Author: me, Updated: now},
 	}
-	got := filterPulls(pulls, url.Values{"state": {"open"}}, "gabor")
+	got := filterPulls(pulls, url.Values{"state": {"open"}}, "gabor", labelMatchAny)
 	if len(got) != 2 || got[0].ID != 101 || got[1].ID != 102 {
 		t.Fatalf("want stable ID-ascending order for equal Updated, got %+v", got)
 	}
@@ -113,6 +113,31 @@ func TestSearchPullsLabelsMatchAny(t *testing.T) {
 	}
 	if got[4] {
 		t.Fatalf("unlabeled PR #4 should not match: %+v", rows)
+	}
+}
+
+func TestRepoScopedPullsLabelsMatchAll(t *testing.T) {
+	now := time.Now()
+	s := NewStore()
+	me := s.Me()
+	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
+	bug := &Label{Name: "bug"}
+	urgent := &Label{Name: "urgent"}
+	s.AddPull(&Pull{Number: 1, RepoFullName: "teahouse/kettle", Title: "only bug",
+		State: "open", Author: me, Labels: []*Label{bug}, Updated: now})
+	s.AddPull(&Pull{Number: 2, RepoFullName: "teahouse/kettle", Title: "only urgent",
+		State: "open", Author: me, Labels: []*Label{urgent}, Updated: now})
+	s.AddPull(&Pull{Number: 3, RepoFullName: "teahouse/kettle", Title: "both",
+		State: "open", Author: me, Labels: []*Label{bug, urgent}, Updated: now})
+
+	c := newTestClient(t, s)
+	rows, total, err := c.ListRepoPullsPage(context.Background(), "teahouse/kettle",
+		config.PrIssueFilter{State: "open", Labels: []string{"bug", "urgent"}}, 30, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(rows) != 1 || rows[0].Number != 3 {
+		t.Fatalf("want only PR #3 with both labels, got total=%d rows=%+v", total, rows)
 	}
 }
 

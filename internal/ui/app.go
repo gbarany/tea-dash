@@ -2579,7 +2579,7 @@ func collectRepoLabels(client *gitea.Client, repos []string) ([]data.Label, erro
 			out = append(out, label)
 		}
 	}
-	if len(out) == 0 && firstErr != nil {
+	if firstErr != nil {
 		return nil, firstErr
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

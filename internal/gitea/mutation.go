@@ -218,40 +218,84 @@ func (c *Client) RemoveLabels(owner, repo string, index int64, names []string) e
 	return nil
 }
 
-// ListRepoLabels returns the repository's label definitions by name.
+const labelPageSize = 50
+
+type labelPageFetcher func(sdk.ListOptions) ([]*sdk.Label, *sdk.Response, error)
+
+// ListRepoLabels returns the repository and organization label definitions by
+// name. Repository-local labels take precedence when both scopes use the same
+// name.
 func (c *Client) ListRepoLabels(owner, repo string) ([]data.Label, error) {
-	var labels []*sdk.Label
-	err := c.call(func() error {
-		var e error
-		labels, _, e = c.sdk.ListRepoLabels(owner, repo, sdk.ListLabelsOptions{
-			ListOptions: sdk.ListOptions{Page: -1},
-		})
-		return e
+	repoLabels, _, err := c.listAllLabels(func(opt sdk.ListOptions) ([]*sdk.Label, *sdk.Response, error) {
+		return c.sdk.ListRepoLabels(owner, repo, sdk.ListLabelsOptions{ListOptions: opt})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list labels for %s/%s: %w", owner, repo, err)
 	}
+
+	orgLabels, resp, err := c.listAllLabels(func(opt sdk.ListOptions) ([]*sdk.Label, *sdk.Response, error) {
+		return c.sdk.ListOrgLabels(owner, sdk.ListOrgLabelsOptions{ListOptions: opt})
+	})
+	if err != nil {
+		// A 404 means either that owner is a user or that the server predates
+		// organization labels. Other failures would make the picker silently
+		// incomplete, so surface them.
+		if resp == nil || resp.Response == nil || resp.StatusCode != http.StatusNotFound {
+			return nil, fmt.Errorf("list organization labels for %s: %w", owner, err)
+		}
+		orgLabels = nil
+	}
+
+	labels := append(repoLabels, orgLabels...)
 	out := make([]data.Label, 0, len(labels))
+	seen := make(map[string]struct{}, len(labels))
 	for _, label := range labels {
 		if label == nil || strings.TrimSpace(label.Name) == "" {
 			continue
 		}
+		if _, ok := seen[label.Name]; ok {
+			continue
+		}
+		seen[label.Name] = struct{}{}
 		out = append(out, data.Label{Name: label.Name, Color: label.Color})
 	}
 	return out, nil
+}
+
+// listAllLabels follows the endpoint's X-Total-Count across numbered pages.
+// The label APIs do not consistently emit Link headers, so Page:-1 cannot be
+// used as an unbounded request.
+func (c *Client) listAllLabels(fetch labelPageFetcher) ([]*sdk.Label, *sdk.Response, error) {
+	var all []*sdk.Label
+	for page := 1; ; page++ {
+		var batch []*sdk.Label
+		var resp *sdk.Response
+		err := c.call(func() error {
+			var e error
+			batch, resp, e = fetch(sdk.ListOptions{Page: page, PageSize: labelPageSize})
+			return e
+		})
+		if err != nil {
+			return nil, resp, err
+		}
+
+		all = append(all, batch...)
+		total := totalFromSDKResponse(resp, -1)
+		if total >= 0 && len(all) >= total {
+			return all, resp, nil
+		}
+		if len(batch) == 0 || (total < 0 && len(batch) < labelPageSize) {
+			return all, resp, nil
+		}
+	}
 }
 
 func (c *Client) resolveLabelIDs(owner, repo string, names []string) ([]int64, error) {
 	if len(names) == 0 {
 		return nil, fmt.Errorf("label names cannot be empty")
 	}
-	var labels []*sdk.Label
-	err := c.call(func() error {
-		var e error
-		labels, _, e = c.sdk.ListRepoLabels(owner, repo, sdk.ListLabelsOptions{
-			ListOptions: sdk.ListOptions{Page: -1},
-		})
-		return e
+	labels, _, err := c.listAllLabels(func(opt sdk.ListOptions) ([]*sdk.Label, *sdk.Response, error) {
+		return c.sdk.ListRepoLabels(owner, repo, sdk.ListLabelsOptions{ListOptions: opt})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list labels for %s/%s: %w", owner, repo, err)

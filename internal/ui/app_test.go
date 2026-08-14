@@ -758,6 +758,46 @@ func TestLabelFilterReposPrefersSectionThenSmartThenConfigured(t *testing.T) {
 	}
 }
 
+func TestCollectRepoLabelsReturnsErrorWhenAnyRepoIsIncomplete(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/good/repo/labels", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Total-Count", "1")
+		fmt.Fprint(w, `[{"id":1,"name":"bug","color":"ee0000"}]`)
+	})
+	mux.HandleFunc("/api/v1/orgs/good/labels", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound) // good is a user owner
+		fmt.Fprint(w, `{"message":"organization not found"}`)
+	})
+	mux.HandleFunc("/api/v1/repos/broken/repo/labels", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Total-Count", "0")
+		fmt.Fprint(w, `[]`)
+	})
+	mux.HandleFunc("/api/v1/orgs/broken/labels", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"organization labels forbidden"}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	labels, err := collectRepoLabels(client, []string{"good/repo", "broken/repo"})
+	if err == nil || !strings.Contains(err.Error(), "organization labels forbidden") {
+		t.Fatalf("collectRepoLabels error = %v, want partial discovery failure", err)
+	}
+	if labels != nil {
+		t.Fatalf("collectRepoLabels labels = %#v, want nil when choices are incomplete", labels)
+	}
+}
+
 func TestFilterLabelsOpensPickerAndAppliesSelection(t *testing.T) {
 	client := labelsClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

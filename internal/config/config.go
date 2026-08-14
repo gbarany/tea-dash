@@ -340,7 +340,7 @@ type LocalRepoConfig struct {
 type PrIssueFilter struct {
 	State     string   `yaml:"state"`     // open | closed | all (default open)
 	Type      string   `yaml:"-"`         // pulls | issues (set by the section)
-	Labels    []string `yaml:"labels"`    // label names (OR-ed by Gitea/Forgejo search)
+	Labels    []string `yaml:"labels"`    // names (repo lists require all; cross-repo search matches any)
 	Milestone string   `yaml:"milestone"` // milestone name
 	// The me-scoped author fields accept "@me" only (a plain login is not
 	// supported by the cross-repo search endpoint, which has no per-login author

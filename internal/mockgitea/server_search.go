@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+type labelMatchMode uint8
+
+const (
+	labelMatchAny labelMatchMode = iota
+	labelMatchAll
+)
+
 // searchRoutes registers the cross-repo search and repo-scoped issue/pull
 // list endpoints that internal/gitea's Search*/ListRepo* client methods
 // consume (see internal/gitea/search.go's buildSearchParamsPage and
@@ -29,9 +36,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	respondList(s, w, func() (rows []map[string]any, total int) {
 		me := s.store.meLocked().Login
 		if q.Get("type") == "issues" {
-			return pageRows(filterIssues(s.store.allIssuesLocked(), q, me), limit, page, issueSearchRow)
+			return pageRows(filterIssues(s.store.allIssuesLocked(), q, me, labelMatchAny), limit, page, issueSearchRow)
 		}
-		return pageRows(filterPulls(s.store.allPullsLocked(), q, me), limit, page, pullSearchRow)
+		return pageRows(filterPulls(s.store.allPullsLocked(), q, me, labelMatchAny), limit, page, pullSearchRow)
 	})
 }
 
@@ -49,9 +56,9 @@ func (s *Server) handleRepoIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		me := s.store.meLocked().Login
 		if q.Get("type") == "pulls" {
-			rows, total = pageRows(filterPulls(s.store.pullsLocked(full), q, me), limit, page, pullSearchRow)
+			rows, total = pageRows(filterPulls(s.store.pullsLocked(full), q, me, labelMatchAll), limit, page, pullSearchRow)
 		} else {
-			rows, total = pageRows(filterIssues(s.store.issuesLocked(full), q, me), limit, page, issueSearchRow)
+			rows, total = pageRows(filterIssues(s.store.issuesLocked(full), q, me, labelMatchAll), limit, page, issueSearchRow)
 		}
 		return rows, total, true
 	})
@@ -59,10 +66,10 @@ func (s *Server) handleRepoIssues(w http.ResponseWriter, r *http.Request) {
 
 // filterPulls returns the pulls matching q, sorted by Updated descending
 // (tea-dash merges multi-repo pages by updated time, newest first).
-func filterPulls(pulls []*Pull, q url.Values, me string) []*Pull {
+func filterPulls(pulls []*Pull, q url.Values, me string, labelMode labelMatchMode) []*Pull {
 	var out []*Pull
 	for _, p := range pulls {
-		if matchPull(p, q, me) {
+		if matchPull(p, q, me, labelMode) {
 			out = append(out, p)
 		}
 	}
@@ -71,10 +78,10 @@ func filterPulls(pulls []*Pull, q url.Values, me string) []*Pull {
 }
 
 // filterIssues is filterPulls for issues.
-func filterIssues(issues []*Issue, q url.Values, me string) []*Issue {
+func filterIssues(issues []*Issue, q url.Values, me string, labelMode labelMatchMode) []*Issue {
 	var out []*Issue
 	for _, i := range issues {
-		if matchIssue(i, q, me) {
+		if matchIssue(i, q, me, labelMode) {
 			out = append(out, i)
 		}
 	}
@@ -87,7 +94,7 @@ func filterIssues(issues []*Issue, q url.Values, me string) []*Issue {
 // assigned=true, review_requested=true) and the repo-scoped endpoint's
 // per-login created_by/assigned_by — a given request only ever sends one set,
 // so checking both here lets one matcher serve both handlers.
-func matchPull(p *Pull, q url.Values, me string) bool {
+func matchPull(p *Pull, q url.Values, me string, labelMode labelMatchMode) bool {
 	if !matchState(p.State, q.Get("state")) {
 		return false
 	}
@@ -109,7 +116,7 @@ func matchPull(p *Pull, q url.Values, me string) bool {
 	if !matchQuery(p.Title, q.Get("q")) {
 		return false
 	}
-	if !matchLabels(p.Labels, q.Get("labels")) {
+	if !matchLabels(p.Labels, q.Get("labels"), labelMode) {
 		return false
 	}
 	if !matchMilestone(p.Milestone, q.Get("milestones")) {
@@ -120,7 +127,7 @@ func matchPull(p *Pull, q url.Values, me string) bool {
 
 // matchIssue is matchPull for issues. Issues have no requested-reviewers
 // concept, so there is no review_requested check.
-func matchIssue(i *Issue, q url.Values, me string) bool {
+func matchIssue(i *Issue, q url.Values, me string, labelMode labelMatchMode) bool {
 	if !matchState(i.State, q.Get("state")) {
 		return false
 	}
@@ -139,7 +146,7 @@ func matchIssue(i *Issue, q url.Values, me string) bool {
 	if !matchQuery(i.Title, q.Get("q")) {
 		return false
 	}
-	if !matchLabels(i.Labels, q.Get("labels")) {
+	if !matchLabels(i.Labels, q.Get("labels"), labelMode) {
 		return false
 	}
 	if !matchMilestone(i.Milestone, q.Get("milestones")) {
@@ -164,10 +171,10 @@ func matchQuery(title, q string) bool {
 	return strings.Contains(strings.ToLower(title), strings.ToLower(q))
 }
 
-// matchLabels reports whether labels contains any name in the comma-joined
-// csv list (an OR match, matching Gitea/Forgejo's labels search param).
-// An empty csv matches everything.
-func matchLabels(labels []*Label, csv string) bool {
+// matchLabels applies the endpoint's label semantics: cross-repository search
+// matches any requested label, while repository-scoped lists require all of
+// them. An empty csv matches everything.
+func matchLabels(labels []*Label, csv string, mode labelMatchMode) bool {
 	if csv == "" {
 		return true
 	}
@@ -177,18 +184,25 @@ func matchLabels(labels []*Label, csv string) bool {
 			have[l.Name] = true
 		}
 	}
-	any := false
+	requested := 0
+	matched := 0
 	for _, name := range strings.Split(csv, ",") {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
-		any = true
+		requested++
 		if have[name] {
-			return true
+			matched++
 		}
 	}
-	return !any
+	if requested == 0 {
+		return true
+	}
+	if mode == labelMatchAll {
+		return matched == requested
+	}
+	return matched > 0
 }
 
 // matchMilestone reports whether m's title matches the milestones filter. An
