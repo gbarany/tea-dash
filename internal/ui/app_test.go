@@ -809,6 +809,127 @@ func TestFilterLabelsOpensPickerAndAppliesSelection(t *testing.T) {
 	}
 }
 
+func TestHandleLabelsLoadedRejectsDifferentSection(t *testing.T) {
+	m := twoSectionLabelFilterModel(t)
+	m, stale := startLabelLoad(t, m)
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.currSectionId != 1 {
+		t.Fatalf("currSectionId = %d, want 1", m.currSectionId)
+	}
+	m, current := startLabelLoad(t, m)
+
+	m = update(t, m, stale)
+	if m.actionPrompt.Active() {
+		t.Fatal("stale labels for section 0 should not open the picker after section 1 started a new request")
+	}
+	if current.intent.Target.SectionID != 1 {
+		t.Fatalf("current load target = %+v, want section 1", current.intent.Target)
+	}
+
+	m = update(t, m, current)
+	if !m.actionPrompt.Active() {
+		t.Fatal("labels for the current section should open the picker")
+	}
+	view := m.actionPrompt.View(120)
+	if !strings.Contains(view, "[ ] bug") || !strings.Contains(view, "[ ] urgent") {
+		t.Fatalf("section 1 has no configured labels, picker should preselect none:\n%s", view)
+	}
+}
+
+func TestApplyLabelFilterUsesTargetSectionNotCurrent(t *testing.T) {
+	m := twoSectionLabelFilterModel(t)
+	m, loaded := startLabelLoad(t, m)
+	m = update(t, m, loaded)
+	if !m.actionPrompt.Active() {
+		t.Fatal("label picker should open for the section that requested it")
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: ' ', Text: " "})
+	m.currSectionId = 1
+
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	sec0, ok := m.prs[0].(labelFilterSection)
+	if !ok {
+		t.Fatal("section 0 should support label filters")
+	}
+	got0 := sec0.FilterLabels()
+	if len(got0) != 2 || got0[0] != "bug" || got0[1] != "urgent" {
+		t.Fatalf("target section 0 labels = %v, want [bug urgent]", got0)
+	}
+	sec1, ok := m.prs[1].(labelFilterSection)
+	if !ok {
+		t.Fatal("section 1 should support label filters")
+	}
+	if got1 := sec1.FilterLabels(); len(got1) != 0 {
+		t.Fatalf("current section 1 labels = %v, want unchanged empty", got1)
+	}
+}
+
+func TestHandleLabelsLoadedPreselectsTargetSection(t *testing.T) {
+	m := twoSectionLabelFilterModel(t)
+	m, loaded := startLabelLoad(t, m)
+	m = update(t, m, tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.currSectionId != 1 {
+		t.Fatalf("currSectionId = %d, want 1", m.currSectionId)
+	}
+
+	m = update(t, m, loaded)
+	if !m.actionPrompt.Active() {
+		t.Fatal("in-flight labels for section 0 should still open the picker after a tab change")
+	}
+	view := m.actionPrompt.View(120)
+	if !strings.Contains(view, "[x] bug") || !strings.Contains(view, "[ ] urgent") {
+		t.Fatalf("picker should preselect section 0's filter, not the current section:\n%s", view)
+	}
+}
+
+func twoSectionLabelFilterModel(t *testing.T) Model {
+	t.Helper()
+	client := labelsClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"id":1,"name":"bug","color":"ee0000"},{"id":2,"name":"urgent","color":"ffaa00"}]`)
+	})
+	m := New(&config.Config{
+		Repos: []string{"gbarany/tea-dash"},
+		PRSections: []config.SectionConfig{
+			{Title: "Bugs", Filter: config.PrIssueFilter{State: "open", Labels: []string{"bug"}}},
+			{Title: "All", Filter: config.PrIssueFilter{State: "open"}},
+		},
+	}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	row := []data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}
+	m = update(t, m, fetchedMsg(row))
+	m = update(t, m, context.TaskFinishedMsg{
+		SectionId:   1,
+		SectionType: pullsection.SectionType,
+		TaskId:      "t2",
+		Msg: pullsection.SectionPullRequestsFetchedMsg{
+			Rows: row, TotalCount: 1, TaskId: "t2",
+		},
+	})
+	return m
+}
+
+func startLabelLoad(t *testing.T, m Model) (Model, labelsLoadedMsg) {
+	t.Helper()
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("filter labels should fetch repo labels before opening the prompt")
+	}
+	msg := firstNonNilCmd(t, cmd)
+	loaded, ok := msg.(labelsLoadedMsg)
+	if !ok || loaded.err != nil {
+		t.Fatalf("label load msg = %#v", msg)
+	}
+	return m, loaded
+}
+
 func firstNonNilCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()
 	msg := cmd()

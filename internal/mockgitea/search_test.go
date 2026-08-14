@@ -77,6 +77,45 @@ func TestFilterPullsStableTiesByID(t *testing.T) {
 	}
 }
 
+func TestSearchPullsLabelsMatchAny(t *testing.T) {
+	now := time.Now()
+	s := NewStore()
+	me := s.Me()
+	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
+	bug := &Label{Name: "bug"}
+	urgent := &Label{Name: "urgent"}
+	s.AddPull(&Pull{Number: 1, RepoFullName: "teahouse/kettle", Title: "only bug",
+		State: "open", Author: me, Labels: []*Label{bug}, Updated: now})
+	s.AddPull(&Pull{Number: 2, RepoFullName: "teahouse/kettle", Title: "only urgent",
+		State: "open", Author: me, Labels: []*Label{urgent}, Updated: now})
+	s.AddPull(&Pull{Number: 3, RepoFullName: "teahouse/kettle", Title: "both",
+		State: "open", Author: me, Labels: []*Label{bug, urgent}, Updated: now})
+	s.AddPull(&Pull{Number: 4, RepoFullName: "teahouse/kettle", Title: "none",
+		State: "open", Author: me, Updated: now})
+
+	c := newTestClient(t, s)
+	rows, total, err := c.SearchPullsPage(context.Background(),
+		config.PrIssueFilter{State: "open", Labels: []string{"bug", "urgent"}}, 30, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(rows) != 3 {
+		t.Fatalf("want any-of match for bug|urgent (3 rows), got total=%d rows=%+v", total, rows)
+	}
+	got := map[int64]bool{}
+	for _, r := range rows {
+		got[r.Number] = true
+	}
+	for _, n := range []int64{1, 2, 3} {
+		if !got[n] {
+			t.Fatalf("missing PR #%d in any-of label match: %+v", n, rows)
+		}
+	}
+	if got[4] {
+		t.Fatalf("unlabeled PR #4 should not match: %+v", rows)
+	}
+}
+
 func TestRepoScopedPullsPagination(t *testing.T) {
 	c := newTestClient(t, searchStore(time.Now()))
 	rows, total, err := c.ListRepoPullsPage(context.Background(), "teahouse/kettle",

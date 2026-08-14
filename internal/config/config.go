@@ -557,7 +557,7 @@ var universalBuiltins = builtinSet(
 )
 
 var prBuiltins = builtinSet(
-	"comment", "assign", "unassign", "addLabel", "removeLabel", "merge",
+	"comment", "assign", "unassign", "addLabel", "removeLabel", "filterLabels", "filterLabel", "merge",
 	"update", "updateBranch", "ready", "markReady", "draft", "markDraft",
 	"watch", "watchChecks", "checks", "close", "reopen", "diff", "checkout", "approve", "review",
 	"requestReview", "requestReviewer", "requestReviewers",
@@ -566,7 +566,7 @@ var prBuiltins = builtinSet(
 )
 
 var issueBuiltins = builtinSet(
-	"comment", "assign", "unassign", "addLabel", "removeLabel", "close", "reopen",
+	"comment", "assign", "unassign", "addLabel", "removeLabel", "filterLabels", "filterLabel", "close", "reopen",
 	"milestone", "setMilestone", "checkout", "subscribe", "unsubscribe",
 	"milestone", "setMilestone", "checkout", "subscribe", "unsubscribe", "viewPrs",
 )

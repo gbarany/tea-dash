@@ -164,8 +164,8 @@ func matchQuery(title, q string) bool {
 	return strings.Contains(strings.ToLower(title), strings.ToLower(q))
 }
 
-// matchLabels reports whether labels contains every name in the comma-joined
-// csv list (an AND match, matching the real search endpoint's labels param).
+// matchLabels reports whether labels contains any name in the comma-joined
+// csv list (an OR match, matching Gitea/Forgejo's labels search param).
 // An empty csv matches everything.
 func matchLabels(labels []*Label, csv string) bool {
 	if csv == "" {
@@ -177,12 +177,18 @@ func matchLabels(labels []*Label, csv string) bool {
 			have[l.Name] = true
 		}
 	}
+	any := false
 	for _, name := range strings.Split(csv, ",") {
-		if !have[strings.TrimSpace(name)] {
-			return false
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		any = true
+		if have[name] {
+			return true
 		}
 	}
-	return true
+	return !any
 }
 
 // matchMilestone reports whether m's title matches the milestones filter. An

@@ -2427,7 +2427,7 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 	}
 	m.pendingAction = actions.Intent{}
 	if intent.Kind == actions.KindFilterLabels {
-		return tea.Batch(cmd, m.applyLabelFilter(intent.Prompt.Value))
+		return tea.Batch(cmd, m.applyLabelFilter(intent.Target, intent.Prompt.Value))
 	}
 	if m.actionDispatcher == nil {
 		return tea.Batch(cmd, m.setError("Action not wired yet."))
@@ -2590,7 +2590,7 @@ func (m *Model) handleLabelsLoaded(msg labelsLoadedMsg) (Model, tea.Cmd) {
 	if msg.intent.Kind != actions.KindFilterLabels {
 		return *m, nil
 	}
-	if m.pendingAction.Kind != actions.KindFilterLabels {
+	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
 		return *m, nil
 	}
 	m.pendingAction = msg.intent
@@ -2601,7 +2601,7 @@ func (m *Model) handleLabelsLoaded(msg labelsLoadedMsg) (Model, tea.Cmd) {
 	}
 	m.clearFeedback()
 	selected := []string(nil)
-	if sec := m.getCurrSection(); sec != nil {
+	if sec := m.sectionByTarget(msg.intent.Target); sec != nil {
 		if lf, ok := sec.(labelFilterSection); ok {
 			selected = lf.FilterLabels()
 		}
@@ -2620,8 +2620,8 @@ func (m *Model) handleLabelsLoaded(msg labelsLoadedMsg) (Model, tea.Cmd) {
 	return *m, nil
 }
 
-func (m *Model) applyLabelFilter(value string) tea.Cmd {
-	sec := m.getCurrSection()
+func (m *Model) applyLabelFilter(target actions.Target, value string) tea.Cmd {
+	sec := m.sectionByTarget(target)
 	if sec == nil {
 		return nil
 	}
@@ -2638,6 +2638,26 @@ func (m *Model) applyLabelFilter(value string) tea.Cmd {
 		toast = m.setSuccess("Filtering by labels: " + strings.Join(names, ", ") + ".")
 	}
 	return tea.Batch(toast, sec.FetchRows())
+}
+
+func (m *Model) sectionByTarget(target actions.Target) section.Section {
+	var sections []section.Section
+	switch target.SectionType {
+	case pullsection.SectionType:
+		sections = m.prs
+	case issuesection.SectionType:
+		sections = m.issues
+	case notificationsection.SectionType:
+		sections = m.notifications
+	case actionsection.SectionType:
+		sections = m.actions
+	case branchsection.SectionType:
+		sections = m.branches
+	}
+	if target.SectionID < 0 || target.SectionID >= len(sections) {
+		return nil
+	}
+	return sections[target.SectionID]
 }
 
 func parseFilterLabelNames(value string) []string {
