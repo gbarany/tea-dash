@@ -81,9 +81,9 @@ func TestMutationsRoundTrip(t *testing.T) {
 func TestMergeRemovesFromOpenSearch(t *testing.T) {
 	s := detailStore(time.Now())
 	c := newTestClient(t, s)
-	merged, err := c.MergePullRequest("teahouse", "kettle", 1, data.MergeOptions{Style: data.MergeStyleSquash})
-	if err != nil || !merged {
-		t.Fatalf("merge: %v merged=%v", err, merged)
+	got, err := c.MergePullRequest("teahouse", "kettle", 1, data.MergeOptions{Style: data.MergeStyleSquash})
+	if err != nil || got != data.MergeCompleted {
+		t.Fatalf("merge: %v outcome=%v", err, got)
 	}
 	rows, _, err := c.SearchPullsPage(context.Background(),
 		config.PrIssueFilter{State: "open", CreatedBy: "@me"}, 30, 1)
@@ -94,6 +94,37 @@ func TestMergeRemovesFromOpenSearch(t *testing.T) {
 		if r.Number == 1 {
 			t.Fatal("merged PR still in open search")
 		}
+	}
+}
+
+func TestMergeUnmergeableReturnsError(t *testing.T) {
+	s := NewStore()
+	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
+	s.AddPull(&Pull{Number: 6, RepoFullName: "teahouse/kettle", Title: "conflict", State: "open", Mergeable: false})
+	c := newTestClient(t, s)
+	_, err := c.MergePullRequest("teahouse", "kettle", 6, data.MergeOptions{Style: data.MergeStyleMerge})
+	if err == nil || !strings.Contains(err.Error(), "not mergeable") {
+		t.Fatalf("error = %v, want not mergeable", err)
+	}
+	if p := s.Pull("teahouse/kettle", 6); p == nil || p.Merged {
+		t.Fatalf("rejected merge should leave the PR open, got %+v", p)
+	}
+}
+
+func TestMergeAutoMergeSchedulesWhenChecksFail(t *testing.T) {
+	s := NewStore()
+	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
+	s.AddPull(&Pull{
+		Number: 2, RepoFullName: "teahouse/kettle", Title: "ci", State: "open", Mergeable: true,
+		Statuses: []*CommitStatus{{Status: "failure", Context: "ci/build"}},
+	})
+	c := newTestClient(t, s)
+	got, err := c.MergePullRequest("teahouse", "kettle", 2, data.MergeOptions{Style: data.MergeStyleMerge, AutoMerge: true})
+	if err != nil || got != data.MergeScheduled {
+		t.Fatalf("outcome=%v err=%v, want MergeScheduled", got, err)
+	}
+	if p := s.Pull("teahouse/kettle", 2); p == nil || p.Merged {
+		t.Fatalf("scheduled auto-merge should leave the PR open, got %+v", p)
 	}
 }
 

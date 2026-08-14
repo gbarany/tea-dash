@@ -36,7 +36,7 @@ type Client interface {
 	AddLabels(owner, repo string, index int64, names []string) error
 	RemoveLabels(owner, repo string, index int64, names []string) error
 	SetIssueMilestone(owner, repo string, index int64, title string) error
-	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error)
+	MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (data.MergeOutcome, error)
 	UpdatePullRequest(owner, repo string, index int64) error
 	MarkPullReady(owner, repo string, index int64) (bool, error)
 	MarkPullDraft(owner, repo string, index int64) (bool, error)
@@ -447,12 +447,12 @@ func (r Runner) run(ctx context.Context, intent uiactions.Intent) (string, error
 		}
 		opt.Title = strings.TrimSpace(intent.Prompt.Title)
 		opt.Message = strings.TrimSpace(intent.Prompt.Body)
-		merged, err := r.client.MergePullRequest(owner, repo, index, opt)
+		outcome, err := r.client.MergePullRequest(owner, repo, index, opt)
 		if err != nil {
 			return "", err
 		}
-		if !merged {
-			return fmt.Sprintf("Merge requested for %s#%d.", intent.Target.Repo, index), nil
+		if outcome == data.MergeScheduled {
+			return fmt.Sprintf("Auto-merge scheduled for %s#%d.", intent.Target.Repo, index), nil
 		}
 		return fmt.Sprintf("Merged %s#%d.", intent.Target.Repo, index), nil
 

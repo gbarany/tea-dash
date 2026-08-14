@@ -5,6 +5,7 @@
 package mockgitea
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -612,22 +613,42 @@ func (s *Store) MarkAllNotificationsRead() {
 	}
 }
 
+// errMergeNotAllowed is returned when Gitea would answer 405 (WIP, conflict,
+// or mergeable=false). The HTTP handler maps it to that status.
+var errMergeNotAllowed = errors.New("pull request is not mergeable")
+
 // MergePull marks a pull request merged and closed. It errors if the pull is
-// unknown. style and deleteBranch are accepted (and currently unused) for
-// later tasks — e.g. an HTTP handler that echoes the merge style back, or
-// simulated branch deletion.
-func (s *Store) MergePull(repo string, num int64, style string, deleteBranch bool) error {
+// unknown or not mergeable. autoMerge + failing/pending checks returns
+// scheduled=true without flipping Merged, matching Gitea's 201.
+func (s *Store) MergePull(repo string, num int64, style string, deleteBranch, autoMerge bool) (scheduled bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.pulls[repo] {
-		if p.Number == num {
-			p.Merged = true
-			p.State = "closed"
-			p.Updated = time.Now()
-			return nil
+		if p.Number != num {
+			continue
+		}
+		if !p.Mergeable {
+			return false, errMergeNotAllowed
+		}
+		if autoMerge && pullHasBlockingChecks(p) {
+			return true, nil
+		}
+		p.Merged = true
+		p.State = "closed"
+		p.Updated = time.Now()
+		return false, nil
+	}
+	return false, fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+}
+
+func pullHasBlockingChecks(p *Pull) bool {
+	for _, st := range p.Statuses {
+		switch st.Status {
+		case "failure", "pending", "error":
+			return true
 		}
 	}
-	return fmt.Errorf("mockgitea: unknown pull %s#%d", repo, num)
+	return false
 }
 
 // SetPullState opens or closes a pull request. It errors if the pull is

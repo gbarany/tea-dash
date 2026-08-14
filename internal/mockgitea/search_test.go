@@ -15,7 +15,7 @@ func searchStore(now time.Time) *Store {
 	s.AddUser(mei)
 	s.AddRepo(&Repo{FullName: "teahouse/kettle", Name: "kettle", Owner: &User{Login: "teahouse"}})
 	s.AddPull(&Pull{Number: 1, RepoFullName: "teahouse/kettle", Title: "fix: login flow",
-		State: "open", Author: s.Me(), Updated: now})
+		State: "open", Mergeable: true, Author: s.Me(), Updated: now})
 	s.AddPull(&Pull{Number: 2, RepoFullName: "teahouse/kettle", Title: "feat: rate limits",
 		State: "open", Author: mei, Reviewers: []*User{s.Me()}, Updated: now.Add(-time.Hour)})
 	s.AddPull(&Pull{Number: 3, RepoFullName: "teahouse/kettle", Title: "old fix",

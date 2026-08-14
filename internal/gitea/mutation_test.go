@@ -325,7 +325,7 @@ func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	merged, err := c.MergePullRequest("acme", "widgets", 44, data.MergeOptions{
+	got, err := c.MergePullRequest("acme", "widgets", 44, data.MergeOptions{
 		Style:        data.MergeStyleSquash,
 		Title:        "merge title",
 		Message:      "merge message",
@@ -337,8 +337,49 @@ func TestMergePullRequestPostsOptionsAndReturnsMerged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MergePullRequest: %v", err)
 	}
-	if !merged {
-		t.Fatal("merged = false, want true")
+	if got != data.MergeCompleted {
+		t.Fatalf("outcome = %v, want MergeCompleted", got)
+	}
+}
+
+func TestMergePullRequestSchedulesOn201(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls/44/merge" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	got, err := c.MergePullRequest("acme", "widgets", 44, data.MergeOptions{Style: data.MergeStyleMerge, AutoMerge: true})
+	if err != nil {
+		t.Fatalf("MergePullRequest: %v", err)
+	}
+	if got != data.MergeScheduled {
+		t.Fatalf("outcome = %v, want MergeScheduled", got)
+	}
+}
+
+func TestMergePullRequestRejectionSurfacesBody(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		fmt.Fprint(w, `{"message":"Pull Request is not mergeable"}`)
+	})
+
+	_, err := c.MergePullRequest("acme", "widgets", 44, data.MergeOptions{Style: data.MergeStyleMerge})
+	if err == nil || !strings.Contains(err.Error(), "not mergeable") {
+		t.Fatalf("error = %v, want the Gitea rejection reason", err)
+	}
+}
+
+func TestMergePullRequestConflictSurfacesBody(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"message":"head out of date"}`)
+	})
+
+	_, err := c.MergePullRequest("acme", "widgets", 44, data.MergeOptions{Style: data.MergeStyleMerge})
+	if err == nil || !strings.Contains(err.Error(), "head out of date") {
+		t.Fatalf("error = %v, want the Gitea 409 reason", err)
 	}
 }
 

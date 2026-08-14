@@ -46,6 +46,15 @@ type MergeOptions struct {
 	HeadCommitID string
 }
 
+// MergeOutcome is Gitea's answer to POST .../pulls/{n}/merge.
+// 200 means the PR was merged; 201 means auto-merge was scheduled.
+type MergeOutcome int
+
+const (
+	MergeCompleted MergeOutcome = iota
+	MergeScheduled
+)
+
 // PullReviewEvent is the user's review action. The transport maps these event
 // names onto Gitea's submitted review states.
 type PullReviewEvent string

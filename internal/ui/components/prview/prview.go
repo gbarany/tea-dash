@@ -238,6 +238,9 @@ func pullHeader(row data.PullRequest, detail *data.PullDetail, width int, styles
 	} else {
 		header = append(header, statePill(rowState(row.State), stateLabel(row.State), styles, set))
 	}
+	if detail != nil && !detail.Merged && !detail.Mergeable && !row.Draft {
+		header = append(header, statePill(icons.Failure, "NOT MERGEABLE", styles, set))
+	}
 	if detail != nil {
 		header = append(header,
 			subtleRef.Render(fmt.Sprintf("%s ← %s", detail.BaseRef, detail.HeadRef)),

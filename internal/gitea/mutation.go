@@ -1,7 +1,11 @@
 package gitea
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	sdk "code.gitea.io/sdk/gitea"
@@ -289,27 +293,51 @@ func (c *Client) SetIssueMilestone(owner, repo string, index int64, title string
 }
 
 // MergePullRequest merges a pull request with the requested strategy and
-// optional server-side controls.
-func (c *Client) MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (bool, error) {
+// optional server-side controls. It talks to Gitea over the raw HTTP
+// escape hatch so 200 (merged), 201 (auto-merge scheduled), and 405/409
+// (rejected, reason in the body) stay distinguishable. The typed SDK
+// collapses all of those to (bool, nil).
+func (c *Client) MergePullRequest(owner, repo string, index int64, opt data.MergeOptions) (data.MergeOutcome, error) {
 	deleteBranch := opt.DeleteBranch
-	var merged bool
-	err := c.call(func() error {
-		var e error
-		merged, _, e = c.sdk.MergePullRequest(owner, repo, index, sdk.MergePullRequestOption{
-			Style:                  sdk.MergeStyle(opt.Style),
-			Title:                  opt.Title,
-			Message:                opt.Message,
-			DeleteBranchAfterMerge: &deleteBranch,
-			ForceMerge:             opt.ForceMerge,
-			HeadCommitId:           opt.HeadCommitID,
-			MergeWhenChecksSucceed: opt.AutoMerge,
-		})
-		return e
+	status, err := c.rawPostJSON(context.Background(), fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, index), sdk.MergePullRequestOption{
+		Style:                  sdk.MergeStyle(opt.Style),
+		Title:                  opt.Title,
+		Message:                opt.Message,
+		DeleteBranchAfterMerge: &deleteBranch,
+		ForceMerge:             opt.ForceMerge,
+		HeadCommitId:           opt.HeadCommitID,
+		MergeWhenChecksSucceed: opt.AutoMerge,
 	})
 	if err != nil {
-		return false, fmt.Errorf("merge pull %s/%s#%d: %w", owner, repo, index, err)
+		return 0, fmt.Errorf("merge pull %s/%s#%d: %s", owner, repo, index, mergeErrorText(err))
 	}
-	return merged, nil
+	if status == http.StatusCreated {
+		return data.MergeScheduled, nil
+	}
+	return data.MergeCompleted, nil
+}
+
+func mergeErrorText(err error) string {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		if msg := giteaMessage(httpErr.Body); msg != "" {
+			return msg
+		}
+		if httpErr.Body != "" {
+			return httpErr.Body
+		}
+	}
+	return err.Error()
+}
+
+func giteaMessage(body string) string {
+	var wrap struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(body), &wrap) != nil || wrap.Message == "" {
+		return ""
+	}
+	return wrap.Message
 }
 
 // MergeCapabilities returns the merge choices the selected repository advertises.

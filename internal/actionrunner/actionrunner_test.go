@@ -350,6 +350,29 @@ func TestDispatchMergeAndReview(t *testing.T) {
 	}
 }
 
+func TestDispatchMergeScheduledMessage(t *testing.T) {
+	client := &fakeClient{mergeOutcome: data.MergeScheduled}
+	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindMerge))
+	if got.Status != uiactions.ResultSucceeded || got.Err != nil {
+		t.Fatalf("scheduled merge result = %+v", got)
+	}
+	if !strings.Contains(got.Message, "Auto-merge scheduled for acme/widgets#7") {
+		t.Fatalf("message = %q, want scheduled confirmation", got.Message)
+	}
+}
+
+func TestDispatchMergeRejectedIsAnError(t *testing.T) {
+	client := &fakeClient{err: errors.New("Pull Request is not mergeable")}
+	got := runDispatch(t, New(Options{Client: client}), pullIntent(uiactions.KindMerge))
+	if got.Status != uiactions.ResultErrored || got.Err == nil ||
+		!strings.Contains(got.Err.Error(), "not mergeable") {
+		t.Fatalf("rejected merge result = %+v", got)
+	}
+	if strings.Contains(got.Message, "Merge requested") {
+		t.Fatalf("rejected merge still used the old success wording: %q", got.Message)
+	}
+}
+
 func TestDispatchReviewRequestChangesPassesBody(t *testing.T) {
 	client := &fakeClient{}
 	intent := pullIntent(uiactions.KindReview)
@@ -883,6 +906,7 @@ type fakeClient struct {
 	issueState         data.ItemState
 	pullState          data.ItemState
 	merge              data.MergeOptions
+	mergeOutcome       data.MergeOutcome
 	review             data.PullReviewOptions
 	updatePull         int64
 	markReady          int64
@@ -975,9 +999,12 @@ func (f *fakeClient) SetIssueMilestone(_, _ string, index int64, title string) e
 	return f.err
 }
 
-func (f *fakeClient) MergePullRequest(_, _ string, _ int64, opt data.MergeOptions) (bool, error) {
+func (f *fakeClient) MergePullRequest(_, _ string, _ int64, opt data.MergeOptions) (data.MergeOutcome, error) {
 	f.merge = opt
-	return f.err == nil, f.err
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.mergeOutcome, nil
 }
 
 func (f *fakeClient) SubmitPullReview(_, _ string, _ int64, opt data.PullReviewOptions) (data.Review, error) {
