@@ -33,6 +33,7 @@ type Config struct {
 	Placeholder string
 	Options     []Option
 	Initial     string
+	Selected    []string
 }
 
 // Result reports whether a prompt completed and what it submitted.
@@ -66,6 +67,17 @@ func (m Model) Focus(cfg Config) Model {
 	m.input = newInput(cfg)
 	m.selected = 0
 	m.multiSelected = map[int]bool{}
+	if cfg.Mode == ModeMultiPicker && len(cfg.Selected) > 0 {
+		want := map[string]bool{}
+		for _, name := range cfg.Selected {
+			want[name] = true
+		}
+		for i, option := range cfg.Options {
+			if want[option.Value] {
+				m.multiSelected[i] = true
+			}
+		}
+	}
 	return m
 }
 

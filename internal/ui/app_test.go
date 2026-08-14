@@ -709,7 +709,7 @@ func TestMouseClickInPreviewDoesNotChangeSelection(t *testing.T) {
 func TestAvailableActionsIncludeCommonPullRequestButtons(t *testing.T) {
 	row := data.PullRequest{Number: 1, Title: "First", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"}
 	buttons := availableActions(context.PullsView, row)
-	for _, want := range []string{"Open", "Refresh", "Comment", "Request review", "Remove reviewers", "Diff", "Checkout", "Merge", "Close"} {
+	for _, want := range []string{"Open", "Refresh", "Comment", "Filter labels", "Request review", "Remove reviewers", "Diff", "Checkout", "Merge", "Close"} {
 		if !hasActionLabel(buttons, want) {
 			t.Fatalf("available actions missing %q: %+v", want, buttons)
 		}
@@ -727,7 +727,7 @@ func TestAvailableActionsIncludeReadyButtonForDraftPullRequest(t *testing.T) {
 func TestAvailableActionsIncludeCommonIssueButtons(t *testing.T) {
 	row := data.Issue{Number: 7, Title: "Issue row", RepoNameWithOwner: "gitea/tea", Author: "me", State: "open"}
 	buttons := availableActions(context.IssuesView, row)
-	for _, want := range []string{"Open", "Refresh", "Comment", "Checkout", "Close"} {
+	for _, want := range []string{"Open", "Refresh", "Comment", "Filter labels", "Checkout", "Close"} {
 		if !hasActionLabel(buttons, want) {
 			t.Fatalf("issue available actions missing %q: %+v", want, buttons)
 		}
@@ -741,6 +741,122 @@ func hasActionLabel(buttons []actionButton, label string) bool {
 		}
 	}
 	return false
+}
+
+func TestLabelFilterReposPrefersSectionThenSmartThenConfigured(t *testing.T) {
+	if got := labelFilterRepos("acme/one", "acme/two", true, []string{"acme/three"}); len(got) != 1 || got[0] != "acme/one" {
+		t.Fatalf("section repo = %v, want [acme/one]", got)
+	}
+	if got := labelFilterRepos("", "acme/two", true, []string{"acme/three"}); len(got) != 1 || got[0] != "acme/two" {
+		t.Fatalf("smart current repo = %v, want [acme/two]", got)
+	}
+	if got := labelFilterRepos("", "acme/two", false, []string{"acme/three", "acme/four"}); len(got) != 2 {
+		t.Fatalf("configured repos = %v, want two entries", got)
+	}
+	if got := labelFilterRepos("", "", false, nil); len(got) != 0 {
+		t.Fatalf("no repos = %v, want empty", got)
+	}
+}
+
+func TestFilterLabelsOpensPickerAndAppliesSelection(t *testing.T) {
+	client := labelsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/gbarany/tea-dash/labels" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `[{"id":1,"name":"bug","color":"ee0000"},{"id":2,"name":"urgent","color":"ffaa00"}]`)
+	})
+	m := New(&config.Config{
+		Repos:      []string{"gbarany/tea-dash"},
+		PRSections: []config.SectionConfig{{Title: "Open PRs", Filter: config.PrIssueFilter{State: "open", Labels: []string{"bug"}}}},
+	}, client)
+	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = update(t, m, fetchedMsg([]data.PullRequest{{
+		Number: 1, Title: "First", RepoNameWithOwner: "gbarany/tea-dash",
+		Author: "me", State: "open",
+	}}))
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("filter labels should fetch repo labels before opening the prompt")
+	}
+	msg := firstNonNilCmd(t, cmd)
+	loaded, ok := msg.(labelsLoadedMsg)
+	if !ok || loaded.err != nil || len(loaded.labels) != 2 {
+		t.Fatalf("label load msg = %#v, want two labels", msg)
+	}
+
+	m = update(t, m, loaded)
+	view := m.actionPrompt.View(120)
+	if !strings.Contains(view, "[x] bug") || !strings.Contains(view, "[ ] urgent") {
+		t.Fatalf("label picker should preselect configured bug:\n%s", view)
+	}
+
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = update(t, m, tea.KeyPressMsg{Code: ' ', Text: " "})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	sec, ok := m.getCurrSection().(labelFilterSection)
+	if !ok {
+		t.Fatal("current section should support label filters")
+	}
+	got := sec.FilterLabels()
+	if len(got) != 2 || got[0] != "bug" || got[1] != "urgent" {
+		t.Fatalf("live filter labels = %v, want [bug urgent]", got)
+	}
+}
+
+func firstNonNilCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var fallback tea.Msg
+		for _, c := range batch {
+			if c == nil {
+				continue
+			}
+			inner := c()
+			if inner == nil {
+				continue
+			}
+			if _, ok := inner.(labelsLoadedMsg); ok {
+				return inner
+			}
+			if fallback == nil {
+				fallback = inner
+			}
+		}
+		if fallback != nil {
+			return fallback
+		}
+		t.Fatal("batch had no non-nil message")
+	}
+	return msg
+}
+
+func labelsClient(t *testing.T, labelsHandler http.HandlerFunc) *gitea.Client {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"version":"1.22.0"}`)
+	})
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":1,"login":"me"}`)
+	})
+	if labelsHandler != nil {
+		mux.HandleFunc("/api/v1/repos/gbarany/tea-dash/labels", labelsHandler)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := gitea.NewClient(stdctx.Background(), auth.Config{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return client
 }
 
 func TestRequestReviewersLoadsRepoReviewersIntoMultiPicker(t *testing.T) {

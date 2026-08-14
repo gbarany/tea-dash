@@ -82,6 +82,7 @@ type keyMap struct {
 	Unsubscribe      key.Binding
 	AddLabel         key.Binding
 	RemoveLabel      key.Binding
+	FilterLabels     key.Binding
 	Milestone        key.Binding
 	Merge            key.Binding
 	UpdateBranch     key.Binding
@@ -195,7 +196,7 @@ func (k keyMap) viewScopedGroup(view context.ViewType) BindingGroup {
 	switch view {
 	case context.IssuesView:
 		return BindingGroup{Title: "Issues", Bindings: []key.Binding{
-			k.Comment, k.Assign, k.Unassign, k.AddLabel, k.RemoveLabel, k.Milestone,
+			k.Comment, k.Assign, k.Unassign, k.AddLabel, k.RemoveLabel, k.FilterLabels, k.Milestone,
 			k.Subscribe, k.Unsubscribe, k.Close, k.Reopen, k.Checkout,
 		}}
 	case context.NotificationsView:
@@ -210,7 +211,7 @@ func (k keyMap) viewScopedGroup(view context.ViewType) BindingGroup {
 		}}
 	default:
 		return BindingGroup{Title: "PRs", Bindings: []key.Binding{
-			k.Comment, k.Assign, k.Unassign, k.AddLabel, k.RemoveLabel, k.Merge, k.UpdateBranch,
+			k.Comment, k.Assign, k.Unassign, k.AddLabel, k.RemoveLabel, k.FilterLabels, k.Merge, k.UpdateBranch,
 			k.MarkReady, k.WatchChecks, k.Close, k.Reopen, k.Review, k.RequestReviewers,
 			k.RemoveReviewers, k.ExternalDiff, k.Checkout,
 		}}
@@ -374,6 +375,10 @@ func defaultKeyMap() keyMap {
 		RemoveLabel: key.NewBinding(
 			key.WithKeys("U"),
 			key.WithHelp("U", "remove label"),
+		),
+		FilterLabels: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "filter labels"),
 		),
 		Milestone: key.NewBinding(
 			key.WithKeys("M"),
@@ -555,6 +560,8 @@ func (k *keyMap) rebindBuiltin(name, keyName string) {
 		k.AddLabel = binding(keyName, "add label")
 	case "removelabel":
 		k.RemoveLabel = binding(keyName, "remove label")
+	case "filterlabels", "filterlabel":
+		k.FilterLabels = binding(keyName, "filter labels")
 	case "milestone", "setmilestone":
 		k.Milestone = binding(keyName, "milestone")
 	case "merge":
@@ -684,6 +691,8 @@ func (k keyMap) bindingForBuiltin(name string) (key.Binding, bool) {
 		return k.ExternalDiff, true
 	case "merge":
 		return k.Merge, true
+	case "filterlabels", "filterlabel":
+		return k.FilterLabels, true
 	default:
 		return key.Binding{}, false
 	}

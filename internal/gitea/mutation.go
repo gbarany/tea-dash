@@ -218,6 +218,29 @@ func (c *Client) RemoveLabels(owner, repo string, index int64, names []string) e
 	return nil
 }
 
+// ListRepoLabels returns the repository's label definitions by name.
+func (c *Client) ListRepoLabels(owner, repo string) ([]data.Label, error) {
+	var labels []*sdk.Label
+	err := c.call(func() error {
+		var e error
+		labels, _, e = c.sdk.ListRepoLabels(owner, repo, sdk.ListLabelsOptions{
+			ListOptions: sdk.ListOptions{Page: -1},
+		})
+		return e
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list labels for %s/%s: %w", owner, repo, err)
+	}
+	out := make([]data.Label, 0, len(labels))
+	for _, label := range labels {
+		if label == nil || strings.TrimSpace(label.Name) == "" {
+			continue
+		}
+		out = append(out, data.Label{Name: label.Name, Color: label.Color})
+	}
+	return out, nil
+}
+
 func (c *Client) resolveLabelIDs(owner, repo string, names []string) ([]int64, error) {
 	if len(names) == 0 {
 		return nil, fmt.Errorf("label names cannot be empty")

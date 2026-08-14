@@ -626,6 +626,35 @@ func TestRemovePullReviewersDeletesReviewerList(t *testing.T) {
 	}
 }
 
+func TestListRepoLabelsMapsNames(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/acme/widgets/labels" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `[
+			{"id":1,"name":"bug","color":"ee0000"},
+			{"id":2,"name":"urgent","color":"ffaa00"},
+			{"name":""},
+			null
+		]`)
+	})
+
+	got, err := c.ListRepoLabels("acme", "widgets")
+	if err != nil {
+		t.Fatalf("ListRepoLabels: %v", err)
+	}
+	want := []data.Label{
+		{Name: "bug", Color: "ee0000"},
+		{Name: "urgent", Color: "ffaa00"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %#v, want %#v", got, want)
+	}
+}
+
 func TestListReviewersMapsRequestableReviewers(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

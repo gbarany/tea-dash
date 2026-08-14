@@ -160,6 +160,7 @@ func TestGroups_ViewScopedGroupChangesWithView(t *testing.T) {
 		title string
 		key   string
 	}{
+		{context.PullsView, "PRs", "f"},
 		{context.PullsView, "PRs", "m"},
 		{context.IssuesView, "Issues", "M"},
 		{context.NotificationsView, "Inbox", "m"},

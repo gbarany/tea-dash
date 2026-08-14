@@ -130,6 +130,20 @@ func TestMultiPickerTogglesAndSubmitsCommaSeparatedValues(t *testing.T) {
 	}
 }
 
+func TestMultiPickerPreselectsSelectedValues(t *testing.T) {
+	cfg := Config{
+		Mode:     ModeMultiPicker,
+		Title:    "Filter labels",
+		Options:  []Option{{Label: "bug", Value: "bug"}, {Label: "urgent", Value: "urgent"}},
+		Selected: []string{"urgent"},
+	}
+	m := New().Focus(cfg)
+	view := m.View(120)
+	if !strings.Contains(view, "[ ] bug") || !strings.Contains(view, "[x] urgent") {
+		t.Fatalf("preselected picker:\n%s", view)
+	}
+}
+
 func TestSmallWidthRender(t *testing.T) {
 	m := New().Focus(Config{
 		Mode:        ModeText,
