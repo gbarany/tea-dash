@@ -158,6 +158,21 @@ func TestResolveTokenCommand(t *testing.T) {
 	}
 }
 
+// tokenCommand must not execute $SHELL: that env var is attacker-controllable
+// in the process environment and is a gosec G702 taint source.
+func TestResolveTokenCommandDoesNotUseSHELL(t *testing.T) {
+	t.Setenv("TEA_DASH_TOKEN", "")
+	t.Setenv("SHELL", filepath.Join(t.TempDir(), "not-a-shell"))
+	missing := filepath.Join(t.TempDir(), "none.yml")
+	got, err := ResolveFromFile(missing, Overrides{URL: "https://x.example", TokenCommand: "echo tokfromenv"})
+	if err != nil {
+		t.Fatalf("ResolveFromFile: %v", err)
+	}
+	if got.Token != "tokfromenv" {
+		t.Fatalf("token = %q, want %q even when SHELL is unset/unusable", got.Token, "tokfromenv")
+	}
+}
+
 func TestResolveTokenCommandFailureErrors(t *testing.T) {
 	t.Setenv("TEA_DASH_TOKEN", "")
 	missing := filepath.Join(t.TempDir(), "none.yml")

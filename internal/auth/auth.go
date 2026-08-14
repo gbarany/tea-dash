@@ -187,14 +187,11 @@ func resolveToken(ov Overrides, login *teaLogin) (string, error) {
 	return loginField(login, func(l teaLogin) string { return l.Token }), nil
 }
 
-// runTokenCommand runs command through the user's $SHELL and returns its
-// trimmed stdout. On failure it includes stderr so the cause is actionable.
+// runTokenCommand runs command via `sh -c` and returns its trimmed stdout.
+// The interpreter is a fixed `sh`, not $SHELL: the process environment is a
+// taint source, and tokenCommand does not need a user-selected shell.
 func runTokenCommand(command string) (string, error) {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "sh"
-	}
-	cmd := exec.Command(shell, "-c", command)
+	cmd := exec.Command("sh", "-c", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
