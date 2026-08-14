@@ -1,7 +1,9 @@
 package mockgitea
 
 import (
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -53,5 +55,25 @@ func TestSeedLocalRepo(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(upstream)); got != "main" {
 		t.Fatalf("feature/steamer@{upstream} = %q, want main", got)
+	}
+}
+
+func TestSeedLocalRepoDirIsNotWorldAccessible(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix directory permission bits are not enforced on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir, err := SeedLocalRepo(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm&0o007 != 0 {
+		t.Fatalf("SeedLocalRepo dir mode %04o is world-accessible, want 0750 or less", perm)
 	}
 }

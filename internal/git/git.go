@@ -159,7 +159,7 @@ func remoteURL(cwd, remoteName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(filepath.Clean(configPath))
 	if err != nil {
 		return "", err
 	}
@@ -195,7 +195,7 @@ func gitConfigPath(cwd string) (string, error) {
 	if info.IsDir() {
 		return filepath.Join(gitPath, "config"), nil
 	}
-	data, err := os.ReadFile(gitPath)
+	data, err := os.ReadFile(filepath.Clean(gitPath))
 	if err != nil {
 		return "", err
 	}

@@ -10,6 +10,25 @@ import (
 	"testing"
 )
 
+func FuzzParseRemoteURL(f *testing.F) {
+	f.Add("https://git.example.com/acme/widgets.git")
+	f.Add("http://git.example.com:3000/acme/widgets")
+	f.Add("ssh://git@git.example.com:2222/acme/widgets.git")
+	f.Add("ssh://git@git.example.com:443/acme/widgets.git")
+	f.Add("git@git.example.com:acme/widgets.git")
+	f.Add("")
+	f.Add("not-a-url")
+	f.Fuzz(func(t *testing.T, raw string) {
+		ref, err := ParseRemoteURL(raw)
+		if err != nil {
+			return
+		}
+		if ref.Owner == "" || ref.Repo == "" || ref.FullName() == "" {
+			t.Fatalf("ParseRemoteURL(%q) succeeded with empty identity: %+v", raw, ref)
+		}
+	})
+}
+
 func TestParseRemoteURL(t *testing.T) {
 	tests := []struct {
 		name   string
