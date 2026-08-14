@@ -824,7 +824,7 @@ func loadConfigMap(file string, stack []string) (map[string]any, error) {
 		}
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}

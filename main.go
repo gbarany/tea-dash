@@ -127,12 +127,14 @@ func startDebugLog(enabled bool, cwd string) (*os.File, error) {
 	if !enabled {
 		return nil, nil
 	}
-	f, err := os.OpenFile(filepath.Join(cwd, "debug.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Clean(filepath.Join(cwd, "debug.log")), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening debug.log: %w", err)
 	}
 	if _, err := fmt.Fprintf(f, "tea-dash debug log started at %s\n", time.Now().Format(time.RFC3339)); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			return nil, fmt.Errorf("writing debug.log: %w (close: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("writing debug.log: %w", err)
 	}
 	return f, nil
@@ -169,7 +171,9 @@ func resolveEnvironment(opts cliOptions, cwd string) (*config.Config, auth.Confi
 		cleanup := func() {
 			srv.Close()
 			if parent != "" {
-				os.RemoveAll(parent)
+				if err := os.RemoveAll(parent); err != nil {
+					fmt.Fprintln(os.Stderr, "note: could not remove demo repo:", err)
+				}
 			}
 		}
 

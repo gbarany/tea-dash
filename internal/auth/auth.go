@@ -103,7 +103,7 @@ func ResolveFromFile(path string, ov Overrides) (Config, error) {
 // nil, nil); other read/parse failures are surfaced so real config problems are
 // not silently swallowed.
 func readTeaLogins(path string) ([]teaLogin, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
