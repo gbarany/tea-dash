@@ -8,7 +8,7 @@ require (
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.5
 	code.gitea.io/sdk/gitea v0.25.1
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	gopkg.in/yaml.v3 v3.0.1
 )
 
