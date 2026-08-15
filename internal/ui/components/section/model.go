@@ -3,6 +3,7 @@ package section
 import (
 	stdctx "context"
 	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -56,15 +57,16 @@ type Options[T data.RowData] struct {
 // views. It embeds BaseModel and holds the per-type seams.
 type Model[T data.RowData] struct {
 	BaseModel
-	rows        []T
-	fetch       func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int, int) ([]T, int, error)
-	buildRow    func(T) table.Row
-	columns     func(int) []table.Column
-	limitFn     func(*config.Config) int
-	filterKind  string
-	page        int
-	loadingMore bool
-	pageable    bool
+	rows             []T
+	fetch            func(stdctx.Context, *gitea.Client, config.PrIssueFilter, int, int) ([]T, int, error)
+	buildRow         func(T) table.Row
+	columns          func(int) []table.Column
+	limitFn          func(*config.Config) int
+	filterKind       string
+	configuredLabels []string
+	page             int
+	loadingMore      bool
+	pageable         bool
 }
 
 // compile-time interface assertions
@@ -106,8 +108,31 @@ func New[T data.RowData](o Options[T]) *Model[T] {
 	m.columns = columns
 	m.limitFn = o.Limit
 	m.filterKind = o.FilterKind
+	m.configuredLabels = append([]string(nil), o.Config.Filter.Labels...)
 	m.pageable = o.Pageable
 	return m
+}
+
+// FilterLabels returns the live label filter used for the next fetch.
+func (m *Model[T]) FilterLabels() []string {
+	return append([]string(nil), m.Config.Filter.Labels...)
+}
+
+// SetFilterLabels replaces the live label filter. An empty list means no
+// label constraint.
+func (m *Model[T]) SetFilterLabels(names []string) {
+	m.Config.Filter.Labels = append([]string(nil), names...)
+}
+
+// ResetFilterLabels restores the section's configured YAML labels.
+func (m *Model[T]) ResetFilterLabels() {
+	m.Config.Filter.Labels = append([]string(nil), m.configuredLabels...)
+}
+
+// SectionRepo returns this section's pinned repo, or empty when it is not
+// repo-scoped.
+func (m *Model[T]) SectionRepo() string {
+	return strings.TrimSpace(m.Config.Repo)
 }
 
 // FetchRows fetches the current user's rows across all repos.

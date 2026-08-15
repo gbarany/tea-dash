@@ -530,10 +530,12 @@ func TestConfigValidateKeybindingsRequireKeyAndAction(t *testing.T) {
 		{Key: "[", Builtin: "prevSidebarTab"},
 		{Key: "]", Builtin: "nextSidebarTab"},
 		{Key: "i", Builtin: "viewIssues"},
+		{Key: "F", Builtin: "filterLabels"},
 	}, Issues: []Keybinding{
 		{Key: "p", Builtin: "viewPrs"},
 		{Key: "A", Builtin: "unassign"},
 		{Key: "U", Builtin: "removeLabel"},
+		{Key: "F", Builtin: "filterLabel"},
 	}, Notifications: []Keybinding{
 		{Key: "b", Builtin: "toggleBookmark"},
 	}, Actions: []Keybinding{

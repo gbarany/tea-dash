@@ -626,6 +626,161 @@ func TestRemovePullReviewersDeletesReviewerList(t *testing.T) {
 	}
 }
 
+func TestListRepoLabelsMapsNames(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/labels":
+			fmt.Fprint(w, `[
+				{"id":1,"name":"bug","color":"ee0000"},
+				{"id":2,"name":"urgent","color":"ffaa00"},
+				{"name":""},
+				null
+			]`)
+		case "/api/v1/orgs/acme/labels":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"organization not found"}`)
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	})
+
+	got, err := c.ListRepoLabels("acme", "widgets")
+	if err != nil {
+		t.Fatalf("ListRepoLabels: %v", err)
+	}
+	want := []data.Label{
+		{Name: "bug", Color: "ee0000"},
+		{Name: "urgent", Color: "ffaa00"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %#v, want %#v", got, want)
+	}
+}
+
+func TestListRepoLabelsFetchesEveryPage(t *testing.T) {
+	var repoPages []string
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/labels":
+			page := r.URL.Query().Get("page")
+			if page == "" || page == "0" {
+				page = "1" // The real endpoint normalizes the SDK's page=0.
+			}
+			repoPages = append(repoPages, page)
+			w.Header().Set("X-Total-Count", "3")
+			switch page {
+			case "1":
+				fmt.Fprint(w, `[
+					{"id":1,"name":"bug","color":"ee0000"},
+					{"id":2,"name":"urgent","color":"ffaa00"}
+				]`)
+			case "2":
+				fmt.Fprint(w, `[{"id":3,"name":"later","color":"00aaee"}]`)
+			default:
+				t.Fatalf("unexpected repo label page %q", page)
+			}
+		case "/api/v1/orgs/acme/labels":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"organization not found"}`)
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	})
+
+	got, err := c.ListRepoLabels("acme", "widgets")
+	if err != nil {
+		t.Fatalf("ListRepoLabels: %v", err)
+	}
+	want := []data.Label{
+		{Name: "bug", Color: "ee0000"},
+		{Name: "urgent", Color: "ffaa00"},
+		{Name: "later", Color: "00aaee"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(repoPages, []string{"1", "2"}) {
+		t.Fatalf("repo label pages = %#v, want pages 1 and 2", repoPages)
+	}
+}
+
+func TestListRepoLabelsIncludesOrgLabelsWhenRepoHasNone(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Total-Count", "1")
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/labels":
+			w.Header().Set("X-Total-Count", "0")
+			fmt.Fprint(w, `[]`)
+		case "/api/v1/orgs/acme/labels":
+			fmt.Fprint(w, `[{"id":10,"name":"org-wide","color":"8844ee"}]`)
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	})
+
+	got, err := c.ListRepoLabels("acme", "widgets")
+	if err != nil {
+		t.Fatalf("ListRepoLabels: %v", err)
+	}
+	want := []data.Label{{Name: "org-wide", Color: "8844ee"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %#v, want %#v", got, want)
+	}
+}
+
+func TestListRepoLabelsPrefersRepoLabelOnNameCollision(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Total-Count", "2")
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/labels":
+			w.Header().Set("X-Total-Count", "1")
+			fmt.Fprint(w, `[{"id":1,"name":"bug","color":"repo00"}]`)
+		case "/api/v1/orgs/acme/labels":
+			fmt.Fprint(w, `[
+				{"id":10,"name":"bug","color":"org000"},
+				{"id":11,"name":"org-wide","color":"8844ee"}
+			]`)
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	})
+
+	got, err := c.ListRepoLabels("acme", "widgets")
+	if err != nil {
+		t.Fatalf("ListRepoLabels: %v", err)
+	}
+	want := []data.Label{
+		{Name: "bug", Color: "repo00"},
+		{Name: "org-wide", Color: "8844ee"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %#v, want %#v", got, want)
+	}
+}
+
+func TestListRepoLabelsReturnsOrgEndpointErrors(t *testing.T) {
+	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/repos/acme/widgets/labels":
+			w.Header().Set("X-Total-Count", "0")
+			fmt.Fprint(w, `[]`)
+		case "/api/v1/orgs/acme/labels":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"message":"org labels unavailable"}`)
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	})
+
+	_, err := c.ListRepoLabels("acme", "widgets")
+	if err == nil || !strings.Contains(err.Error(), "org labels unavailable") {
+		t.Fatalf("ListRepoLabels error = %v, want org endpoint error", err)
+	}
+}
+
 func TestListReviewersMapsRequestableReviewers(t *testing.T) {
 	c := mutationClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

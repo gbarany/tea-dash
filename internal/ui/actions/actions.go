@@ -11,6 +11,7 @@ const (
 	KindUnassign          Kind = "unassign"
 	KindAddLabel          Kind = "add_label"
 	KindRemoveLabel       Kind = "remove_label"
+	KindFilterLabels      Kind = "filter_labels"
 	KindSetMilestone      Kind = "set_milestone"
 	KindSubscribe         Kind = "subscribe"
 	KindUnsubscribe       Kind = "unsubscribe"

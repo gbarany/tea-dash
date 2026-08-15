@@ -111,3 +111,54 @@ func contextStyles(t *testing.T) appctx.Styles {
 	t.Helper()
 	return appctx.DefaultStyles()
 }
+
+func TestLabelFilterSnapshotAndReset(t *testing.T) {
+	ctx := &appctx.ProgramContext{
+		Styles:           contextStyles(t),
+		MainContentWidth: 80, MainContentHeight: 20,
+		Config: &config.Config{Defaults: config.Defaults{PRsLimit: 10}},
+	}
+	m := New(Options[data.PullRequest]{
+		Id:           0,
+		Type:         "pr",
+		FilterKind:   "pulls",
+		Ctx:          ctx,
+		Config:       config.SectionConfig{Title: "Bugs", Repo: "acme/widgets", Filter: config.PrIssueFilter{Labels: []string{"bug"}}},
+		LoadingText:  "Loading…",
+		EmptyText:    "none",
+		EmptyHint:    "",
+		SingularForm: "pr",
+		PluralForm:   "prs",
+		Limit:        func(c *config.Config) int { return c.Defaults.PRsLimit },
+		Fetch: func(_ stdctx.Context, _ *gitea.Client, f config.PrIssueFilter, _ int, _ int) ([]data.PullRequest, int, error) {
+			return nil, 0, nil
+		},
+		BuildRow: func(pr data.PullRequest) table.Row { return table.Row{pr.GetTitle()} },
+	})
+
+	if got := m.FilterLabels(); len(got) != 1 || got[0] != "bug" {
+		t.Fatalf("FilterLabels = %v, want [bug]", got)
+	}
+	if got := m.SectionRepo(); got != "acme/widgets" {
+		t.Fatalf("SectionRepo = %q, want acme/widgets", got)
+	}
+
+	m.SetFilterLabels([]string{"urgent"})
+	if got := m.FilterLabels(); len(got) != 1 || got[0] != "urgent" {
+		t.Fatalf("after SetFilterLabels = %v, want [urgent]", got)
+	}
+
+	m.ResetFilterLabels()
+	if got := m.FilterLabels(); len(got) != 1 || got[0] != "bug" {
+		t.Fatalf("after ResetFilterLabels = %v, want configured [bug]", got)
+	}
+
+	m.SetFilterLabels(nil)
+	if got := m.FilterLabels(); len(got) != 0 {
+		t.Fatalf("cleared FilterLabels = %v, want empty", got)
+	}
+	m.ResetFilterLabels()
+	if got := m.FilterLabels(); len(got) != 1 || got[0] != "bug" {
+		t.Fatalf("reset after clear = %v, want [bug]", got)
+	}
+}

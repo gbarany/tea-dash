@@ -4,6 +4,7 @@ package ui
 import (
 	stdctx "context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -173,6 +174,19 @@ type mergeCapabilitiesLoadedMsg struct {
 	intent       actions.Intent
 	capabilities data.MergeCapabilities
 	err          error
+}
+
+type labelsLoadedMsg struct {
+	intent actions.Intent
+	labels []data.Label
+	err    error
+}
+
+type labelFilterSection interface {
+	FilterLabels() []string
+	SetFilterLabels([]string)
+	ResetFilterLabels()
+	SectionRepo() string
 }
 
 // autoRefreshMsg is emitted by the optional background refetch timer.
@@ -489,6 +503,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mergeCapabilitiesLoadedMsg:
 		return m.handleMergeCapabilitiesLoaded(msg)
 
+	case labelsLoadedMsg:
+		return m.handleLabelsLoaded(msg)
+
 	case actions.ResultMsg:
 		var feedbackCmd tea.Cmd
 		m.actionFeedback, feedbackCmd = m.actionFeedback.Set(feedbackFromActionResult(msg))
@@ -652,6 +669,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startAction(actions.KindAddLabel)
 		case !m.scopedBuiltinOverridden("removelabel") && key.Matches(msg, m.keys.RemoveLabel):
 			return m, m.startAction(actions.KindRemoveLabel)
+		case !m.scopedBuiltinOverridden("filterLabels") && !m.scopedBuiltinOverridden("filterLabel") &&
+			(m.ctx.View == context.PullsView || m.ctx.View == context.IssuesView) && key.Matches(msg, m.keys.FilterLabels):
+			return m, m.startLabelFilter()
 		case !m.scopedBuiltinOverridden("setMilestone") && m.ctx.View == context.IssuesView && key.Matches(msg, m.keys.Milestone):
 			return m, m.startAction(actions.KindSetMilestone)
 		// Merge/UpdateBranch/MarkReady/WatchChecks/Review/RequestReviewers/
@@ -1258,6 +1278,7 @@ func availableActions(view context.ViewType, row data.RowData) []actionButton {
 	case context.IssuesView:
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
+			actionButton{Label: "Filter labels", Builtin: "filterLabels"},
 			actionButton{Label: "Checkout", Builtin: "checkout"},
 			actionButton{Label: "Subscribe", Builtin: "subscribe"},
 			actionButton{Label: "Unsubscribe", Builtin: "unsubscribe"},
@@ -1275,6 +1296,7 @@ func availableActions(view context.ViewType, row data.RowData) []actionButton {
 		}
 		buttons = append(buttons,
 			actionButton{Label: "Comment", Builtin: "comment"},
+			actionButton{Label: "Filter labels", Builtin: "filterLabels"},
 			actionButton{Label: "Request review", Builtin: "requestReviewers"},
 			actionButton{Label: "Remove reviewers", Builtin: "removeReviewers"},
 			actionButton{Label: "Checks", Builtin: "watchChecks"},
@@ -2298,6 +2320,8 @@ func (m Model) handleBuiltinKeybinding(binding config.Keybinding) (Model, tea.Cm
 		return m, m.startAction(actions.KindAddLabel), true
 	case "removelabel":
 		return m, m.startAction(actions.KindRemoveLabel), true
+	case "filterlabels", "filterlabel":
+		return m, m.startLabelFilter(), true
 	case "milestone", "setmilestone":
 		return m, m.startAction(actions.KindSetMilestone), true
 	case "merge":
@@ -2402,6 +2426,9 @@ func (m *Model) updateActionPrompt(msg tea.Msg) tea.Cmd {
 		intent.Prompt.Label = result.Label
 	}
 	m.pendingAction = actions.Intent{}
+	if intent.Kind == actions.KindFilterLabels {
+		return tea.Batch(cmd, m.applyLabelFilter(intent.Target, intent.Prompt.Value))
+	}
 	if m.actionDispatcher == nil {
 		return tea.Batch(cmd, m.setError("Action not wired yet."))
 	}
@@ -2467,6 +2494,185 @@ func (m *Model) handleMergeCapabilitiesLoaded(msg mergeCapabilitiesLoadedMsg) (M
 	}
 	m.actionPrompt = m.actionPrompt.Focus(promptConfigForActionWithMergeCapabilities(msg.intent.Kind, msg.intent.Target, caps))
 	return *m, cmd
+}
+
+func (m *Model) startLabelFilter() tea.Cmd {
+	if m.ctx.View != context.PullsView && m.ctx.View != context.IssuesView {
+		return m.setInfo("Label filter is only available on pull and issue lists.")
+	}
+	sec := m.getCurrSection()
+	if sec == nil {
+		return m.setInfo("No section selected.")
+	}
+	lf, ok := sec.(labelFilterSection)
+	if !ok {
+		return m.setInfo("This section does not support label filters.")
+	}
+	var configured []string
+	if m.ctx.Config != nil {
+		configured = m.ctx.Config.Repos
+	}
+	repos := labelFilterRepos(lf.SectionRepo(), m.ctx.CurrentRepo, m.ctx.SmartFiltering, configured)
+	if len(repos) == 0 {
+		return m.setInfo("Label filter needs a repo. Set section.repo, repos:, or enable smart-filter in a matching checkout.")
+	}
+	if m.ctx.Client == nil {
+		return m.setError("No Gitea client.")
+	}
+	m.pendingAction = actions.Intent{
+		Kind:   actions.KindFilterLabels,
+		Target: actions.Target{SectionID: sec.GetId(), SectionType: sec.GetType()},
+	}
+	return tea.Batch(m.setStart("Loading labels..."), loadRepoLabelsCmd(m.ctx.Client, repos, m.pendingAction))
+}
+
+func labelFilterRepos(sectionRepo, currentRepo string, smart bool, configuredRepos []string) []string {
+	if repo := strings.TrimSpace(sectionRepo); repo != "" {
+		return []string{repo}
+	}
+	if smart {
+		if repo := strings.TrimSpace(currentRepo); repo != "" {
+			return []string{repo}
+		}
+	}
+	out := make([]string, 0, len(configuredRepos))
+	for _, repo := range configuredRepos {
+		if repo = strings.TrimSpace(repo); repo != "" {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
+func loadRepoLabelsCmd(client *gitea.Client, repos []string, intent actions.Intent) tea.Cmd {
+	return func() tea.Msg {
+		labels, err := collectRepoLabels(client, repos)
+		return labelsLoadedMsg{intent: intent, labels: labels, err: err}
+	}
+}
+
+func collectRepoLabels(client *gitea.Client, repos []string) ([]data.Label, error) {
+	seen := map[string]bool{}
+	var out []data.Label
+	var firstErr error
+	for _, full := range repos {
+		owner, repo, ok := data.SplitOwnerRepo(full)
+		if !ok {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("invalid repository %q", full)
+			}
+			continue
+		}
+		labels, err := client.ListRepoLabels(owner, repo)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, label := range labels {
+			name := strings.TrimSpace(label.Name)
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, label)
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (m *Model) handleLabelsLoaded(msg labelsLoadedMsg) (Model, tea.Cmd) {
+	if msg.intent.Kind != actions.KindFilterLabels {
+		return *m, nil
+	}
+	if m.pendingAction.Kind != msg.intent.Kind || m.pendingAction.Target != msg.intent.Target {
+		return *m, nil
+	}
+	m.pendingAction = msg.intent
+	if msg.err != nil {
+		cmd := m.setError(fmt.Sprintf("Couldn't load labels: %v. Enter names manually.", msg.err))
+		m.actionPrompt = m.actionPrompt.Focus(promptConfigForAction(msg.intent.Kind, msg.intent.Target))
+		return *m, cmd
+	}
+	m.clearFeedback()
+	selected := []string(nil)
+	if sec := m.sectionByTarget(msg.intent.Target); sec != nil {
+		if lf, ok := sec.(labelFilterSection); ok {
+			selected = lf.FilterLabels()
+		}
+	}
+	cfg := actionprompt.Config{
+		Mode:     actionprompt.ModeMultiPicker,
+		Title:    "Filter labels",
+		Message:  "Space toggles. Enter applies. Empty selection clears the label filter.",
+		Options:  make([]actionprompt.Option, 0, len(msg.labels)),
+		Selected: selected,
+	}
+	for _, label := range msg.labels {
+		cfg.Options = append(cfg.Options, actionprompt.Option{Label: label.Name, Value: label.Name})
+	}
+	m.actionPrompt = m.actionPrompt.Focus(cfg)
+	return *m, nil
+}
+
+func (m *Model) applyLabelFilter(target actions.Target, value string) tea.Cmd {
+	sec := m.sectionByTarget(target)
+	if sec == nil {
+		return nil
+	}
+	lf, ok := sec.(labelFilterSection)
+	if !ok {
+		return m.setError("This section does not support label filters.")
+	}
+	names := parseFilterLabelNames(value)
+	lf.SetFilterLabels(names)
+	var toast tea.Cmd
+	if len(names) == 0 {
+		toast = m.setSuccess("Label filter cleared.")
+	} else {
+		toast = m.setSuccess("Filtering by labels: " + strings.Join(names, ", ") + ".")
+	}
+	return tea.Batch(toast, sec.FetchRows())
+}
+
+func (m *Model) sectionByTarget(target actions.Target) section.Section {
+	var sections []section.Section
+	switch target.SectionType {
+	case pullsection.SectionType:
+		sections = m.prs
+	case issuesection.SectionType:
+		sections = m.issues
+	case notificationsection.SectionType:
+		sections = m.notifications
+	case actionsection.SectionType:
+		sections = m.actions
+	case branchsection.SectionType:
+		sections = m.branches
+	}
+	if target.SectionID < 0 || target.SectionID >= len(sections) {
+		return nil
+	}
+	return sections[target.SectionID]
+}
+
+func parseFilterLabelNames(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func reviewerPickerAction(kind actions.Kind) bool {
@@ -2968,6 +3174,13 @@ func promptConfigForActionWithMergeCapabilities(kind actions.Kind, target action
 			Message:     message,
 			Placeholder: "Label names to remove, comma-separated",
 		}
+	case actions.KindFilterLabels:
+		return actionprompt.Config{
+			Mode:        actionprompt.ModeText,
+			Title:       "Filter labels",
+			Message:     "Comma-separated label names. Empty clears the label filter.",
+			Placeholder: "bug, urgent",
+		}
 	case actions.KindSetMilestone:
 		return actionprompt.Config{
 			Mode:        actionprompt.ModeText,
@@ -3100,6 +3313,8 @@ func actionLabel(kind actions.Kind) string {
 		return "Add label"
 	case actions.KindRemoveLabel:
 		return "Remove label"
+	case actions.KindFilterLabels:
+		return "Filter labels"
 	case actions.KindSetMilestone:
 		return "Set milestone"
 	case actions.KindMerge:

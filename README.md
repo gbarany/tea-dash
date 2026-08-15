@@ -145,8 +145,8 @@ drill into (focus) the preview panel rather than opening a browser.
 | Global | `y` / `Y` | copy row number / URL |
 | Global | `t` | toggle current-repo smart filtering (when launched from a matching git checkout) |
 | Global | `q` / `ctrl+c` | quit |
-| PRs | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `m` merge · `u` update branch · `W` ready · `w` checks · `x`/`X` close/reopen · `v` review · `@`/`#` request/remove reviewers · `d`/`ctrl+t` diff · `C`/`space` checkout |
-| Issues | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `M` milestone · `b`/`B` subscribe/unsubscribe · `x`/`X` close/reopen · `C`/`space` checkout |
+| PRs | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `f` filter labels · `m` merge · `u` update branch · `W` ready · `w` checks · `x`/`X` close/reopen · `v` review · `@`/`#` request/remove reviewers · `d`/`ctrl+t` diff · `C`/`space` checkout |
+| Issues | `c` comment · `a`/`A` assign/unassign · `L`/`U` labels · `f` filter labels · `M` milestone · `b`/`B` subscribe/unsubscribe · `x`/`X` close/reopen · `C`/`space` checkout |
 | Inbox | `m` read · `u` unread · `M` all read · `b` pin/unpin · `B` unpin |
 | CI | `R` rerun · `!` cancel · `L` logs |
 | Branches | `C`/`space`/`enter`\* checkout · `P` push · `f` fast-forward · `F` force-push · `d`/`backspace` delete |
@@ -288,7 +288,7 @@ issuesSections:
     filter:
       state: open
       assignedBy: "@me"
-      labels: [bug, urgent]  # AND-ed
+      labels: [bug, urgent]  # global repos: makes this repo-scoped, so both labels are required
       milestone: v2
 
 notificationsSections:
@@ -413,7 +413,7 @@ are loaded first; later includes override earlier includes; the current file
 overrides all included values. Nested maps merge recursively, while arrays and
 scalars replace the previous value.
 
-`filter` fields: `state`, `labels` (AND-ed), `milestone`, `createdBy`,
+`filter` fields: `state`, `labels` (all required for repo-scoped sections; any match for instance-wide search; `f` opens a live picker), `milestone`, `createdBy`,
 `assignedBy`, `mentioned`, `reviewRequested` (PRs only), `since` (RFC3339),
 `sort`. PR and issue sections fetch one page at a time; reaching the loaded
 bottom automatically requests the next page until the server total is loaded.
