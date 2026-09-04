@@ -88,10 +88,8 @@ required. Caveats are listed under
 make check      # gofmt-check + go vet + go test -race ./... + public-hygiene
 ```
 
-CI additionally runs `go mod download` and `go build ./...`, so
-**`make check && go build ./...` gets you close enough to a green `ci` run.** The
-public-hygiene step goes the other way: it is a local gate only — CI does not run
-it today, so please don't skip `make check`.
+CI runs the same four gates plus `go mod download` and `go build ./...`, so
+**a green `make check && go build ./...` locally means a green `ci` run.**
 
 While you work:
 
@@ -214,9 +212,9 @@ for it.
 
 Three workflows run on every pull request:
 
-- **ci** — `go mod download`, gofmt, `go vet ./...`, `go build ./...`, and
-  `go test -race ./...` on `ubuntu-latest` with Go `stable`. This is the one
-  that has to be green.
+- **ci** — `go mod download`, gofmt, `go vet ./...`, `go build ./...`,
+  `go test -race ./...`, and the public-hygiene script, on `ubuntu-latest` with
+  Go `stable`. This is the one that has to be green.
 - **CodeQL** — code scanning; results land in the Security tab.
 - **security** — `govulncheck` (reachability-aware, and it *can* fail your PR)
   and `gosec` (runs with `-no-fail`, so its findings are advisory SARIF only).
