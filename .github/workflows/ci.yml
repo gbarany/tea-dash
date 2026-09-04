@@ -42,3 +42,8 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+      # Same gate as `make check`: fails on committed home-directory paths,
+      # macOS per-user temp paths, and secret-manager item routes.
+      - name: Public hygiene
+        run: make public-hygiene

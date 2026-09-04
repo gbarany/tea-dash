@@ -30,6 +30,9 @@ Every pull request and a weekly schedule run:
 - **CodeQL** (code scanning, results in the Security tab)
 - **govulncheck** (Go vulnerability database, reachability-aware)
 - **gosec** (Go SAST, SARIF results in the Security tab)
+
+On pushes to `main` and weekly:
+
 - **OpenSSF Scorecard** (repository security practices; public report via
   the README badge)
 

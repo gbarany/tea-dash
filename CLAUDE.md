@@ -7,7 +7,7 @@ HTTP escape hatch. Reuses your `tea` CLI login for auth.
 ## Build / test / run
 
 ```bash
-make check      # gofmt-check + go vet + go test -race ./...   (run before every commit)
+make check      # gofmt-check + go vet + go test -race + public-hygiene  (run before every commit)
 make build      # -> ./bin/tea-dash (ldflags stamp version/commit/date)
 make run        # go run .
 ```

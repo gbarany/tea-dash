@@ -1,0 +1,85 @@
+name: Feature request
+description: Suggest a new capability, or a change to an existing one
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        tea-dash is a spare-time project with one maintainer, so the most useful
+        thing you can do here is describe the *problem* precisely. A well-argued
+        problem often gets solved differently — and better — than the fix that
+        first came to mind.
+
+        Worth knowing: a good idea can still be declined simply because it is not
+        something the maintainer wants to support forever.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem you are trying to solve
+      description: >-
+        What are you doing today, and where does tea-dash get in the way?
+        Describe the workflow rather than the fix — how often it happens, and
+        what you do instead right now.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: >-
+        What should tea-dash do instead? If it involves a keybinding, name the
+        key. If it involves configuration, sketch the YAML. If it changes a view,
+        say which one (pull requests, issues, notifications, Actions, branches)
+        and what a row or the preview pane would show.
+    validations:
+      required: true
+  - type: dropdown
+    id: gh-dash-equivalent
+    attributes:
+      label: Does gh-dash have an equivalent?
+      description: >-
+        tea-dash is modelled on gh-dash (https://github.com/dlvhdr/gh-dash), so
+        an existing gh-dash behaviour is strong precedent — the design question
+        is largely settled and only the mapping onto Gitea's API is open. Say so
+        below either way; "Gitea has this concept and GitHub does not" is just as
+        useful an answer.
+      options:
+        - Yes, gh-dash does something like this
+        - No, this is specific to Gitea/Forgejo
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: gh-dash-details
+    attributes:
+      label: gh-dash details
+      description: If gh-dash has an equivalent, name the keybinding, config key, or view — and say where it should differ for Gitea/Forgejo.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >-
+        Existing configuration, a different keybinding, a custom command, a shell
+        alias, or just doing it in the Gitea web UI — what did you try, and why
+        was it not enough?
+    validations:
+      required: false
+  - type: input
+    id: tea-dash-version
+    attributes:
+      label: tea-dash version
+      description: The output of `tea-dash --version` — useful so nobody proposes something that already shipped.
+      placeholder: "e.g. 0.3.7 (commit abcdef0, built 2026-01-01T00:00:00Z)"
+    validations:
+      required: false
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Would you like to work on this?
+      description: Entirely optional, and not a condition for the request being considered.
+      options:
+        - label: I would be willing to open a pull request for this
+          required: false
