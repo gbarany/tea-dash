@@ -24,3 +24,6 @@ docs/demo.mp4
 config.yml
 *.local.yml
 .env
+# ...but the GitHub issue-template chooser config is not one of those: the bare
+# `config.yml` rule above matches at any depth, which would silently drop it.
+!.github/ISSUE_TEMPLATE/config.yml

@@ -1,0 +1,106 @@
+name: Bug report
+description: Something in tea-dash misbehaves
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this.
+
+        **Before you paste anything:** tea-dash talks to your own Gitea/Forgejo
+        instance, so terminal output can contain your instance hostname, private
+        repository names, and usernames. Redact those (and a token, in the
+        unlikely event one ever shows up) before submitting.
+
+        If you think you have found a *security* problem, do not open an issue —
+        use [private vulnerability reporting](https://github.com/gbarany/tea-dash/security/advisories/new)
+        instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+      description: Both halves, please. "The Actions view showed no runs; I expected the three runs I can see in the web UI."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Start from launching tea-dash. Include the keys you pressed — this is a keyboard-driven TUI, so the exact key sequence is usually the reproduction.
+      value: |
+        1. Run `tea-dash`
+        2. Press
+        3.
+    validations:
+      required: true
+  - type: dropdown
+    id: reproduces-with-mock
+    attributes:
+      label: Does it reproduce with `tea-dash --mock`?
+      description: >-
+        The single most useful answer in this form. `--mock` runs the full
+        dashboard against an in-process fake Gitea with demo data — no network,
+        no login, no token. If the bug reproduces there it is a UI bug and can be
+        fixed without any access to your server; if it does not, it is about how
+        your instance answers the API, and the details below matter a lot more.
+      options:
+        - Yes, it reproduces with --mock
+        - No, only against my real instance
+        - Have not tried it yet
+    validations:
+      required: true
+  - type: input
+    id: tea-dash-version
+    attributes:
+      label: tea-dash version
+      description: The output of `tea-dash --version`.
+      placeholder: "e.g. 0.3.7 (commit abcdef0, built 2026-01-01T00:00:00Z)"
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: Gitea or Forgejo server version
+      description: >-
+        Shown in your instance's page footer, or from its /api/v1/version
+        endpoint. Leave blank if you only reproduced this with --mock.
+      placeholder: "whatever your instance reports, e.g. Gitea 1.24.3"
+    validations:
+      required: false
+  - type: input
+    id: os-and-terminal
+    attributes:
+      label: OS and terminal emulator
+      description: Terminal emulator and multiplexer matter for rendering, mouse, and key-decoding bugs.
+      placeholder: "macOS 15.5, Ghostty 1.1 (inside tmux 3.5)"
+    validations:
+      required: false
+  - type: textarea
+    id: output
+    attributes:
+      label: Error or terminal output
+      description: >-
+        Whatever tea-dash printed to the terminal, plus any error text shown
+        inside the dashboard. If you ran `tea-dash --debug`, include ./debug.log
+        as well (that flag appends to ./debug.log in the current directory).
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: >-
+        The section, filter, keybinding, or theme entry involved, if any. Trim it
+        to the part that matters and replace real repo names with placeholders.
+      render: yaml
+    validations:
+      required: false
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Before you submit
+      options:
+        - label: I have removed anything private from what I pasted above — tokens, my instance hostname, and private repository or user names.
+          required: true

@@ -1,0 +1,11 @@
+# Discussions are not enabled on this repository, so issues are the only
+# channel — blank issues stay available for questions and for anything that
+# fits neither form.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/gbarany/tea-dash/security/advisories/new
+    about: "Please report privately through GitHub Private Vulnerability Reporting rather than opening a public issue. SECURITY.md has the policy and the expected response time."
+  - name: Usage and configuration questions
+    url: https://github.com/gbarany/tea-dash#configuration
+    about: "The README documents every flag, keybinding, and config field. Running tea-dash --mock gives you the whole dashboard on demo data with no Gitea server, token, or login."

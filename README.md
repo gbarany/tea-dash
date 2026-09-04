@@ -475,8 +475,8 @@ and delete.
 
 ## Security
 
-Every PR and a weekly schedule run CodeQL, govulncheck, gosec, and OpenSSF
-Scorecard (see the badge above for the public report). Release archives carry
+Every PR runs CodeQL, govulncheck, and gosec; OpenSSF Scorecard runs on pushes
+to `main` and weekly (see the badge above for the public report). Release archives carry
 GitHub build provenance attestations. Vulnerability reports go through
 [GitHub Private Vulnerability Reporting](SECURITY.md) — see
 [`SECURITY.md`](SECURITY.md) for the policy and how to verify a release.
@@ -484,7 +484,7 @@ GitHub build provenance attestations. Vulnerability reports go through
 ## Development
 
 ```sh
-make check   # gofmt-check + go vet + tests (race)
+make check   # gofmt-check + go vet + tests (race) + public-hygiene
 make run     # go run .
 make build   # build ./bin/tea-dash
 make lint    # golangci-lint (optional; requires golangci-lint v2)
@@ -518,6 +518,24 @@ Go with the **Bubble Tea v2** Charm stack — `charm.land/bubbletea/v2` +
 [`gh-dash`](https://github.com/dlvhdr/gh-dash) and Gitea's own `tea` CLI are
 built on. Planned, to stay aligned with gh-dash: `cobra`+`fang` (CLI) and
 `koanf`+`validator` (config).
+
+## Contributing
+
+Contributions are welcome — this is a spare-time project, and bug reports, small
+fixes, and documentation improvements are the most useful things you can send.
+Start with [`CONTRIBUTING.md`](CONTRIBUTING.md); if you're looking for somewhere
+to jump in, see the
+[`good first issue`](https://github.com/gbarany/tea-dash/labels/good%20first%20issue)
+and [`help wanted`](https://github.com/gbarany/tea-dash/labels/help%20wanted)
+issues. You need no Gitea server, token, or `tea` login to hack on it —
+`tea-dash --mock` runs the whole TUI against an in-process fake. Participation is
+covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Typos, docs, and an obvious bug fix with a test can go straight to a pull
+request. For anything that changes the shape of the app — a new key binding, a
+new config field, a new view or section — please
+[open an issue](https://github.com/gbarany/tea-dash/issues/new) first, so we can
+agree on the design before you spend an evening on it.
 
 ## License
 
