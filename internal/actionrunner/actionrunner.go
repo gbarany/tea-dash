@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"text/template"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/google/safetext/shtemplate"
 
 	"github.com/gbarany/tea-dash/internal/config"
 	"github.com/gbarany/tea-dash/internal/data"
@@ -275,7 +275,11 @@ func (r Runner) dispatchCustomCommand(intent uiactions.Intent) tea.Cmd {
 	if dir == "" {
 		dir = r.cwd
 	}
-	cmd := shell.BuildExecCommand(rendered, nil, dir)
+	// The template validator understands Bourne shell syntax. Do not hand its
+	// output to an arbitrary $SHELL with a different interpretation of that syntax.
+	// #nosec G204 -- rendered passed syntax-aware injection validation above; the interpreter is fixed.
+	cmd := exec.Command("/bin/sh", "-c", rendered)
+	cmd.Dir = dir
 	name := strings.TrimSpace(intent.Name)
 	if name == "" {
 		name = "custom command"
@@ -599,7 +603,9 @@ type customCommandContext struct {
 }
 
 func (r Runner) renderCustomCommand(command string, target uiactions.Target) (string, error) {
-	tmpl, err := template.New("custom-command").Option("missingkey=error").Parse(command)
+	// Treat remote row fields as data: reject substitutions that change the
+	// shell syntax, add arguments, or introduce flags before starting a process.
+	tmpl, err := shtemplate.New("custom-command").Option("missingkey=error").Parse(command)
 	if err != nil {
 		return "", fmt.Errorf("parse custom command template: %w", err)
 	}
