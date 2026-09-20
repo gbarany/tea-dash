@@ -282,7 +282,11 @@ type ExecRunner struct{}
 
 // Run executes cmd and captures stdout/stderr.
 func (ExecRunner) Run(ctx context.Context, cmd Command) (Result, error) {
-	c := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
+	if cmd.Name != "git" {
+		return Result{}, fmt.Errorf("unsupported git executable %q", cmd.Name)
+	}
+	// #nosec G204 -- only git is executed, without a shell; callers separate dynamic operands from options and use fixed subcommands.
+	c := exec.CommandContext(ctx, "git", cmd.Args...)
 	c.Dir = cmd.Dir
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
@@ -381,7 +385,7 @@ func RunCheckout(ctx context.Context, opts CheckoutOptions) (CheckoutPlan, error
 	if strings.TrimSpace(status.Stdout) != "" {
 		return CheckoutPlan{}, fmt.Errorf("refusing checkout in dirty worktree %s", DisplayRepoName(plan.RepoPath))
 	}
-	if _, err := runGit(ctx, runner, plan.RepoPath, "fetch", plan.Remote, plan.FetchRefspec); err != nil {
+	if _, err := runGit(ctx, runner, plan.RepoPath, "fetch", "--", plan.Remote, plan.FetchRefspec); err != nil {
 		return CheckoutPlan{}, err
 	}
 
@@ -390,15 +394,15 @@ func RunCheckout(ctx context.Context, opts CheckoutOptions) (CheckoutPlan, error
 		return CheckoutPlan{}, err
 	}
 	if !exists {
-		if _, err := runGit(ctx, runner, plan.RepoPath, "switch", "-c", plan.Branch, plan.RemoteRef); err != nil {
+		if _, err := runGit(ctx, runner, plan.RepoPath, "switch", "-c", plan.Branch, "--", plan.RemoteRef); err != nil {
 			return CheckoutPlan{}, err
 		}
 		return plan, nil
 	}
-	if _, err := runGit(ctx, runner, plan.RepoPath, "switch", plan.Branch); err != nil {
+	if _, err := runGit(ctx, runner, plan.RepoPath, "switch", "--", plan.Branch); err != nil {
 		return CheckoutPlan{}, err
 	}
-	if _, err := runGit(ctx, runner, plan.RepoPath, "merge", "--ff-only", plan.RemoteRef); err != nil {
+	if _, err := runGit(ctx, runner, plan.RepoPath, "merge", "--ff-only", "--", plan.RemoteRef); err != nil {
 		return CheckoutPlan{}, fmt.Errorf("fast-forward existing branch %s: %w", plan.Branch, err)
 	}
 	return plan, nil
@@ -451,7 +455,7 @@ func RunIssueCheckout(ctx context.Context, opts IssueCheckoutOptions) (IssueChec
 		}
 		return plan, nil
 	}
-	if _, err := runGit(ctx, runner, plan.RepoPath, "switch", plan.Branch); err != nil {
+	if _, err := runGit(ctx, runner, plan.RepoPath, "switch", "--", plan.Branch); err != nil {
 		return IssueCheckoutPlan{}, err
 	}
 	return plan, nil
@@ -494,7 +498,7 @@ func SwitchBranch(ctx context.Context, opts SwitchBranchOptions) (SwitchBranchRe
 	if strings.TrimSpace(current.Stdout) == branch {
 		return SwitchBranchResult{}, fmt.Errorf("branch %s is already current in %s", branch, DisplayRepoName(repoPath))
 	}
-	if _, err := runGit(ctx, runner, repoPath, "switch", branch); err != nil {
+	if _, err := runGit(ctx, runner, repoPath, "switch", "--", branch); err != nil {
 		return SwitchBranchResult{}, switchBranchError(repoPath, branch, err)
 	}
 	return SwitchBranchResult{RepoPath: repoPath, Branch: branch}, nil
@@ -547,7 +551,7 @@ func PushBranch(ctx context.Context, opts PushBranchOptions) (PushBranchResult, 
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	if _, err := runGit(ctx, runner, repoPath, "push", "-u", remote, branch); err != nil {
+	if _, err := runGit(ctx, runner, repoPath, "push", "-u", "--", remote, branch); err != nil {
 		return PushBranchResult{}, fmt.Errorf("push %s to %s in %s: %w", branch, remote, DisplayRepoName(repoPath), err)
 	}
 	return PushBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote}, nil
@@ -588,13 +592,13 @@ func FastForwardBranch(ctx context.Context, opts FastForwardBranchOptions) (Fast
 	if err != nil {
 		return FastForwardBranchResult{}, fmt.Errorf("branch %s has no upstream in %s; push it first or set an upstream: %w", branch, DisplayRepoName(repoPath), err)
 	}
-	if _, err := runGit(ctx, runner, repoPath, "fetch", remote); err != nil {
+	if _, err := runGit(ctx, runner, repoPath, "fetch", "--", remote); err != nil {
 		return FastForwardBranchResult{}, fmt.Errorf("fetch %s in %s: %w", remote, DisplayRepoName(repoPath), err)
 	}
-	if _, err := runGit(ctx, runner, repoPath, "switch", branch); err != nil {
+	if _, err := runGit(ctx, runner, repoPath, "switch", "--", branch); err != nil {
 		return FastForwardBranchResult{}, switchBranchError(repoPath, branch, err)
 	}
-	if _, err := runGit(ctx, runner, repoPath, "merge", "--ff-only", upstream); err != nil {
+	if _, err := runGit(ctx, runner, repoPath, "merge", "--ff-only", "--", upstream); err != nil {
 		return FastForwardBranchResult{}, fmt.Errorf("fast-forward %s from %s in %s: %w", branch, upstream, DisplayRepoName(repoPath), err)
 	}
 	return FastForwardBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote, Upstream: upstream}, nil
@@ -639,7 +643,7 @@ func ForcePushBranch(ctx context.Context, opts ForcePushBranchOptions) (ForcePus
 	if remote == "" {
 		remote = "origin"
 	}
-	if _, err := runGit(ctx, runner, repoPath, "push", "--force-with-lease", remote, branch); err != nil {
+	if _, err := runGit(ctx, runner, repoPath, "push", "--force-with-lease", "--", remote, branch); err != nil {
 		return ForcePushBranchResult{}, fmt.Errorf("force-push %s to %s in %s: %w", branch, remote, DisplayRepoName(repoPath), err)
 	}
 	return ForcePushBranchResult{RepoPath: repoPath, Branch: branch, Remote: remote}, nil
@@ -680,14 +684,14 @@ func DeleteBranch(ctx context.Context, opts DeleteBranchOptions) (DeleteBranchRe
 	if strings.TrimSpace(current.Stdout) == branch {
 		return DeleteBranchResult{}, fmt.Errorf("branch %s is current in %s; switch away before deleting it", branch, DisplayRepoName(repoPath))
 	}
-	if _, err := runGit(ctx, runner, repoPath, "branch", "-d", branch); err != nil {
+	if _, err := runGit(ctx, runner, repoPath, "branch", "-d", "--", branch); err != nil {
 		return DeleteBranchResult{}, fmt.Errorf("delete branch %s in %s: %w", branch, DisplayRepoName(repoPath), err)
 	}
 	return DeleteBranchResult{RepoPath: repoPath, Branch: branch}, nil
 }
 
 func branchUpstream(ctx context.Context, runner Runner, repoPath, branch string) (string, string, error) {
-	res, err := runGit(ctx, runner, repoPath, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
+	res, err := runGit(ctx, runner, repoPath, "rev-parse", "--verify", "--abbrev-ref", "--end-of-options", branch+"@{upstream}")
 	if err != nil {
 		return "", "", err
 	}

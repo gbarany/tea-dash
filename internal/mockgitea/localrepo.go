@@ -30,6 +30,7 @@ func SeedLocalRepo(parent string) (string, error) {
 	}
 
 	run := func(args ...string) error {
+		// #nosec G204 -- args come only from the fixed demo steps below; the generated directory is assigned via cmd.Dir.
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		// Pin the commit identity (so this works on a machine with no git

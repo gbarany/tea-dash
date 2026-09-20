@@ -580,6 +580,7 @@ func TestDispatchActionLogsErrorsWhenRunHasNoJobs(t *testing.T) {
 }
 
 func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
+	t.Setenv("SHELL", "/not-a-compatible-shell")
 	execProcess := &fakeExecProcess{}
 	r := New(Options{
 		Config:      &config.Config{},
@@ -588,7 +589,7 @@ func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
 		ExecProcess: execProcess.Run,
 	})
 	intent := pullIntent(uiactions.KindCustomCommand)
-	intent.Command = "cd {{.RepoPath}} && echo {{.RepoName}} {{.PrNumber}}/{{.PrIndex}} {{.Title}} {{.Author}} {{.HeadRefName}} {{.BaseRefName}} {{.InstanceURL}} {{.Url}}"
+	intent.Command = `cd "{{.RepoPath}}" && echo {{.RepoName}} {{.PrNumber}}/{{.PrIndex}} "{{.Title}}" {{.Author}} {{.HeadRefName}} {{.BaseRefName}} {{.InstanceURL}} {{.Url}}`
 	intent.Name = "lazygit"
 	intent.Target.RepositoryPath = "/src/widgets"
 	intent.Target.URL = "https://git.example/acme/widgets/pulls/7"
@@ -603,10 +604,13 @@ func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
 	if execProcess.cmd == nil {
 		t.Fatal("exec process was not called")
 	}
+	if execProcess.cmd.Args[0] != "sh" {
+		t.Fatalf("custom command shell = %q, want sh", execProcess.cmd.Args[0])
+	}
 	if len(execProcess.cmd.Args) != 3 || execProcess.cmd.Args[1] != "-c" {
 		t.Fatalf("shell args = %#v, want shell -c", execProcess.cmd.Args)
 	}
-	want := "cd /src/widgets && echo acme/widgets 7/7 PR title alice feature/ref-fields main https://git.example https://git.example/acme/widgets/pulls/7"
+	want := `cd "/src/widgets" && echo acme/widgets 7/7 "PR title" alice feature/ref-fields main https://git.example https://git.example/acme/widgets/pulls/7`
 	if execProcess.cmd.Args[2] != want {
 		t.Fatalf("rendered command = %q, want %q", execProcess.cmd.Args[2], want)
 	}
@@ -631,6 +635,60 @@ func TestDispatchCustomCommandMissingVariableDoesNotRunShell(t *testing.T) {
 	}
 	if execProcess.cmd != nil {
 		t.Fatalf("exec should not run for a missing template variable, ran %+v", execProcess.cmd)
+	}
+}
+
+func TestDispatchCustomCommandRejectsShellInjection(t *testing.T) {
+	for _, tt := range []struct {
+		name, command, title string
+	}{
+		{"command separator", "echo {{.Title}}", "hello; id"},
+		{"double quoted substitution", `echo "{{.Title}}"`, "$(id)"},
+		{"backticks", `echo "{{.Title}}"`, "`id`"},
+		{"single quote breakout", "echo '{{.Title}}'", "hello'; id; echo '"},
+		{"double quote breakout", `echo "{{.Title}}"`, `hello"; id; echo "`},
+		{"extra argument", "echo {{.Title}}", "hello world"},
+		{"option injection", "echo {{.Title}}", "-n"},
+		{"newline", "echo {{.Title}}", "hello\nid"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			execProcess := &fakeExecProcess{}
+			r := New(Options{ExecProcess: execProcess.Run})
+			intent := pullIntent(uiactions.KindCustomCommand)
+			intent.Command = tt.command
+			intent.Target.Title = tt.title
+			got := runDispatch(t, r, intent)
+			if got.Status != uiactions.ResultErrored || got.Err == nil {
+				t.Fatalf("result = %+v, want injection error", got)
+			}
+			if execProcess.cmd != nil {
+				t.Fatal("unsafe command reached the shell")
+			}
+		})
+	}
+}
+
+func TestCustomCommandPreservesQuotedData(t *testing.T) {
+	for _, tt := range []struct {
+		name, command, title string
+	}{
+		{"spaces", `printf '%s' "{{.Title}}"`, "a title with spaces"},
+		{"literal shell characters", `printf '%s' '{{.Title}}'`, "$(id); `id` & more"},
+		{"apostrophe", `printf '%s' "{{.Title}}"`, "author's title"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rendered, err := (Runner{}).renderCustomCommand(tt.command, uiactions.Target{Title: tt.title})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command("sh", "-c", rendered).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(out) != tt.title {
+				t.Fatalf("output = %q, want literal title %q", out, tt.title)
+			}
+		})
 	}
 }
 

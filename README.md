@@ -347,7 +347,7 @@ keybindings:
       builtin: nextSidebarTab
     - key: g
       name: lazygit
-      command: cd {{.RepoPath}} && lazygit
+      command: cd "{{.RepoPath}}" && lazygit
   issues:
     - key: P
       builtin: viewPrs
@@ -383,7 +383,7 @@ keybindings:
       command: echo run {{.RunID}} in {{.RepoName}}
   branches:
     - key: B
-      command: git -C {{.RepoPath}} status
+      command: git -C "{{.RepoPath}}" status
     - key: P
       builtin: push
     - key: f
@@ -393,6 +393,20 @@ keybindings:
     - key: d
       builtin: delete
 ```
+
+Custom commands are POSIX shell templates, executed with `sh` from `PATH`.
+On Windows, a `SHELL` setting pointing to `sh` or `bash` (including `.exe`)
+takes precedence, so Git Bash works even when its directory is not on `PATH`.
+Other configured shells, such as PowerShell or cmd, are not used for custom
+templates; configured pagers still use your shell. Quote string fields that may contain spaces
+(for example, `echo "{{.Title}}"` or `cd "{{.RepoPath}}"`). Before executing,
+tea-dash validates the rendered shell syntax and rejects row values that introduce
+commands, extra arguments, or flags. This validation rejects unsafe substitutions
+rather than escaping them; a title containing `$(...)` inside double quotes, for
+example, causes an error instead of running that command. Existing templates that
+depend on splitting one field into multiple arguments must be rewritten.
+Keep command templates in trusted local configuration; do not use `eval`, nested
+`sh -c`, or other interpreters to execute row values as code.
 
 tea-dash publishes a JSON Schema at
 [`schema.json`](schema.json). Add the `yaml-language-server` comment above to
