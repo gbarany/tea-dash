@@ -63,6 +63,7 @@ func ListBranches(ctx context.Context, repo Repository) ([]Branch, error) {
 		"%(committerdate:unix)",
 		"%(worktreepath)",
 	}, "%00")
+	// #nosec G204 -- git and all operations are fixed; the local configured path is the value of -C, with no shell interpretation.
 	cmd := exec.CommandContext(ctx, "git", "-C", repo.Path, "for-each-ref", "--sort=refname", "--format="+format, "refs/heads")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

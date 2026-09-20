@@ -30,6 +30,7 @@ func writeClipboard(value string) error {
 }
 
 func runClipboardCommand(value string, args ...string) error {
+	// #nosec G204 -- callers provide only fixed clipboard commands; untrusted clipboard content is passed exclusively on stdin.
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(value)
 	if out, err := cmd.CombinedOutput(); err != nil {

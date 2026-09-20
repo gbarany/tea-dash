@@ -194,6 +194,7 @@ func resolveToken(ov Overrides, login *teaLogin) (string, error) {
 // The interpreter is a fixed `sh`, not $SHELL: the process environment is a
 // taint source, and tokenCommand does not need a user-selected shell.
 func runTokenCommand(command string) (string, error) {
+	// #nosec G204 -- tokenCommand is executable code explicitly configured by the local user; no API response is interpolated here.
 	cmd := exec.Command("sh", "-c", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

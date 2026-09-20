@@ -287,9 +287,9 @@ func TestRunCheckoutFetchesAndCreatesMissingBranch(t *testing.T) {
 	}
 	assertCommands(t, runner.commands, []Command{
 		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
-		{Dir: repo, Name: "git", Args: []string{"fetch", "upstream", "+refs/pull/42/head:refs/remotes/upstream/pull/42/head"}},
+		{Dir: repo, Name: "git", Args: []string{"fetch", "--", "upstream", "+refs/pull/42/head:refs/remotes/upstream/pull/42/head"}},
 		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/review/acme-api-42"}},
-		{Dir: repo, Name: "git", Args: []string{"switch", "-c", "review/acme-api-42", "refs/remotes/upstream/pull/42/head"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "-c", "review/acme-api-42", "--", "refs/remotes/upstream/pull/42/head"}},
 	})
 }
 
@@ -314,10 +314,10 @@ func TestRunCheckoutExistingBranchFastForwardOnly(t *testing.T) {
 	}
 	assertCommands(t, runner.commands, []Command{
 		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
-		{Dir: repo, Name: "git", Args: []string{"fetch", "origin", "+refs/pull/7/head:refs/remotes/origin/pull/7/head"}},
+		{Dir: repo, Name: "git", Args: []string{"fetch", "--", "origin", "+refs/pull/7/head:refs/remotes/origin/pull/7/head"}},
 		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/pr-7"}},
-		{Dir: repo, Name: "git", Args: []string{"switch", "pr-7"}},
-		{Dir: repo, Name: "git", Args: []string{"merge", "--ff-only", "refs/remotes/origin/pull/7/head"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "--", "pr-7"}},
+		{Dir: repo, Name: "git", Args: []string{"merge", "--ff-only", "--", "refs/remotes/origin/pull/7/head"}},
 	})
 }
 
@@ -386,7 +386,7 @@ func TestRunIssueCheckoutSwitchesExistingBranch(t *testing.T) {
 	assertCommands(t, runner.commands, []Command{
 		{Dir: repo, Name: "git", Args: []string{"status", "--porcelain"}},
 		{Dir: repo, Name: "git", Args: []string{"show-ref", "--verify", "--quiet", "refs/heads/issue-7"}},
-		{Dir: repo, Name: "git", Args: []string{"switch", "issue-7"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "--", "issue-7"}},
 	})
 }
 
@@ -428,7 +428,7 @@ func TestSwitchBranchRunsGitSwitch(t *testing.T) {
 	}
 	assertCommands(t, runner.commands, []Command{
 		{Dir: repo, Name: "git", Args: []string{"branch", "--show-current"}},
-		{Dir: repo, Name: "git", Args: []string{"switch", "feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "--", "feature/local-ops"}},
 	})
 }
 
@@ -530,7 +530,7 @@ func TestPushBranchRunsGitPushSetUpstream(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	assertCommands(t, runner.commands, []Command{
-		{Dir: repo, Name: "git", Args: []string{"push", "-u", "origin", "feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"push", "-u", "--", "origin", "feature/local-ops"}},
 	})
 }
 
@@ -555,10 +555,10 @@ func TestFastForwardBranchFetchesSwitchesAndMergesUpstream(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	assertCommands(t, runner.commands, []Command{
-		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
-		{Dir: repo, Name: "git", Args: []string{"fetch", "upstream"}},
-		{Dir: repo, Name: "git", Args: []string{"switch", "feature/local-ops"}},
-		{Dir: repo, Name: "git", Args: []string{"merge", "--ff-only", "upstream/feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--verify", "--abbrev-ref", "--end-of-options", "feature/local-ops@{upstream}"}},
+		{Dir: repo, Name: "git", Args: []string{"fetch", "--", "upstream"}},
+		{Dir: repo, Name: "git", Args: []string{"switch", "--", "feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"merge", "--ff-only", "--", "upstream/feature/local-ops"}},
 	})
 }
 
@@ -575,7 +575,7 @@ func TestFastForwardBranchRequiresUpstream(t *testing.T) {
 		t.Fatalf("FastForwardBranch upstream error = %v", err)
 	}
 	assertCommands(t, runner.commands, []Command{
-		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--verify", "--abbrev-ref", "--end-of-options", "feature/local-ops@{upstream}"}},
 	})
 }
 
@@ -598,8 +598,8 @@ func TestForcePushBranchUsesForceWithLease(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	assertCommands(t, runner.commands, []Command{
-		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
-		{Dir: repo, Name: "git", Args: []string{"push", "--force-with-lease", "upstream", "feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--verify", "--abbrev-ref", "--end-of-options", "feature/local-ops@{upstream}"}},
+		{Dir: repo, Name: "git", Args: []string{"push", "--force-with-lease", "--", "upstream", "feature/local-ops"}},
 	})
 }
 
@@ -622,8 +622,8 @@ func TestForcePushBranchFallsBackToOriginWithoutUpstream(t *testing.T) {
 		t.Fatalf("remote = %q, want origin fallback", result.Remote)
 	}
 	assertCommands(t, runner.commands, []Command{
-		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--abbrev-ref", "feature/local-ops@{upstream}"}},
-		{Dir: repo, Name: "git", Args: []string{"push", "--force-with-lease", "origin", "feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"rev-parse", "--verify", "--abbrev-ref", "--end-of-options", "feature/local-ops@{upstream}"}},
+		{Dir: repo, Name: "git", Args: []string{"push", "--force-with-lease", "--", "origin", "feature/local-ops"}},
 	})
 }
 
@@ -647,7 +647,7 @@ func TestDeleteBranchRunsSafeGitBranchDelete(t *testing.T) {
 	}
 	assertCommands(t, runner.commands, []Command{
 		{Dir: repo, Name: "git", Args: []string{"branch", "--show-current"}},
-		{Dir: repo, Name: "git", Args: []string{"branch", "-d", "feature/local-ops"}},
+		{Dir: repo, Name: "git", Args: []string{"branch", "-d", "--", "feature/local-ops"}},
 	})
 }
 
@@ -709,5 +709,52 @@ func assertCommands(t *testing.T, got, want []Command) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestExecRunnerRejectsOtherExecutables(t *testing.T) {
+	_, err := (ExecRunner{}).Run(context.Background(), Command{Name: "sh", Args: []string{"-c", "exit 0"}})
+	if err == nil {
+		t.Fatal("expected non-git executable to be rejected")
+	}
+}
+
+func TestSwitchBranchDoesNotInterpretBranchAsOption(t *testing.T) {
+	repo := newSingleBranchRepo(t, "base")
+	_, err := SwitchBranch(context.Background(), SwitchBranchOptions{RepoPath: repo, Branch: "--detach"})
+	if err == nil {
+		t.Fatal("expected an invalid branch error, not a detached checkout")
+	}
+	if got := gitOutput(t, repo, "branch", "--show-current"); got != "main" {
+		t.Fatalf("current branch = %q, want main", got)
+	}
+}
+
+func TestBranchOperationsWithRealGit(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	ctx := context.Background()
+	repo := newSingleBranchRepo(t, "base")
+	remote := t.TempDir()
+	runTestGit(t, remote, "init", "--bare")
+	runTestGit(t, repo, "remote", "set-url", "origin", remote)
+	if _, err := PushBranch(ctx, PushBranchOptions{RepoPath: repo, Branch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FastForwardBranch(ctx, FastForwardBranchOptions{RepoPath: repo, Branch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ForcePushBranch(ctx, ForcePushBranchOptions{RepoPath: repo, Branch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	runTestGit(t, repo, "branch", "topic;literal")
+	if _, err := SwitchBranch(ctx, SwitchBranchOptions{RepoPath: repo, Branch: "topic;literal"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SwitchBranch(ctx, SwitchBranchOptions{RepoPath: repo, Branch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeleteBranch(ctx, DeleteBranchOptions{RepoPath: repo, Branch: "topic;literal"}); err != nil {
+		t.Fatal(err)
 	}
 }
