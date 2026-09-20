@@ -36,6 +36,46 @@ func writeConfig(t *testing.T, content string) string {
 	return p
 }
 
+func TestResolveUsesXDGConfigHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("TEA_DASH_URL", "")
+	t.Setenv("TEA_DASH_TOKEN", "")
+	path := filepath.Join(dir, "tea", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(teaConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Resolve(Overrides{Login: "work"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.URL != "https://git.work.example" || got.Token != "worktoken" || !got.Insecure {
+		t.Fatalf("resolved = %+v, want the work login from XDG_CONFIG_HOME", got)
+	}
+}
+
+func TestTeaConfigPathWithoutXDGConfigHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := TeaConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "tea", "config.yml"); got != want {
+		t.Fatalf("TeaConfigPath() = %q, want %q", got, want)
+	}
+}
+
 func TestResolvePicksDefaultLogin(t *testing.T) {
 	t.Setenv("TEA_DASH_URL", "")
 	t.Setenv("TEA_DASH_TOKEN", "")

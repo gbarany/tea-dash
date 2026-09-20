@@ -47,10 +47,13 @@ type teaConfigFile struct {
 	Logins []teaLogin `yaml:"logins"`
 }
 
-// TeaConfigPath returns the path to tea's config.yml, using the same per-OS
-// config directory tea itself uses: os.UserConfigDir()/tea/config.yml
-// (e.g. ~/Library/Application Support/tea on macOS, ~/.config/tea on Linux).
+// TeaConfigPath returns the path to tea's config.yml. XDG_CONFIG_HOME takes
+// precedence over the OS default, including on macOS where os.UserConfigDir
+// alone ignores it (and returns ~/Library/Application Support).
 func TeaConfigPath() (string, error) {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "tea", "config.yml"), nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
