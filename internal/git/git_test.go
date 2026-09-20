@@ -758,3 +758,25 @@ func TestBranchOperationsWithRealGit(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunCheckoutWithRealGit(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	repo := newSingleBranchRepo(t, "base")
+	remote := t.TempDir()
+	runTestGit(t, remote, "init", "--bare")
+	runTestGit(t, repo, "remote", "set-url", "origin", remote)
+	runTestGit(t, repo, "push", "origin", "HEAD:refs/pull/7/head")
+	opts := CheckoutOptions{RepoName: "acme/widgets", RepoPaths: map[string]string{"acme/widgets": repo}, PrIndex: 7}
+	if _, err := RunCheckout(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOutput(t, repo, "branch", "--show-current"); got != "pr-7" {
+		t.Fatalf("current branch = %q, want pr-7", got)
+	}
+	// Exercise the existing-branch switch/fast-forward path as well.
+	runTestGit(t, repo, "switch", "main")
+	if _, err := RunCheckout(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+}

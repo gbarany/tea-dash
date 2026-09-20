@@ -35,6 +35,7 @@ func BuildCommand(command string, stdin []byte, dir string) Command {
 // so interactive full-screen commands can temporarily take over the terminal.
 func BuildExecCommand(command string, stdin []byte, dir string) *exec.Cmd {
 	c := BuildCommand(command, stdin, dir)
+	// #nosec G204 -- callers provide trusted local pager commands; remote content is supplied only on stdin, never interpolated into command source.
 	cmd := exec.Command(c.Name, c.Args...)
 	cmd.Dir = c.Dir
 	if c.Stdin != nil {
@@ -53,6 +54,7 @@ type ExecRunner struct{}
 
 // Run executes cmd and returns combined stdout/stderr.
 func (ExecRunner) Run(ctx context.Context, cmd Command) ([]byte, error) {
+	// #nosec G204 -- this runner intentionally executes local user-configured commands built by BuildCommand, without interpolating API response data.
 	c := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
 	c.Dir = cmd.Dir
 	if cmd.Stdin != nil {

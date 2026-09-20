@@ -394,7 +394,7 @@ keybindings:
       builtin: delete
 ```
 
-Custom commands are POSIX shell templates, executed with `/bin/sh` regardless of
+Custom commands are POSIX shell templates, executed with POSIX `sh` from `PATH` regardless of
 `$SHELL` (configured pagers still use your shell). Quote string fields that may contain spaces
 (for example, `echo "{{.Title}}"` or `cd "{{.RepoPath}}"`). Before executing,
 tea-dash validates the rendered shell syntax and rejects row values that introduce

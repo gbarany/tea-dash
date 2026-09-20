@@ -604,8 +604,8 @@ func TestDispatchCustomCommandRendersSelectedRowTemplate(t *testing.T) {
 	if execProcess.cmd == nil {
 		t.Fatal("exec process was not called")
 	}
-	if execProcess.cmd.Path != "/bin/sh" {
-		t.Fatalf("custom command shell = %q, want /bin/sh", execProcess.cmd.Path)
+	if execProcess.cmd.Args[0] != "sh" {
+		t.Fatalf("custom command shell = %q, want sh", execProcess.cmd.Args[0])
 	}
 	if len(execProcess.cmd.Args) != 3 || execProcess.cmd.Args[1] != "-c" {
 		t.Fatalf("shell args = %#v, want shell -c", execProcess.cmd.Args)
