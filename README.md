@@ -39,7 +39,8 @@ SDK, reusing the `tea` CLI's stored login for auth.
 
 tea-dash talks to Gitea directly via the official Go SDK
 (`code.gitea.io/sdk/gitea`). It reuses your existing `tea` login
-(`~/Library/Application Support/tea/config.yml` on macOS /
+(`$XDG_CONFIG_HOME/tea/config.yml` when set; otherwise
+`~/Library/Application Support/tea/config.yml` on macOS or
 `~/.config/tea/config.yml` on Linux) for the instance URL and token, so you get
 auth for free without tea-dash handling credentials itself — but `tea` is **not**
 run at runtime. This means tea-dash:

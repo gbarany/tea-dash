@@ -29,7 +29,8 @@ Requires **Go 1.26+** (the Gitea SDK's go.mod declares `go 1.26`).
 ## Auth (how the token is resolved)
 
 Order: `instance.token` > `instance.tokenCommand` (stdout) > `instance.tokenEnv` > `TEA_DASH_TOKEN` > the
-selected `tea` login's token. tea-dash reads `tea`'s config file (`os.UserConfigDir()/tea/config.yml`); if `tea`
+selected `tea` login's token. tea-dash reads `tea`'s config file (`$XDG_CONFIG_HOME/tea/config.yml` when set,
+otherwise `os.UserConfigDir()/tea/config.yml`); if `tea`
 kept the token in the OS **keychain** (empty in the file), use `tokenCommand` with a secret manager:
 
 ```yaml
