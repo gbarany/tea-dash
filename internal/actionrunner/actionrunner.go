@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -275,11 +278,7 @@ func (r Runner) dispatchCustomCommand(intent uiactions.Intent) tea.Cmd {
 	if dir == "" {
 		dir = r.cwd
 	}
-	// The template validator understands Bourne shell syntax. Do not hand its
-	// output to an arbitrary $SHELL with a different interpretation of that syntax.
-	// #nosec G204 -- rendered passed syntax-aware injection validation above; the interpreter is fixed.
-	cmd := exec.Command("sh", "-c", rendered)
-	cmd.Dir = dir
+	cmd := customCommandProcess(rendered, dir, runtime.GOOS)
 	name := strings.TrimSpace(intent.Name)
 	if name == "" {
 		name = "custom command"
@@ -290,6 +289,25 @@ func (r Runner) dispatchCustomCommand(intent uiactions.Intent) tea.Cmd {
 		}
 		return uiactions.ResultMsg{Intent: intent, Status: uiactions.ResultSucceeded, Message: fmt.Sprintf("Ran %s for %s.", name, intent.Target.Title)}
 	})
+}
+
+// customCommandProcess receives only syntax-validated custom command templates.
+func customCommandProcess(rendered, dir, platform string) *exec.Cmd {
+	name := "sh"
+	if platform == "windows" {
+		// Git for Windows need not expose sh on PATH. Honor a locally configured
+		// Bourne-compatible shell, but never pass validated syntax to cmd/PowerShell.
+		configured := os.Getenv("SHELL")
+		base := strings.ToLower(filepath.Base(strings.ReplaceAll(configured, `\`, "/")))
+		switch base {
+		case "sh", "sh.exe", "bash", "bash.exe":
+			name = configured
+		}
+	}
+	// #nosec G204 G702 -- rendered is syntax-validated; SHELL is trusted local configuration restricted above to sh/bash, never API data.
+	cmd := exec.Command(name, "-c", rendered)
+	cmd.Dir = dir
+	return cmd
 }
 
 func actionResult(intent uiactions.Intent, status uiactions.ResultStatus, message string, err error) tea.Cmd {

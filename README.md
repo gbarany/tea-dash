@@ -394,8 +394,11 @@ keybindings:
       builtin: delete
 ```
 
-Custom commands are POSIX shell templates, executed with POSIX `sh` from `PATH` regardless of
-`$SHELL` (configured pagers still use your shell). Quote string fields that may contain spaces
+Custom commands are POSIX shell templates, executed with `sh` from `PATH`.
+On Windows, a `SHELL` setting pointing to `sh` or `bash` (including `.exe`)
+takes precedence, so Git Bash works even when its directory is not on `PATH`.
+Other configured shells, such as PowerShell or cmd, are not used for custom
+templates; configured pagers still use your shell. Quote string fields that may contain spaces
 (for example, `echo "{{.Title}}"` or `cd "{{.RepoPath}}"`). Before executing,
 tea-dash validates the rendered shell syntax and rejects row values that introduce
 commands, extra arguments, or flags. This validation rejects unsafe substitutions
