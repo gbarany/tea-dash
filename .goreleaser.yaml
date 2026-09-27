@@ -66,9 +66,9 @@ homebrew_casks:
       email: 41898282+github-actions[bot]@users.noreply.github.com
     # The binaries aren't code-signed/notarized, so strip the macOS quarantine
     # bit on install (else Gatekeeper blocks "tea-dash is damaged").
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/tea-dash"]
-          end
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "tea-dash"], chdir: "."
+        end
+      end
